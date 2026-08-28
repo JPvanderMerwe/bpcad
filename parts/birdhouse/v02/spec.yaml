@@ -1,0 +1,30 @@
+name: birdhouse
+level: 1
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.2
+print_axis: z
+template: enclosure
+params:
+  width_mm: 300
+  depth_mm: 250
+  height_mm: 200
+  entrance_dia_mm: 40
+  roof_pitch_deg: 30
+  wall_mm: 10
+  floor_mm: 8
+  corner_r_mm: 20
+  entrance_height_mm: 150
+  entrance_face: front
+  predator_guard_mm: 6
+  back_plate_mm: 100
+  roof: true
+  roof_overhang_mm: 50
+  roof_thick_mm: 12
+  roof_lip_mm: 10
+  roof_clearance_mm: 1.5
+  drain_holes: 4
+  drain_dia_mm: 8
+  vent_slots: 6
+  mount_holes: true
+  mount_dia_mm: 3

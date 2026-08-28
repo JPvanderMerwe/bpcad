@@ -36,6 +36,7 @@ class MeshReport:
     degenerate_faces: int
     problems: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    body_sizes: list = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -143,6 +144,17 @@ def report_for(mesh: trimesh.Trimesh, path: str = "<mesh>") -> MeshReport:
                 % (100 * solidity, volume_cm3, volume_cm3 * 1.27 / 1000.0)
             )
 
+    # Per-body extents, so the bed check can tell "print it in two goes" from
+    # "this cannot be made".
+    body_sizes: list[tuple[float, float, float]] = []
+    try:
+        if mesh.body_count > 1:
+            for piece in mesh.split(only_watertight=False):
+                e = piece.bounds[1] - piece.bounds[0]
+                body_sizes.append(tuple(float(v) for v in e))
+    except Exception:
+        body_sizes = []
+
     return MeshReport(
         path=path,
         watertight=bool(mesh.is_watertight),
@@ -157,4 +169,5 @@ def report_for(mesh: trimesh.Trimesh, path: str = "<mesh>") -> MeshReport:
         degenerate_faces=degenerate,
         problems=problems,
         warnings=warnings,
+        body_sizes=body_sizes,
     )

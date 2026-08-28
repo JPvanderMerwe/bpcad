@@ -181,8 +181,11 @@ def test_every_face_can_take_the_entrance(face):
         ("storage box", {"entrance_dia_mm": 0.0, "roof": False, "drain_holes": 0}),
         ("planter", {"height_mm": 90.0, "entrance_dia_mm": 0.0, "roof": False,
                      "drain_holes": 4}),
-        ("big nest box", {"width_mm": 200.0, "depth_mm": 180.0, "height_mm": 260.0,
-                          "entrance_dia_mm": 45.0}),
+        # 200 mm across and 240 tall - about the biggest nest box that still
+        # fits a 220 x 220 x 250 bed. 260 tall does not, and the bed check
+        # correctly refuses it; see test_a_box_too_tall_for_the_bed_is_refused.
+        ("big nest box", {"width_mm": 200.0, "depth_mm": 180.0, "height_mm": 240.0,
+                          "entrance_dia_mm": 45.0, "roof_overhang_mm": 8.0}),
         ("flat roof", {"roof_pitch_deg": 0.0}),
     ],
 )
@@ -337,10 +340,13 @@ def test_mount_holes_move_to_the_plate_when_there_is_one():
 
 def test_a_fully_specified_birdhouse_builds_and_verifies(tmp_path):
     """Everything on at once - the part someone would actually print."""
+    # Sized for a 220 x 220 x 250 bed. A back plate adds its length ABOVE AND
+    # BELOW the box, so 190 + 2 x 45 is 280 mm tall - over the build height,
+    # and correctly refused. This is the same birdhouse that fits.
     params = dict(
-        width_mm=140.0, depth_mm=120.0, height_mm=190.0, wall_mm=4.0,
-        entrance_dia_mm=32.0, predator_guard_mm=22.0, back_plate_mm=45.0,
-        roof_overhang_mm=30.0, roof_pitch_deg=22.0, vent_slots=3, drain_holes=4,
+        width_mm=140.0, depth_mm=120.0, height_mm=150.0, wall_mm=4.0,
+        entrance_dia_mm=32.0, predator_guard_mm=22.0, back_plate_mm=40.0,
+        roof_overhang_mm=20.0, roof_pitch_deg=22.0, vent_slots=3, drain_holes=4,
     )
     part = api.build(spec=spec(**params), out_dir=tmp_path)
     m = part.report.mesh
@@ -348,3 +354,28 @@ def test_a_fully_specified_birdhouse_builds_and_verifies(tmp_path):
     assert m.body_count == 2
     assert m.solidity < 0.15
     assert not m.warnings
+
+
+def test_a_box_too_tall_for_the_bed_is_refused():
+    """
+    A 260 mm nest box does not fit a 250 mm build height, and a back plate
+    makes it worse: it adds its own length above AND below the box, so a 190 mm
+    box with a 45 mm plate is 280 mm tall. Sound parts, unmakeable here.
+    """
+    with pytest.raises(api.ApiError) as exc:
+        api.build(spec=spec(width_mm=200.0, depth_mm=180.0, height_mm=260.0),
+                  out_dir="/tmp/too-tall")
+    assert "does not fit the printer" in str(exc.value)
+    assert "build height" in str(exc.value)
+
+
+def test_the_two_pieces_may_exceed_the_bed_together():
+    """
+    A box and its roof laid side by side are wider than the bed, and that is
+    fine - they are separate prints. Only an individual piece that does not fit
+    is a failure.
+    """
+    part = api.build(spec=spec(), out_dir="/tmp/two-piece")
+    assert part.report.bed.fits
+    assert part.report.mesh.bbox_mm[0] > 220.0, "the layout really is over"
+    assert any("separate runs" in w for w in part.report.warnings)

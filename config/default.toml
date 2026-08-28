@@ -20,6 +20,21 @@ nozzle_mm = 0.40
 layer_mm = 0.20
 
 
+[bed]
+# The printer's usable build volume, in mm. A part is checked against this
+# IN ITS PRINT ORIENTATION, because that is the shape that has to fit - a
+# two-piece part laid out side by side is wider than either piece.
+#
+# Nothing checked this until a refinement asked for "a more complex birdhouse"
+# and produced a 1248 x 590 x 600 mm layout - 18 kg of filament - and every
+# other check passed it, because it was a perfectly manufacturable object that
+# simply would not fit on any printer in the building.
+#
+# Set these to your machine. The defaults are a common 220 x 220 x 250 bed.
+width_mm = 220.0
+depth_mm = 220.0
+height_mm = 250.0
+
 [limits]
 # Smallest printable feature, as a multiple of the nozzle width. 1.0 x nozzle
 # per the brief. verify/features.py flags anything within 10% as MARGINAL.

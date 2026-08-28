@@ -31,6 +31,17 @@ from bpcad.models.selector import Attempt, Profile, run_ladder
 from bpcad.spec.schema import PartSpec
 
 
+class CannotRefine(Exception):
+    """
+    The instruction asks for something no parameter can express.
+
+    A correct answer, not a failure. Asked to "add a feeding area", a model with
+    only dimensions to change made the birdhouse bigger - twice - and every
+    check passed it, because a bigger birdhouse is a sound object. Saying so
+    costs one attempt; approximating it costs a print.
+    """
+
+
 def apply_changes(spec: PartSpec, changes: dict[str, Any]) -> PartSpec:
     """
     Merge a parameter diff onto a spec, returning a new one.
@@ -226,6 +237,15 @@ def refine(
                 raw, str(exc), "- send a single JSON object with a params field"
             )
             raise SpecRejected(str(exc), stage=STAGE_PARSE, raw=raw) from exc
+        except CannotRefine as exc:
+            state["cannot"] = str(exc)
+            raise
+
+        if data.get("cannot"):
+            raise CannotRefine(
+                "no parameter of this template can do that: %s"
+                % str(data["cannot"])[:200]
+            )
 
         changes = data.get("params")
         if not isinstance(changes, dict):
@@ -273,6 +293,7 @@ def refine(
         level=spec.level,
     )
     result.note = state["note"]           # what the model says it changed
+    result.cannot = state.get("cannot", "")
     return result
 
 

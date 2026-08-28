@@ -17,7 +17,7 @@ from __future__ import annotations
 import traceback
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, Signal, Slot
 
 
 class Cancelled(Exception):
@@ -85,12 +85,30 @@ class TaskRunner(QObject):
     A QThread whose only reference is a local goes out of scope and takes the
     running work with it, in a way that looks like a random crash. Keeping the
     pair on `self` and only clearing it in the finished handler is the fix.
+
+    EVERY CALLBACK RUNS ON THE MAIN THREAD, and that is not automatic.
+    Connecting a signal to a plain Python callable - a lambda, a bound method -
+    gives Qt no receiver object to take thread affinity from, so it uses a
+    DIRECT connection and the callable runs on whichever thread emitted. Every
+    handler here touches widgets, and one of them loads a mesh into a VTK
+    render window, so that meant mutating Qt and OpenGL from a worker thread:
+
+        QObject: Cannot create children for a parent that is in a different
+        thread ... then a segmentation fault
+
+    So the worker's signals land on real slots on THIS object, which lives on
+    the main thread, and those slots call the caller's plain callables. The
+    receiver is what makes the connection queued.
     """
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
         self._thread: QThread | None = None
         self._worker: Worker | None = None
+        self._on_event = None
+        self._on_result = None
+        self._on_error = None
+        self._on_done = None
 
     @property
     def busy(self) -> bool:
@@ -113,32 +131,54 @@ class TaskRunner(QObject):
         worker = Worker(fn, *args, **kwargs)
         worker.moveToThread(thread)
 
+        self._on_event = on_event
+        self._on_result = on_result
+        self._on_error = on_error
+        self._on_done = on_done
+
         thread.started.connect(worker.run)
-        if on_event:
-            worker.event.connect(on_event)
-        if on_result:
-            worker.finished_ok.connect(on_result)
-        if on_error:
-            worker.failed.connect(on_error)
+        # Queued, and to a slot on THIS object so Qt knows which event loop.
+        worker.event.connect(self._relay_event, Qt.QueuedConnection)
+        worker.finished_ok.connect(self._relay_result, Qt.QueuedConnection)
+        worker.failed.connect(self._relay_error, Qt.QueuedConnection)
 
         # worker.done is emitted ON THE WORKER THREAD, so it may only ask the
         # thread to quit - calling wait() there is a thread waiting on itself,
         # which Qt refuses and which leaves the runner permanently "busy".
         # The tidy-up belongs on thread.finished, which arrives on this thread.
         worker.done.connect(thread.quit)
-
-        def finished() -> None:
-            self._thread = None
-            self._worker = None
-            if on_done:
-                on_done()
-
-        thread.finished.connect(finished)
+        thread.finished.connect(self._relay_finished, Qt.QueuedConnection)
 
         self._thread = thread
         self._worker = worker
         thread.start()
         return worker
+
+    # -- relays: these run on the main thread ------------------------------
+
+    @Slot(str, object)
+    def _relay_event(self, kind: str, payload: Any) -> None:
+        if self._on_event:
+            self._on_event(kind, payload)
+
+    @Slot(object)
+    def _relay_result(self, result: Any) -> None:
+        if self._on_result:
+            self._on_result(result)
+
+    @Slot(str, str)
+    def _relay_error(self, message: str, trace: str) -> None:
+        if self._on_error:
+            self._on_error(message, trace)
+
+    @Slot()
+    def _relay_finished(self) -> None:
+        self._thread = None
+        self._worker = None
+        done, self._on_done = self._on_done, None
+        self._on_event = self._on_result = self._on_error = None
+        if done:
+            done()
 
     def cancel(self) -> None:
         if self._worker is not None:

@@ -322,3 +322,77 @@ def test_the_refine_job_forwards_the_verify_report(qt_app, monkeypatch):
     assert result.message == "stub"
     assert seen["report"] == "THE-REPORT", "the verify report must still arrive"
     assert seen["cfg"] is None
+
+
+def test_every_callback_arrives_on_the_main_thread(qt_app):
+    """
+    The crash this exists to prevent.
+
+    Connecting a signal to a plain Python callable gives Qt no receiver object
+    to take thread affinity from, so it uses a DIRECT connection and the
+    callable runs on whichever thread emitted. Every handler in this app
+    touches widgets and one loads a mesh into a VTK render window, so that
+    meant mutating Qt and OpenGL from a worker:
+
+        QObject: Cannot create children for a parent that is in a different
+        thread ... then a segmentation fault
+
+    Nothing about the API changes when this is wrong. It just crashes on a
+    machine with a real GL context, which is why it is asserted rather than
+    assumed.
+    """
+    import threading
+
+    from PySide6.QtCore import QEventLoop, QTimer
+
+    from bpcad.gui.workers import TaskRunner
+
+    main = threading.current_thread().ident
+    threads: dict[str, list] = {"event": [], "result": [], "done": []}
+
+    def job(report, should_cancel):
+        assert threading.current_thread().ident != main, (
+            "the work itself must NOT be on the main thread"
+        )
+        report("tick", 1)
+        report("tick", 2)
+        return "finished"
+
+    runner = TaskRunner()
+    loop = QEventLoop()
+    runner.start(
+        job,
+        on_event=lambda k, p: threads["event"].append(threading.current_thread().ident),
+        on_result=lambda r: threads["result"].append(threading.current_thread().ident),
+        on_done=lambda: (threads["done"].append(threading.current_thread().ident),
+                         loop.quit()),
+    )
+    QTimer.singleShot(5000, loop.quit)
+    loop.exec()
+
+    assert threads["event"], "events must arrive"
+    for name, seen in threads.items():
+        assert seen, "%s never fired" % name
+        for ident in seen:
+            assert ident == main, (
+                "%s ran on thread %s, not the main thread - a widget touched "
+                "there is a segfault" % (name, ident)
+            )
+
+
+def test_the_runner_frees_itself_between_jobs(qt_app):
+    """A runner that stays busy after finishing blocks every later action."""
+    from PySide6.QtCore import QEventLoop, QTimer
+
+    from bpcad.gui.workers import TaskRunner
+
+    runner = TaskRunner()
+    for _ in range(2):
+        loop = QEventLoop()
+        runner.start(
+            lambda report, should_cancel: "ok",
+            on_done=loop.quit,
+        )
+        QTimer.singleShot(5000, loop.quit)
+        loop.exec()
+        assert not runner.busy

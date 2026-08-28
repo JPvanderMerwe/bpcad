@@ -552,6 +552,24 @@ def compile_and_verify(
         problem, hint = _verify_critique(report)
         raise SpecRejected(problem, stage=STAGE_VERIFY, hint=hint)
 
+    # DOES IT FIT ON THE PRINTER? Checked in print orientation, because that is
+    # the shape that goes on the bed. This is a hard failure, not a warning: a
+    # part that cannot be made is not a part, however sound its geometry.
+    from bpcad.verify.bed import check_bed
+
+    bed = check_bed(report.mesh.bbox_mm, cfg.bed_mm,
+                    body_sizes=report.mesh.body_sizes)
+    report.bed = bed
+    if bed.problems:
+        raise SpecRejected(
+            bed.problems[0],
+            stage=STAGE_VERIFY,
+            hint=(
+                "- the printer's bed is %.0f x %.0f x %.0f mm. Make the part "
+                "small enough to fit it." % cfg.bed_mm
+            ),
+        )
+
     # Does it resemble what was asked for? Everything above answers "can this be
     # made?", which a 573 cm3 solid slab answers perfectly well while not being
     # the birdhouse that was requested. This compares the numbers the request

@@ -411,7 +411,13 @@ Rules:
 - Return a "params" object holding ONLY the parameters you are changing.
   Everything you leave out keeps its current value.
 - To let a parameter go back to being derived from the frame, set it to null.
-- Never change a parameter the instruction did not ask about.
+- Never change a parameter the instruction did not ask about. Changing
+  everything "to be safe" is the wrong answer - it throws away values that
+  were derived to fit and were already right.
+- If the instruction asks for a FEATURE that no parameter can express - a
+  perch, a feeding tray, a second compartment - do NOT approximate it by
+  changing sizes. Answer {"cannot": "what you were asked for"} and say so.
+  Making the part bigger is not a feeding area.
 - Every dimension is in millimetres and every angle is in degrees.
 - Respect the stated bounds.
 """
@@ -572,6 +578,12 @@ def refine_schema(template: str) -> dict:
                 "type": "string",
                 "description": "One short sentence on what you changed and why.",
             },
+            "cannot": {
+                "type": "string",
+                "description": (
+                    "Set this INSTEAD of params if no parameter can express what "
+                    "was asked for. Say what was asked for."
+                ),
+            },
         },
-        "required": ["params"],
     }

@@ -31,6 +31,7 @@ class VerifyReport:
     regression: RegressionResult | None = None
     material: str | None = None
     intent: Any = None          # does it resemble what was asked for?
+    bed: Any = None             # does it fit on the printer?
     notes: list[str] = field(default_factory=list)
 
     # -- verdict -----------------------------------------------------------
@@ -48,6 +49,8 @@ class VerifyReport:
         The overhang findings are still reported in full, under warnings.
         """
         out = list(self.mesh.problems)
+        if self.bed is not None:
+            out += list(self.bed.problems)
         if self.features is not None:
             out += [
                 "feature %r is %.3f mm, below the %.2f mm the nozzle can resolve"
@@ -63,6 +66,8 @@ class VerifyReport:
     def warnings(self) -> list[str]:
         """Worth knowing before printing, but not defects in the geometry."""
         out = list(self.mesh.warnings)
+        if self.bed is not None:
+            out += list(self.bed.warnings)
         out += list(self.overhang.problems)
         if self.intent is not None:
             out += list(self.intent.problems)

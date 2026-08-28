@@ -316,7 +316,7 @@ def run_ladder(
                     on_attempt(attempt)
                 if isinstance(exc, OllamaError):
                     break      # daemon problem: a retry will not fix it
-                if type(exc).__name__ == "NoTemplateFits":
+                if type(exc).__name__ in ("NoTemplateFits", "CannotRefine"):
                     # A settled answer, not a failure. Asking again only buys
                     # the same reply a minute and a half later.
                     result.exhausted = True

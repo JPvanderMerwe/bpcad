@@ -25,8 +25,9 @@ UNSET = "UNSET"
 
 ENV_CONFIG = "BPCAD_CONFIG"
 
-REQUIRED_SECTIONS = ("print", "limits", "export", "models", "materials", "machines")
+REQUIRED_SECTIONS = ("print", "bed", "limits", "export", "models", "materials", "machines")
 REQUIRED_PRINT = ("nozzle_mm", "layer_mm")
+REQUIRED_BED = ("width_mm", "depth_mm", "height_mm")
 REQUIRED_LIMITS = (
     "min_feature_multiple",
     "min_engrave_stroke_mm",
@@ -91,6 +92,15 @@ class Config:
     @property
     def print_settings(self) -> dict[str, Any]:
         return dict(self.data["print"])
+
+    @property
+    def bed(self) -> dict[str, Any]:
+        return dict(self.data["bed"])
+
+    @property
+    def bed_mm(self) -> tuple[float, float, float]:
+        b = self.data["bed"]
+        return (float(b["width_mm"]), float(b["depth_mm"]), float(b["height_mm"]))
 
     @property
     def limits(self) -> dict[str, Any]:
@@ -198,6 +208,7 @@ def load_config(path: str | os.PathLike[str] | None = None) -> Config:
         )
 
     _require(data["print"], REQUIRED_PRINT, "[print]", p)
+    _require(data["bed"], REQUIRED_BED, "[bed]", p)
     _require(data["limits"], REQUIRED_LIMITS, "[limits]", p)
     _require(data["export"], REQUIRED_EXPORT, "[export]", p)
 

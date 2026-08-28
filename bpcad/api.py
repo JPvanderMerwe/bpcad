@@ -406,11 +406,15 @@ def verify(
             update=update_baseline,
         )
 
+    from bpcad.verify.bed import check_bed
+
     return VerifyReport(
         path=str(stl),
         nozzle_mm=nozzle,
         print_axis=print_axis,
         material=material,
+        bed=check_bed(mesh_report.bbox_mm, cfg.bed_mm,
+                      body_sizes=mesh_report.body_sizes),
         mesh=mesh_report,
         overhang=overhang_report(
             mesh, print_axis=print_axis,
