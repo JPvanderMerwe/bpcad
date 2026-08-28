@@ -322,3 +322,139 @@ def dsl_schema() -> dict:
         },
         "required": ["name", "ops"],
     }
+
+
+# ---------------------------------------------------------------------------
+# refinement: changing a part you have already built
+# ---------------------------------------------------------------------------
+
+REFINE_SYSTEM = """You adjust an existing 3D part specification.
+
+You do NOT write CAD code and you do NOT rewrite the whole specification. You
+are given a part that already builds, and one instruction about what to change.
+You reply with ONLY the parameters that must change.
+
+Rules:
+- Reply with JSON only. No prose, no markdown fences.
+- Return a "params" object holding ONLY the parameters you are changing.
+  Everything you leave out keeps its current value.
+- To let a parameter go back to being derived from the frame, set it to null.
+- Never change a parameter the instruction did not ask about.
+- Every dimension is in millimetres and every angle is in degrees.
+- Respect the stated bounds.
+"""
+
+
+def build_refine_prompt(
+    spec,
+    instruction: str,
+    template_info: dict | None = None,
+    report=None,
+    measurements: dict | None = None,
+) -> str:
+    """
+    The current part, what it measured, and the one thing to change.
+
+    Showing the MEASURED result rather than only the parameters matters: an
+    instruction like "make it thinner" is about the part that came out, and the
+    model needs to see what came out to know which parameter moves it.
+    """
+    import yaml
+
+    from bpcad.spec import registry
+
+    lines: list[str] = ["The current specification:", ""]
+    current = {
+        "template": spec.template,
+        "params": dict(spec.params or {}),
+    }
+    lines.append(yaml.safe_dump(current, sort_keys=False).rstrip())
+    lines.append("")
+
+    if report is not None:
+        m = report.mesh
+        lines += [
+            "What that actually built:",
+            "  envelope   %.2f x %.2f x %.2f mm" % m.bbox_mm,
+            "  volume     %.3f cm3" % m.volume_cm3,
+            "  bodies     %d" % m.body_count,
+            "  supports   %s" % ("needed" if report.overhang.supports_needed else "none"),
+        ]
+        if report.features is not None:
+            smallest = report.features.checks[:3]
+            for c in smallest:
+                lines.append("  %-24s %.3f mm  %s" % (c.name, c.value_mm, c.status))
+        lines.append("")
+
+    if measurements:
+        lines.append("Measured from the reference image. These are MEASURED, not")
+        lines.append("estimated - prefer them over anything in the instruction text:")
+        for k, v in measurements.items():
+            lines.append("  %s: %s" % (k, v))
+        lines.append("")
+
+    lines += ["Change requested:", "  %s" % instruction.strip(), ""]
+
+    if template_info is None and spec.template:
+        try:
+            t = registry.get(spec.template)
+            template_info = {"params": t.params_model.model_fields}
+        except Exception:
+            template_info = None
+
+    if spec.template:
+        lines.append("Parameters you may change on template %r:" % spec.template)
+        lines.append("")
+        lines.append(_param_lines(spec.template))
+
+    lines.append("")
+    lines.append("Reply with the parameters that change, and nothing else.")
+    return "\n".join(lines)
+
+
+def _param_lines(template: str) -> str:
+    """One line per parameter: name, current bounds, and what it does."""
+    from bpcad.spec import registry
+
+    try:
+        model = registry.get(template).params_model
+    except Exception:
+        return "(unknown template)"
+
+    out = []
+    for fname, field in model.model_fields.items():
+        bounds = []
+        for meta in field.metadata:
+            for attr, label in (("ge", ">="), ("gt", ">"), ("le", "<="), ("lt", "<")):
+                v = getattr(meta, attr, None)
+                if v is not None:
+                    bounds.append("%s %g" % (label, v))
+        out.append(
+            "  %-22s %-18s %s"
+            % (fname, ", ".join(bounds), (field.description or "").split(".")[0])
+        )
+    return "\n".join(out)
+
+
+def refine_schema(template: str) -> dict:
+    """
+    Constrain a refinement to a params object.
+
+    Deliberately NOT the whole spec: asking a small model to restate a
+    specification it was not asked to change is asking it to make mistakes in
+    the parts it was supposed to leave alone.
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "params": {
+                "type": "object",
+                "description": "Only the parameters that change.",
+            },
+            "note": {
+                "type": "string",
+                "description": "One short sentence on what you changed and why.",
+            },
+        },
+        "required": ["params"],
+    }

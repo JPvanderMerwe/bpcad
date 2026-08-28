@@ -32,11 +32,15 @@ from PySide6.QtWidgets import (
 
 from bpcad import __version__, api
 from bpcad.gui.panels.generate import GeneratePanel
+from bpcad.gui.panels.studio import StudioPanel
 from bpcad.gui.panels.report import ReportPanel
 from bpcad.gui.panels.specform import SpecPanel
 from bpcad.gui.theme import ACCENT, BAD, OK, STYLESHEET, TEXT_DIM, WARN
 from bpcad.gui.viewer3d import VIEW_DIRECTIONS, Viewer3D
-from bpcad.gui.workers import TaskRunner, build_job, generate_job, model_status_job
+from bpcad.gui.workers import (
+    TaskRunner, build_job, generate_job, model_status_job,
+    session_create_job, session_refine_job,
+)
 
 
 class ImageView(QScrollArea):
@@ -86,6 +90,8 @@ class MainWindow(QMainWindow):
         self.runner = TaskRunner(self)
         self.current: api.PartEntry | None = None
         self.current_report: Any = None
+        self.session: api.Session | None = None
+        self.viewing: int = -1
 
         self._build_ui()
         self._build_menu()
@@ -102,8 +108,13 @@ class MainWindow(QMainWindow):
     def _build_ui(self) -> None:
         splitter = QSplitter(Qt.Horizontal)
 
-        # --- left: library, prompt, parameters ---------------------------
+        # --- left: studio, library, parameters ---------------------------
         self.left_tabs = QTabWidget()
+
+        # The studio comes first because it is the thing you do: describe a
+        # part, look at it, say what is wrong, look again.
+        self.studio = StudioPanel(self.cfg)
+        self.left_tabs.addTab(self.studio, "Studio")
 
         library = QWidget()
         lib_layout = QVBoxLayout(library)
@@ -124,7 +135,7 @@ class MainWindow(QMainWindow):
         self.left_tabs.addTab(library, "Parts")
 
         self.generate_panel = GeneratePanel(self.cfg)
-        self.left_tabs.addTab(self.generate_panel, "Generate")
+        self.left_tabs.addTab(self.generate_panel, "One-shot")
 
         self.spec_panel = SpecPanel(self.cfg)
         self.left_tabs.addTab(self.spec_panel, "Parameters")
@@ -206,6 +217,11 @@ class MainWindow(QMainWindow):
         self.model_label = QLabel("checking the model...")
         self.statusBar().addPermanentWidget(self.model_label)
         self.statusBar().showMessage("Ready.")
+
+        self.studio.create_requested.connect(self._studio_create)
+        self.studio.refine_requested.connect(self._studio_refine)
+        self.studio.cancel_requested.connect(self.runner.cancel)
+        self.studio.version_selected.connect(self._show_version)
 
         self.refresh_btn.clicked.connect(self.refresh_library)
         self.rebuild_btn.clicked.connect(self._rebuild_current)
@@ -341,6 +357,7 @@ class MainWindow(QMainWindow):
     # -- running work ------------------------------------------------------
 
     def _busy(self, busy: bool, message: str = "") -> None:
+        self.studio.set_busy(busy)
         self.generate_panel.set_busy(busy)
         self.rebuild_btn.setEnabled(not busy and self.current is not None
                                     and self.current.spec_path is not None)
@@ -372,6 +389,151 @@ class MainWindow(QMainWindow):
                     self.tree.setCurrentItem(item)
                     break
             self.statusBar().showMessage("%s built and verified." % target, 8000)
+
+    # -- the studio --------------------------------------------------------
+
+    def _studio_create(self, prompt: str, options: dict) -> None:
+        """Start a new part. A fresh session, so the history starts clean."""
+        if self.runner.busy:
+            return
+        name = self.studio.name_edit.text().strip() or api._slug(prompt)
+        self.session = api.Session(Path("parts") / name, name=name)
+        self.session.prompt = prompt
+        self.session.image = self.studio.image_drop.path
+        self.session.measurements = self.studio.measurements
+        self.viewing = -1
+        self.studio.set_versions([], -1)
+        self.studio.show_changes([])
+
+        self._busy(True, "Creating %s..." % name)
+        self._pending_thumb = None
+        self.runner.start(
+            session_create_job, prompt,
+            out_dir=str(self.session.root / "v01"),
+            render=True, cfg=self.cfg,
+            on_event=self._studio_event,
+            on_result=lambda r: self._studio_result(r, instruction=""),
+            on_error=self._on_worker_error,
+            on_done=lambda: self._busy(False),
+            **options,
+        )
+
+    def _studio_refine(self, instruction: str, options: dict) -> None:
+        """Change the version currently on screen."""
+        if self.runner.busy or not self.session:
+            return
+        base = self._viewed_version()
+        if base is None or base.spec is None:
+            self.studio.say("nothing to change yet", WARN)
+            return
+
+        index = len(self.session.versions)
+        self._busy(True, "Applying: %s" % instruction[:50])
+        self._pending_thumb = None
+        self.studio.append("")
+        self.studio.append("change: %s" % instruction)
+        self.runner.start(
+            session_refine_job, base.spec, instruction,
+            report=base.part.report if base.part else None,
+            measurements=self.session.measurements,
+            out_dir=str(self.session.version_dir(index)),
+            render=True, cfg=self.cfg,
+            on_event=self._studio_event,
+            on_result=lambda r: self._studio_result(r, instruction=instruction),
+            on_error=self._on_worker_error,
+            on_done=lambda: self._busy(False),
+            **{k: v for k, v in options.items() if k in ("machine",)},
+        )
+
+    def _studio_event(self, kind: str, payload: Any) -> None:
+        if kind == "thumbnail":
+            self._pending_thumb = payload
+            return
+        self.studio.on_event(kind, payload)
+
+    def _studio_result(self, result: Any, instruction: str) -> None:
+        if self.session is None:
+            return
+
+        version = api.Version(
+            index=len(self.session.versions),
+            spec=result.spec,
+            instruction=instruction,
+            note=getattr(result, "note", ""),
+            changes=list(getattr(result, "changes", [])),
+            part=result.part,
+            thumbnail=getattr(self, "_pending_thumb", None),
+            elapsed_s=result.elapsed_s,
+            attempts=result.attempt_count,
+            error="" if result.ok else result.message,
+        )
+        self.session.add(version)
+        self.session.save()
+
+        self.studio.append("")
+        if result.ok and result.part:
+            p = result.part
+            self.studio.append(
+                "%s   %.2f x %.2f x %.2f mm   %.3f cm3   %d body(s)"
+                % (p.name, *p.envelope_mm, p.volume_cm3, p.report.mesh.body_count)
+            )
+            for line in version.changes:
+                self.studio.append("  %s" % line)
+            self.studio.say("done in %.0fs" % result.elapsed_s, OK)
+            self.studio.set_has_part(True)
+            self.studio.show_changes(version.changes, version.note)
+        else:
+            self.studio.append(result.message)
+            self.studio.say("could not do that", BAD)
+            self.studio.show_changes([], "")
+
+        self.studio.set_versions(self.session.versions, version.index)
+        self._show_version(version.index)
+        self.refresh_library()
+
+    def _viewed_version(self):
+        if not self.session or not self.session.versions:
+            return None
+        if 0 <= self.viewing < len(self.session.versions):
+            return self.session.versions[self.viewing]
+        return self.session.current
+
+    def _show_version(self, index: int) -> None:
+        """Put a version on screen. Everything about it, not just the mesh."""
+        if not self.session or not 0 <= index < len(self.session.versions):
+            return
+        self.viewing = index
+        version = self.session.versions[index]
+        self.studio.strip.select(index)
+        self.studio.show_changes(version.changes, version.note)
+
+        if version.part is None:
+            self.part_line.setText(version.error or "This version did not build.")
+            return
+
+        part = version.part
+        self.viewer.load(part.stl)
+        self.current = api.PartEntry(
+            name=part.name, directory=part.part_dir,
+            spec_path=part.part_dir / "spec.yaml",
+            stl=part.stl,
+            report_md=part.part_dir / "report.md",
+            images={
+                k: v for k, v in part.files.items()
+                if str(v).endswith(".png")
+            },
+        )
+        self.report_panel.show_report(part.report, version.label)
+        self.current_report = part.report
+        spec_file = part.part_dir / "spec.yaml"
+        if spec_file.is_file():
+            self.spec_text.setPlainText(spec_file.read_text())
+        report_md = part.part_dir / "report.md"
+        if report_md.is_file():
+            self.markdown.setPlainText(report_md.read_text())
+        self.part_line.setText(
+            "%s   %s   %.3f cm3" % (version.label, part.report.verdict, part.volume_cm3)
+        )
 
     def _rebuild_current(self) -> None:
         if not self.current or not self.current.spec_path or self.runner.busy:

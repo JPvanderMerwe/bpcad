@@ -200,3 +200,61 @@ def model_status_job(report, should_cancel, machine=None):
     from bpcad import api
 
     return api.model_status(machine=machine)
+
+
+def refine_job(spec, instruction: str, report, should_cancel, **options):
+    """Change an existing part by describing the change."""
+    from bpcad import api
+
+    def on_event(kind, payload):
+        if should_cancel():
+            raise Cancelled()
+        report(kind, payload)
+
+    return api.refine(spec, instruction, on_event=on_event, **options)
+
+
+def session_create_job(prompt: str, report, should_cancel, **options):
+    """
+    A first generation, plus the thumbnail its version card needs.
+
+    The thumbnail is rendered here rather than on the UI thread: it is a real
+    render, and doing it in the handler would stall the window for a second at
+    exactly the moment the result arrives.
+    """
+    from bpcad import api
+
+    def on_event(kind, payload):
+        if should_cancel():
+            raise Cancelled()
+        report(kind, payload)
+
+    result = api.generate(prompt, on_event=on_event, **options)
+    if result.ok and result.part:
+        report("thumbnail", _thumb(result.part))
+    return result
+
+
+def session_refine_job(spec, instruction: str, report, should_cancel, **options):
+    """A refinement, plus its thumbnail."""
+    from bpcad import api
+
+    def on_event(kind, payload):
+        if should_cancel():
+            raise Cancelled()
+        report(kind, payload)
+
+    result = api.refine(spec, instruction, on_event=on_event, **options)
+    if result.ok and result.part:
+        report("thumbnail", _thumb(result.part))
+    return result
+
+
+def _thumb(part):
+    """Render a version card's thumbnail, or give up quietly."""
+    from bpcad import api
+
+    try:
+        return api.thumbnail(part.stl, part.part_dir / "out" / "thumb.png")
+    except Exception:
+        return None

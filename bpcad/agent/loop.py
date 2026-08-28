@@ -84,6 +84,7 @@ class AskResult:
     best_attempt_data: dict = field(default_factory=dict)
     problems: list[FieldProblem] = field(default_factory=list)
     level: int = 1
+    note: str = ""          # what a refinement says it changed, in its words
 
     @property
     def ok(self) -> bool:

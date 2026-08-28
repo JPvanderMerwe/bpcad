@@ -82,6 +82,8 @@ class GenerateResult:
     draft_path: Path | None = None
     problems: list[Any] = field(default_factory=list)
     message: str = ""
+    note: str = ""                                  # a refinement's own words
+    changes: list[str] = field(default_factory=list)  # read off the specs
 
     @property
     def attempt_count(self) -> int:
@@ -798,6 +800,308 @@ def _run(
         name=spec.name, spec=spec, build=holder["result"], report=holder["report"],
         stl=final_stl, part_dir=target, files=files,
     )
+    emit("done", out)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# refinement and version history
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Version:
+    """One state a part has been in, and how it got there."""
+
+    index: int
+    spec: Any
+    instruction: str = ""
+    note: str = ""
+    changes: list[str] = field(default_factory=list)
+    part: PartResult | None = None
+    thumbnail: Path | None = None
+    elapsed_s: float = 0.0
+    attempts: int = 0
+    error: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.part is not None and self.part.ok
+
+    @property
+    def label(self) -> str:
+        if self.index == 0:
+            return "v1  original"
+        return "v%d  %s" % (self.index + 1, (self.instruction or "changed")[:38])
+
+
+class Session:
+    """
+    One part, and every version of it.
+
+    The unit of work is a PART, not a prompt. You describe something, look at
+    it, say what is wrong, and look again - and each of those is a version you
+    can go back to. Because a version is a spec rather than a mesh, going back
+    is exact and every version is independently printable.
+    """
+
+    def __init__(self, root: str | Path, name: str = "part") -> None:
+        self.root = Path(root)
+        self.name = name
+        self.versions: list[Version] = []
+        self.image: Path | None = None
+        self.measurements: dict[str, Any] | None = None
+        self.prompt: str = ""
+
+    # -- history -----------------------------------------------------------
+
+    @property
+    def current(self) -> Version | None:
+        for v in reversed(self.versions):
+            if v.ok:
+                return v
+        return self.versions[-1] if self.versions else None
+
+    def version_dir(self, index: int) -> Path:
+        return self.root / ("v%02d" % (index + 1))
+
+    def add(self, version: Version) -> Version:
+        version.index = len(self.versions)
+        self.versions.append(version)
+        return version
+
+    def revert_to(self, index: int) -> Version:
+        """
+        Going back does not delete anything. A version you abandoned is still
+        the thing you were looking at when you decided to abandon it, and
+        throwing it away makes "actually, the one before" impossible.
+        """
+        if not 0 <= index < len(self.versions):
+            raise ApiError("no version %d in this session" % (index + 1))
+        return self.versions[index]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "prompt": self.prompt,
+            "image": str(self.image) if self.image else None,
+            "measurements": _plain(self.measurements),
+            "versions": [
+                {
+                    "index": v.index,
+                    "instruction": v.instruction,
+                    "note": v.note,
+                    "changes": v.changes,
+                    "ok": v.ok,
+                    "error": v.error,
+                    "elapsed_s": round(v.elapsed_s, 2),
+                    "attempts": v.attempts,
+                    "spec": v.spec.model_dump(exclude_none=True) if v.spec else None,
+                }
+                for v in self.versions
+            ],
+        }
+
+    def save(self) -> Path:
+        """Write session.json beside the versions, so history survives a restart."""
+        import json
+
+        self.root.mkdir(parents=True, exist_ok=True)
+        path = self.root / "session.json"
+        path.write_text(json.dumps(self.to_dict(), indent=2, default=str))
+        return path
+
+
+def _plain(value: Any) -> Any:
+    """Make measurement objects JSON-safe without losing what they say."""
+    if isinstance(value, dict):
+        return {k: _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    return str(value)
+
+
+def thumbnail(stl: str | Path, out_path: str | Path, size: int = 320) -> Path:
+    """
+    A small render for a version card.
+
+    Produced by the CPU rasteriser, not by screen-grabbing the 3D view: a card
+    has to exist whether or not that view is on screen, or has a GL context, or
+    is currently showing something else.
+    """
+    from bpcad.render import views as V
+    from bpcad.verify.mesh import load_mesh
+
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    mesh = load_mesh(stl)
+    return V.render_view_to(
+        mesh, out, view="3q", width=size, height=int(size * 0.78)
+    )
+
+
+def measure_reference(
+    image: str | Path, known_width_mm: float | None = None
+) -> dict[str, Any]:
+    """
+    What a reference image can honestly tell you.
+
+    An image gives PROPORTIONS reliably and ABSOLUTE SIZE never. So the aspect
+    ratio and the relative position of features are measured and reported as
+    facts; a real dimension appears only if you supply one to anchor the scale,
+    which is exactly how the reference session worked - it anchored on a
+    published screen diagonal.
+
+    Passing a wrong `known_width_mm` is the one way to make this lie, so the
+    scale it derives is reported back for checking.
+    """
+    from bpcad.measure.segment import (
+        background_cut, bbox, by_luminance, by_saturation, largest_component,
+    )
+
+    path = Path(image)
+    if not path.is_file():
+        raise ApiError("no image at %s" % path)
+
+    cut = background_cut(path)
+    fg = by_luminance(path, 0, cut)
+    if not fg.any():
+        raise ApiError(
+            "nothing separated from the background. The object may touch the "
+            "border of the image, or the image may be inverted."
+        )
+
+    box = bbox(fg)
+    out: dict[str, Any] = {
+        "silhouette_px": "%d wide x %d tall" % (box.width, box.height),
+        "aspect_ratio": round(box.width / box.height, 4),
+    }
+
+    neutral = by_saturation(path, 0, 15) & fg
+    if neutral.any():
+        try:
+            n = bbox(largest_component(neutral))
+            out["inset_region_px"] = "%d x %d" % (n.width, n.height)
+            out["inset_fraction_of_width"] = round(n.width / box.width, 4)
+        except ValueError:
+            pass
+
+    if known_width_mm:
+        scale = known_width_mm / box.width
+        out["scale_mm_per_px"] = round(scale, 5)
+        out["width_mm"] = round(known_width_mm, 2)
+        out["height_mm"] = round(box.height * scale, 2)
+        if "inset_region_px" in out:
+            n = bbox(largest_component(neutral))
+            out["inset_mm"] = "%.1f x %.1f" % (n.width * scale, n.height * scale)
+        out["note"] = (
+            "Scaled from a stated width of %.1f mm. Every mm figure here depends "
+            "on that being right." % known_width_mm
+        )
+    else:
+        out["note"] = (
+            "Proportions only. An image cannot give absolute size - state one "
+            "real dimension to anchor the scale."
+        )
+    return out
+
+
+def refine(
+    spec,
+    instruction: str,
+    report=None,
+    measurements: dict[str, Any] | None = None,
+    machine: str | None = None,
+    out_dir: str | Path | None = None,
+    cfg: Config | None = None,
+    render: bool = True,
+    build_it: bool = True,
+    on_event: Callable[[str, Any], None] | None = None,
+) -> GenerateResult:
+    """
+    Change an existing part by describing the change.
+
+    The spec is edited and the part rebuilt from scratch, so the result is exact
+    rather than a re-roll. Returns the same shape as generate().
+    """
+    import shutil
+    import tempfile
+    import time
+
+    from bpcad.agent.loop import SpecRejected, compile_and_verify
+    from bpcad.agent.refine import describe_changes, refine as run_refine
+    from bpcad.models.base import NonLocalEndpointError
+    from bpcad.models.selector import ProfileError, load_profile
+
+    cfg = cfg or config()
+    try:
+        profile = load_profile(cfg, machine)
+    except (ProfileError, NonLocalEndpointError) as exc:
+        raise ApiError(str(exc)) from exc
+
+    emit = on_event or (lambda kind, payload: None)
+    emit("profile", profile)
+
+    scratch = Path(tempfile.mkdtemp(prefix="bpcad-refine-"))
+    holder: dict[str, Any] = {}
+    started = time.monotonic()
+
+    def verify_candidate(candidate):
+        if not build_it:
+            return None
+        emit("building", candidate)
+        result, rep, stl = compile_and_verify(candidate, cfg, None, scratch / "out")
+        holder["result"], holder["report"], holder["stl"] = result, rep, stl
+        return None
+
+    outcome = run_refine(
+        spec=spec, instruction=instruction, profile=profile,
+        report=report, measurements=measurements,
+        on_attempt=lambda a: emit("attempt", a),
+        verify_fn=verify_candidate if build_it else None,
+    )
+    elapsed = time.monotonic() - started
+
+    out = GenerateResult(
+        ok=outcome.ok, spec=outcome.spec, attempts=list(outcome.ladder.attempts),
+        elapsed_s=elapsed, machine=profile.name,
+        models_tried=outcome.models_tried, problems=list(outcome.problems),
+    )
+    out.note = getattr(outcome, "note", "")
+    out.changes = describe_changes(spec, outcome.spec) if outcome.ok else []
+
+    if not outcome.ok:
+        out.message = (
+            "No model was reachable at %s." % profile.host
+            if outcome.ladder.never_reached_a_model
+            else "The model could not make that change: %s"
+                 % (outcome.ladder.last_error or "").split("\n")[0]
+        )
+        emit("done", out)
+        return out
+
+    if build_it:
+        target = Path(out_dir) if out_dir else Path("parts") / outcome.spec.name
+        (target / "out").mkdir(parents=True, exist_ok=True)
+        final = target / "out" / ("%s.stl" % outcome.spec.name)
+        shutil.copy2(holder["stl"], final)
+
+        from bpcad.agent import bundle as bundle_mod
+
+        model_used = next((a.model for a in reversed(outcome.ladder.attempts) if a.ok), "")
+        files = bundle_mod.write_bundle(
+            spec=outcome.spec, result=holder["result"], report=holder["report"],
+            stl=final, part_dir=target, model_used=model_used,
+            machine=profile.name, attempts=len(outcome.ladder.attempts),
+            elapsed_s=elapsed, render=render,
+        )
+        out.part = PartResult(
+            name=outcome.spec.name, spec=outcome.spec, build=holder["result"],
+            report=holder["report"], stl=final, part_dir=target, files=files,
+        )
+
     emit("done", out)
     return out
 
