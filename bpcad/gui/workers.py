@@ -229,7 +229,7 @@ def refine_job(spec, instruction: str, report, should_cancel,
                       on_event=on_event, **options)
 
 
-def session_create_job(prompt: str, report, should_cancel, **options):
+def session_create_job(prompt: str, report, should_cancel, measurement=None, **options):
     """
     A first generation, plus the thumbnail its version card needs.
 
@@ -244,7 +244,7 @@ def session_create_job(prompt: str, report, should_cancel, **options):
             raise Cancelled()
         report(kind, payload)
 
-    result = api.generate(prompt, on_event=on_event, **options)
+    result = api.generate(prompt, on_event=on_event, measurement=measurement, **options)
     if result.ok and result.part:
         report("thumbnail", _thumb(result.part))
     return result

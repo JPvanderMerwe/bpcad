@@ -217,6 +217,19 @@ class GalleryPanel(QWidget):
         self.material.setFixedWidth(96)
         opts.addWidget(self.material)
 
+        self.view_box = QComboBox()
+        self.view_box.addItems(["front view", "side view", "not sure"])
+        self.view_box.setFixedWidth(112)
+        self.view_box.setToolTip(
+            "Which way the photo looks at the thing.\n\n"
+            "A front view shows the entrance but looks along a roof slope, so "
+            "it cannot measure the pitch. A side view measures the pitch and "
+            "cannot see the entrance. Saying which stops it reporting a number "
+            "the view could not give."
+        )
+        self.view_box.currentTextChanged.connect(self._on_image)
+        opts.addWidget(self.view_box)
+
         self.scale_edit = QLineEdit()
         self.scale_edit.setPlaceholderText("image is ? mm wide")
         self.scale_edit.setFixedWidth(150)
@@ -316,19 +329,31 @@ class GalleryPanel(QWidget):
             width = float(self.scale_edit.text() or 0) or None
         except ValueError:
             width = None
+        view = {"front view": "front", "side view": "side"}.get(
+            self.view_box.currentText(), "auto"
+        )
         try:
-            m = api.measure_reference(path, known_width_mm=width)
+            m = api.measure_for_design(path, known_width_mm=width, view=view)
         except api.ApiError as exc:
             self.measured.setText(str(exc)[:70])
             self._measurements = None
             return
         self._measurements = m
-        if "width_mm" in m:
-            self.measured.setText(
-                "measured  %.0f x %.0f mm" % (m["width_mm"], m["height_mm"])
+
+        found = [i.name for i in m.items if i.confidence == "fitted"]
+        if m.scale_mm_per_px:
+            head = "measured %.0f x %.0f mm" % (
+                m.silhouette.width * m.scale_mm_per_px,
+                m.silhouette.height * m.scale_mm_per_px,
             )
         else:
-            self.measured.setText("measured  aspect %.3f" % m["aspect_ratio"])
+            head = "aspect %.2f - state a width for mm" % (
+                m.silhouette.width / m.silhouette.height
+            )
+        self.measured.setText(
+            head + ("   found: " + ", ".join(found) if found else "")
+        )
+        self.measured.setToolTip("\n".join(m.summary()))
 
     @property
     def measurements(self) -> dict[str, Any] | None:

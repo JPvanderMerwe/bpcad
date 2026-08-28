@@ -427,5 +427,11 @@ class PartView(QWidget):
         elif kind == "escalate":
             self.append("no template fits - building from primitives")
             self.say("building from primitives", WARN)
+        elif kind == "measured":
+            for k, v in (payload or {}).items():
+                self.append("  measured from the image: %s = %s" % (k, v))
+            self.say("applied %d measurement(s) from the image" % len(payload or {}), OK)
+        elif kind == "measurement_rejected":
+            self.append("  a measurement did not survive the build, kept the model's value")
         elif kind == "cancelled":
             self.say("cancelled", WARN)

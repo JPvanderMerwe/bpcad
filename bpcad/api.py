@@ -650,7 +650,7 @@ def ask(
     """Ask the local model for a spec. Generation only - see generate() to build."""
     return _run(request, machine, material, nozzle_mm, layer_mm, cfg,
                 on_event, build_it=False, out_dir=None, allow_level_3=False,
-                escalate=True, render=False)
+                escalate=True, render=False, measurement=None)
 
 
 def generate(
@@ -664,6 +664,7 @@ def generate(
     allow_level_3: bool = False,
     escalate: bool = True,
     render: bool = True,
+    measurement=None,
     on_event: Callable[[str, Any], None] | None = None,
 ) -> GenerateResult:
     """
@@ -676,12 +677,13 @@ def generate(
     """
     return _run(request, machine, material, nozzle_mm, layer_mm, cfg,
                 on_event, build_it=True, out_dir=out_dir,
-                allow_level_3=allow_level_3, escalate=escalate, render=render)
+                allow_level_3=allow_level_3, escalate=escalate, render=render,
+                measurement=measurement)
 
 
 def _run(
     request, machine, material, nozzle_mm, layer_mm, cfg, on_event,
-    build_it, out_dir, allow_level_3, escalate, render,
+    build_it, out_dir, allow_level_3, escalate, render, measurement=None,
 ) -> GenerateResult:
     """The shared body of ask() and generate()."""
     import time
@@ -710,6 +712,7 @@ def _run(
     emit = on_event or (lambda kind, payload: None)
     emit("profile", profile)
 
+    facts = measurement.as_facts() if measurement is not None else None
     scratch = Path(tempfile.mkdtemp(prefix="bpcad-api-"))
     holder: dict[str, Any] = {}
     started = time.monotonic()
@@ -727,10 +730,33 @@ def _run(
 
     result = run_ask(
         request=request, profile=profile, material=material,
-        nozzle_mm=nozzle, layer_mm=layer,
+        nozzle_mm=nozzle, layer_mm=layer, measurements=facts,
         on_attempt=lambda a: emit("attempt", a),
         verify_fn=verify_candidate if build_it else None,
     )
+
+    # APPLY what was measured, rather than only describing it. Where a
+    # measurement is the same quantity in the same units as a parameter -
+    # an entrance diameter off a photograph IS entrance_dia_mm - the measured
+    # value wins over whatever the model chose. Measure, never estimate.
+    if result.ok and measurement is not None and result.spec is not None:
+        applied = measured_params(measurement, result.spec.template or "")
+        differing = {
+            k: v for k, v in applied.items()
+            if abs(float(result.spec.params.get(k, 0) or 0) - v) > 0.5
+        }
+        if differing:
+            from bpcad.agent.refine import apply_changes
+
+            try:
+                corrected = apply_changes(result.spec, differing)
+                verify_candidate(corrected)
+                result.spec = corrected
+                emit("measured", differing)
+            except Exception:
+                # The measurement did not survive the build - keep what the
+                # model chose rather than losing a part that works.
+                emit("measurement_rejected", differing)
 
     if (escalate and not result.ok and not result.ladder.never_reached_a_model):
         emit("escalate", result.ladder.last_error)
@@ -941,6 +967,63 @@ def thumbnail(stl: str | Path, out_path: str | Path, size: int = 320) -> Path:
     return V.render_view_to(
         mesh, out, view="3q", width=size, height=int(size * 0.78)
     )
+
+
+def measure_for_design(
+    image: str | Path,
+    known_width_mm: float | None = None,
+    view: str = "auto",
+):
+    """
+    Read a part out of a picture, in enough detail to design from.
+
+    Returns a PartMeasurement: the outline, the entrance if the view can show
+    one, the roof pitch if it can, each with its confidence and residual.
+
+    This is the one to use for driving a design. measure_reference below is the
+    thin version - a silhouette and an aspect ratio - which is true but not
+    enough to build anything from.
+    """
+    from bpcad.measure.part import measure_part
+
+    try:
+        return measure_part(image, known_width_mm=known_width_mm, view=view)
+    except (FileNotFoundError, ValueError) as exc:
+        raise ApiError(str(exc)) from exc
+
+
+def measured_params(measurement, template: str) -> dict[str, Any]:
+    """
+    Turn measurements into template parameters, where the mapping is exact.
+
+    ONLY where it is exact. An entrance diameter measured off a photograph IS
+    entrance_dia_mm - same quantity, same units, nothing inferred. An aspect
+    ratio is not any parameter, and guessing which one it should drive would be
+    inventing a dimension, which is the thing this project refuses to do.
+
+    Everything mapped here is reported to the user as measured, so a wrong scale
+    shows up as an obviously wrong number rather than a quietly wrong part.
+    """
+    if measurement is None or not measurement.scale_mm_per_px:
+        return {}
+
+    exact: dict[str, dict[str, str]] = {
+        "enclosure": {
+            "entrance_diameter": "entrance_dia_mm",
+            "entrance_height": "entrance_height_mm",
+            "roof_pitch": "roof_pitch_deg",
+        },
+    }
+    mapping = exact.get(template, {})
+    out: dict[str, Any] = {}
+    for measured, param in mapping.items():
+        item = measurement.get(measured)
+        if item is None:
+            continue
+        value = item.value if item.units == "deg" else measurement.in_mm(measured)
+        if value is not None:
+            out[param] = round(float(value), 2)
+    return out
 
 
 def measure_reference(

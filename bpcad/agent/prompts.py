@@ -94,10 +94,15 @@ def build_user_prompt(
     ]
 
     if measurements:
-        parts.append("Measurements taken from the reference image. These are MEASURED,")
-        parts.append("not estimated - prefer them over anything in the request text:")
+        parts.append("MEASURED FROM THE REFERENCE IMAGE. These are measurements,")
+        parts.append("not estimates. Where one of these covers a parameter, USE IT -")
+        parts.append("it beats anything implied by the request text, and it beats")
+        parts.append("a default:")
         for k, v in measurements.items():
             parts.append("  %s: %s" % (k, v))
+        parts.append("")
+        parts.append("Anything the image could not show is simply absent above.")
+        parts.append("Take those from the request, or leave them to default.")
         parts.append("")
 
     parts.append("Templates available:")

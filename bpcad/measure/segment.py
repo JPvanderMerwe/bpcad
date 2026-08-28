@@ -249,6 +249,41 @@ def edge_profile(mask: np.ndarray, side: str = "left") -> np.ndarray:
     raise ValueError("side must be left, right, top or bottom, got %r" % side)
 
 
+def foreground(img, border: int = 3) -> np.ndarray:
+    """
+    The object, whichever way round the picture is.
+
+    An earlier version assumed a dark object on a light field, which is true of
+    a product shot on white and false of every render this program produces -
+    those are light parts on a near-black viewport, and the assumption selected
+    nothing at all.
+
+    So the polarity is read off the border rather than assumed: whichever side
+    of the border's brightness the middle of the picture sits on is the object.
+    """
+    lum = luminance(img)
+    if border < 1:
+        raise ValueError("border must be at least 1 pixel, got %r" % border)
+
+    ring = np.concatenate([
+        lum[:border, :].ravel(), lum[-border:, :].ravel(),
+        lum[:, :border].ravel(), lum[:, -border:].ravel(),
+    ])
+    lo, hi = float(ring.min()), float(ring.max())
+
+    h, w = lum.shape
+    middle = lum[h // 4: 3 * h // 4, w // 4: 3 * w // 4]
+    centre = float(np.median(middle))
+
+    if centre < lo:
+        return lum <= lo - 0.5          # dark object on a light field
+    if centre > hi:
+        return lum >= hi + 0.5          # light object on a dark field
+    # The middle sits inside the border's own range - fall back to whichever
+    # side is further from it, and say so by returning the larger separation.
+    return lum <= lo - 0.5 if (lo - centre) > (centre - hi) else lum >= hi + 0.5
+
+
 def bbox(mask: np.ndarray) -> Box:
     """Inclusive bounding box of every True pixel."""
     mask = np.asarray(mask, dtype=bool)

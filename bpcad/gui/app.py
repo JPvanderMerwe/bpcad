@@ -180,6 +180,7 @@ class MainWindow(QMainWindow):
         self._busy(True)
         self.runner.start(
             session_create_job, prompt,
+            measurement=self.gallery.measurements,
             out_dir=str(self.session.root / "v01"),
             render=True, cfg=self.cfg,
             on_event=self._event,

@@ -578,3 +578,169 @@ def test_trace_normalises_to_unit_width():
     xs = [p[0] for sh in d["shapes"] for p in sh["pts"]]
     assert min(xs) == pytest.approx(0.0, abs=1e-4)
     assert max(xs) == pytest.approx(1.0, abs=1e-4)
+
+
+# -- reading a part out of a picture ----------------------------------------
+#
+# The earlier reader reported a silhouette and an aspect ratio: true, but not
+# enough to design anything from. These check that the real features come back,
+# and - just as important - that a view is not asked for a measurement it
+# cannot make.
+
+
+@pytest.fixture(scope="module")
+def known_part(tmp_path_factory):
+    """
+    A birdhouse with KNOWN parameters, rendered. Measuring a render whose true
+    dimensions are known is the only way to say whether the reader is right,
+    rather than merely plausible.
+    """
+    import cadquery as cq
+
+    from bpcad.build.helpers import BuildLog
+    from bpcad.build.templates.enclosure import EnclosureParams, build_core, derive
+    from bpcad.render import views as V
+    from bpcad.verify.mesh import load_mesh
+
+    tmp = tmp_path_factory.mktemp("known")
+    p = EnclosureParams(width_mm=140.0, depth_mm=120.0, height_mm=190.0,
+                        entrance_dia_mm=32.0, wall_mm=4.0, roof_pitch_deg=22.0,
+                        roof_overhang_mm=30.0)
+    stl = tmp / "known.stl"
+    cq.exporters.export(build_core(p, derive(p), BuildLog()), str(stl),
+                        tolerance=0.03, angularTolerance=0.12)
+    mesh = load_mesh(stl)
+    front = V.render_view_to(mesh, tmp / "front.png", view="front",
+                             width=700, height=800)
+    side = V.render_view_to(mesh, tmp / "side.png", view="side",
+                            width=700, height=800)
+    return {"params": p, "front": front, "side": side}
+
+
+def test_polarity_is_read_off_the_border_not_assumed(known_part):
+    """
+    An earlier version assumed a dark object on a light field - true of a
+    product shot on white, false of every render this program makes, which are
+    light parts on a near-black viewport. It selected nothing at all.
+    """
+    from bpcad.measure.segment import bbox, foreground
+
+    mask = foreground(known_part["front"])
+    assert mask.any()
+    box = bbox(mask)
+    assert box.width > 300 and box.height > 300
+
+
+def test_the_entrance_is_recovered_to_within_a_percent(known_part):
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["front"], known_width_mm=200.0, view="front")
+    dia = m.in_mm("entrance_diameter")
+    assert dia == pytest.approx(31.7, abs=1.5), "true diameter is 32 mm"
+
+
+def test_the_entrance_height_is_recovered(known_part):
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["front"], known_width_mm=200.0, view="front")
+    height = m.in_mm("entrance_height")
+    true = known_part["params"].entrance_z_mm
+    assert height == pytest.approx(true, rel=0.05), "true height is %.1f mm" % true
+
+
+def test_the_entrance_carries_its_residual(known_part):
+    """
+    A circle fitted without its residual is just a number. The residual is what
+    says the hole really was round rather than a shadow or a slot.
+    """
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["front"], known_width_mm=200.0, view="front")
+    item = m.get("entrance_diameter")
+    assert item.confidence == "fitted"
+    assert "residual" in item.evidence
+
+
+def test_a_front_view_is_not_asked_for_the_roof_pitch(known_part):
+    """
+    It looks along the slope and would report zero - correctly, and uselessly.
+    A gap the prompt can fill beats a wrong number.
+    """
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["front"], known_width_mm=200.0, view="front")
+    assert m.get("roof_pitch") is None
+    assert any("pitch is not measurable" in n for n in m.notes)
+
+
+def test_a_side_view_measures_the_pitch(known_part):
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["side"], known_width_mm=180.0, view="side")
+    pitch = m.get("roof_pitch")
+    assert pitch is not None
+    assert 12.0 < pitch.value < 30.0, "true pitch is 22 degrees"
+    assert "approximate" in pitch.evidence
+
+
+def test_a_side_view_does_not_report_an_entrance(known_part):
+    """It cannot see one, and a ventilation slot passed the roundness test."""
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["side"], known_width_mm=180.0, view="side")
+    assert m.get("entrance_diameter") is None
+
+
+def test_nothing_is_reported_in_millimetres_without_a_scale(known_part):
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["front"], view="front")
+    assert m.scale_mm_per_px is None
+    assert m.in_mm("entrance_diameter") is None
+    facts = m.as_facts()
+    assert not any(k.endswith("_mm") for k in facts)
+    assert "proportions only" in facts["note"]
+
+
+def test_only_exact_mappings_become_parameters(known_part):
+    """
+    An entrance diameter off a photograph IS entrance_dia_mm - same quantity,
+    same units. An aspect ratio is not any parameter, and choosing one for it
+    would be inventing a dimension.
+    """
+    from bpcad import api
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["front"], known_width_mm=200.0, view="front")
+    params = api.measured_params(m, "enclosure")
+
+    assert "entrance_dia_mm" in params
+    assert "entrance_height_mm" in params
+    assert not any("aspect" in k or "overall" in k for k in params)
+
+
+def test_no_parameters_are_mapped_without_a_scale(known_part):
+    from bpcad import api
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["front"], view="front")
+    assert api.measured_params(m, "enclosure") == {}
+
+
+def test_measurements_reach_the_prompt_as_facts(known_part):
+    from bpcad.agent import prompts
+    from bpcad.measure.part import measure_part
+
+    m = measure_part(known_part["front"], known_width_mm=200.0, view="front")
+    text = prompts.build_user_prompt("a birdhouse", "petg", 0.4, 0.24,
+                                     measurements=m.as_facts())
+    assert "MEASURED FROM THE REFERENCE IMAGE" in text
+    assert "entrance_diameter_mm" in text
+
+    # Match on the collapsed text: the block is hard-wrapped, so asserting a
+    # phrase that happens to span a line break tests the wrapping, not the
+    # meaning.
+    flat = " ".join(text.split())
+    assert "USE IT" in flat
+    assert "it beats a default" in flat
+    assert "could not show is simply absent" in flat
