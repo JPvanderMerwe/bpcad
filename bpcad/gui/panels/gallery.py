@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 from bpcad.gui.panels.widgets import ImageDrop, Pill
 from bpcad.gui.theme import (
     ACCENT, BAD, BG_INPUT, BG_RAISED, BORDER, MONO, OK, TEXT, TEXT_DIM, WARN,
+    primary,
 )
 
 
@@ -69,18 +70,25 @@ class PartCard(QFrame):
 
     def _load(self) -> None:
         e = self.entry
+        # Prefer a shaded render, then any picture at all. Keying on a fixed
+        # list meant a part rendered under a different name showed as having
+        # no image when it had three.
         image = None
-        for key in ("3q", "preview", "thumb", "heightmap"):
+        for key in ("thumb", "3q", "preview", "front", "above"):
             if key in e.images:
                 image = e.images[key]
                 break
+        if image is None and e.images:
+            image = next(iter(e.images.values()))
         if image and Path(image).is_file():
             pix = QPixmap(str(image))
             self.thumb.setPixmap(
                 pix.scaled(QSize(222, 146), Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
         else:
-            self.thumb.setText("not built")
+            # "not built" was a lie for a part built from the command line
+            # without --render: the STL is there, the picture is not.
+            self.thumb.setText("no preview yet" if e.built else "not built")
             self.thumb.setStyleSheet("border: none; color: %s;" % TEXT_DIM)
 
         if e.is_draft:
@@ -135,7 +143,13 @@ class GalleryPanel(QWidget):
 
     def _build_hero(self) -> QWidget:
         hero = QWidget()
-        hero.setStyleSheet("background: %s;" % BG_RAISED)
+        hero.setObjectName("hero")
+        # Scoped with an object name on purpose. A stylesheet set on a
+        # container applies to that container AND EVERY CHILD, and a
+        # widget-level sheet outranks the application one - so an
+        # unscoped "background: X" here silently repainted every button
+        # inside, including the primary action, which lost its fill.
+        hero.setStyleSheet("QWidget#hero { background: %s; }" % BG_RAISED)
         layout = QVBoxLayout(hero)
         layout.setContentsMargins(34, 26, 34, 22)
         layout.setSpacing(12)
@@ -169,17 +183,18 @@ class GalleryPanel(QWidget):
         row.addWidget(self.prompt, 1)
 
         self.image_drop = ImageDrop()
-        self.image_drop.setFixedSize(150, 74)
-        self.image_drop.label.setText("+ image")
+        self.image_drop.setFixedSize(190, 74)
+        self.image_drop.label.setText("+ reference image")
         self.image_drop.image_chosen.connect(self._on_image)
         row.addWidget(self.image_drop)
 
         side = QVBoxLayout()
         side.setSpacing(6)
-        self.create_btn = QPushButton("Create")
-        self.create_btn.setProperty("primary", True)
+        self.create_btn = primary(QPushButton("Create"))
         self.create_btn.setFixedSize(126, 40)
-        self.create_btn.setStyleSheet("font-size: 14px; font-weight: 600;")
+        # No inline stylesheet here. Setting one replaces the whole rule for
+        # this widget, including the [primary="true"] fill from the app sheet,
+        # so the main action silently rendered as an ordinary outlined button.
         side.addWidget(self.create_btn)
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setFixedSize(126, 28)
@@ -262,6 +277,14 @@ class GalleryPanel(QWidget):
 
         scroll.setWidget(holder)
         return scroll
+
+    def refresh_card(self, name: str, image) -> None:
+        """A thumbnail finished rendering. Put it on its card."""
+        for card in self._cards:
+            if card.entry.name == name:
+                card.entry.images["thumb"] = image
+                card._load()
+                return
 
     def set_parts(self, entries: list) -> None:
         for card in self._cards:

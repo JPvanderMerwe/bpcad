@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from bpcad import api
-from bpcad.gui.theme import ACCENT, BAD, BG_RAISED, OK, TEXT_DIM, WARN
+from bpcad.gui.theme import ACCENT, BAD, BG_RAISED, OK, TEXT_DIM, WARN, primary
 
 # A spin box needs finite limits even where the schema states none.
 FALLBACK_MIN = -1e6
@@ -390,8 +390,7 @@ class SpecPanel(QWidget):
         buttons.addWidget(self.status, 1)
 
         self.explain_btn = QPushButton("Copy as YAML")
-        self.build_btn = QPushButton("Build")
-        self.build_btn.setProperty("primary", True)
+        self.build_btn = primary(QPushButton("Build"))
         buttons.addWidget(self.explain_btn)
         buttons.addWidget(self.build_btn)
         layout.addLayout(buttons)

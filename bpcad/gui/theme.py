@@ -13,16 +13,23 @@ from __future__ import annotations
 # Matches render.raster's background, deliberately.
 VIEWPORT_BG = (0.078, 0.086, 0.102)
 
-BG = "#14161a"
-BG_RAISED = "#1b1e24"
-BG_INPUT = "#0f1114"
-BORDER = "#2a2f38"
-TEXT = "#e6e8ec"
-TEXT_DIM = "#9aa0aa"
-ACCENT = "#4aa3df"
-OK = "#5bc98c"
-WARN = "#e0b050"
-BAD = "#e06c6c"
+# Near-black rather than grey. A render is the brightest thing on screen and
+# should stay that way - the chrome is not competing with the part.
+BG = "#0d0f13"
+BG_RAISED = "#151920"
+BG_INPUT = "#0a0c0f"
+BORDER = "#232932"
+BORDER_LIT = "#2f3947"
+TEXT = "#e8ebf0"
+TEXT_DIM = "#8b93a1"
+
+# One accent, used only for "this is live" and "this is the primary action".
+# Spending it on decoration is how an accent stops meaning anything.
+ACCENT = "#38bdf8"
+ACCENT_DIM = "#1e4e63"
+OK = "#4ade80"
+WARN = "#fbbf24"
+BAD = "#f87171"
 MONO = "ui-monospace, 'JetBrains Mono', 'DejaVu Sans Mono', monospace"
 
 STATUS_COLOUR = {
@@ -78,18 +85,25 @@ QPushButton {{
     border: 1px solid {BORDER};
     border-radius: 5px;
     padding: 6px 14px;
+    font-size: 12px;
 }}
-QPushButton:hover {{ border-color: {ACCENT}; }}
+QPushButton:hover {{ border-color: {BORDER_LIT}; color: {TEXT}; }}
 QPushButton:pressed {{ background: {BORDER}; }}
 QPushButton:disabled {{ color: {TEXT_DIM}; border-color: {BORDER}; }}
 QPushButton[primary="true"] {{
-    background: {ACCENT};
-    border-color: {ACCENT};
-    color: #08121a;
-    font-weight: 600;
+    /* background-color, not background: with a border-radius and a custom
+       border Qt does not repaint the fill from the shorthand, so the main
+       action rendered as an outline with dark text on a dark ground. */
+    background-color: {ACCENT};
+    border: 1px solid {ACCENT};
+    color: #06131b;
+    font-weight: 700;
+    letter-spacing: 0.3px;
 }}
-QPushButton[primary="true"]:hover {{ background: #5fb2e8; }}
-QPushButton[primary="true"]:disabled {{ background: {BORDER}; color: {TEXT_DIM}; }}
+QPushButton[primary="true"]:hover {{ background-color: #5accfa; }}
+QPushButton[primary="true"]:disabled {{
+    background-color: {BORDER}; color: {TEXT_DIM}; border-color: {BORDER};
+}}
 
 QTabWidget::pane {{ border: 1px solid {BORDER}; border-radius: 6px; top: -1px; }}
 QTabBar::tab {{
@@ -100,6 +114,7 @@ QTabBar::tab {{
     color: {TEXT_DIM};
 }}
 QTabBar::tab:selected {{ color: {TEXT}; border-bottom: 2px solid {ACCENT}; }}
+QTabBar::tab {{ font-size: 12px; letter-spacing: 0.2px; }}
 QTabBar::tab:hover {{ color: {TEXT}; }}
 
 QTreeWidget, QTableWidget, QListWidget {{
@@ -166,3 +181,18 @@ QCheckBox::indicator:checked {{ background: {ACCENT}; border-color: {ACCENT}; }}
 
 def mono(size: int = 12) -> str:
     return f"font-family: {MONO}; font-size: {size}px;"
+
+
+def primary(button):
+    """
+    Mark a button as the main action, and make Qt notice.
+
+    Setting a dynamic property does not re-evaluate the stylesheet on its own -
+    the selector [primary="true"] is matched at polish time, so a property set
+    afterwards leaves the button looking ordinary. Unpolish/polish is the fix,
+    and doing it here means no call site has to remember.
+    """
+    button.setProperty("primary", True)
+    button.style().unpolish(button)
+    button.style().polish(button)
+    return button

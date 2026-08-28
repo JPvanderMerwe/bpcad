@@ -258,3 +258,29 @@ def _thumb(part):
         return api.thumbnail(part.stl, part.part_dir / "out" / "thumb.png")
     except Exception:
         return None
+
+
+def thumbnails_job(entries, report, should_cancel):
+    """
+    Render a thumbnail for any part that has an STL and no picture.
+
+    A gallery of grey boxes saying "no preview" is not a gallery. These are
+    cheap - a few hundred milliseconds each on the CPU rasteriser - but there
+    can be a lot of them, so they go one at a time on a worker and each one is
+    reported as it lands rather than all at the end.
+    """
+    from bpcad import api
+
+    made = 0
+    for entry in entries:
+        if should_cancel():
+            break
+        if not entry.built or entry.images:
+            continue
+        try:
+            out = api.thumbnail(entry.stl, entry.directory / "out" / "thumb.png")
+        except Exception:
+            continue
+        made += 1
+        report("thumbnail_for", (entry.name, out))
+    return made

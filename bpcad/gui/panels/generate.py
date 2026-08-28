@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QLabel, QPlainTextEdit, QProgressBar, QPushButton, QVBoxLayout, QWidget,
 )
 
-from bpcad.gui.theme import ACCENT, BAD, MONO, OK, TEXT_DIM, WARN
+from bpcad.gui.theme import ACCENT, BAD, MONO, OK, TEXT_DIM, WARN, primary
 
 
 class GeneratePanel(QWidget):
@@ -111,8 +111,7 @@ class GeneratePanel(QWidget):
         controls.addWidget(self.status, 1)
         self.cancel_btn = QPushButton("Cancel")
         self.cancel_btn.setEnabled(False)
-        self.run_btn = QPushButton("Generate")
-        self.run_btn.setProperty("primary", True)
+        self.run_btn = primary(QPushButton("Generate"))
         controls.addWidget(self.cancel_btn)
         controls.addWidget(self.run_btn)
         layout.addLayout(controls)

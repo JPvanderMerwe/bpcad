@@ -1,0 +1,13 @@
+name: birdhouse
+level: 1
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.2
+print_axis: z
+template: enclosure
+params:
+  width_mm: 120
+  depth_mm: 100
+  height_mm: 140
+  entrance_dia_mm: 32
+  roof_pitch_deg: 18
