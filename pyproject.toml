@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bpcad"
+version = "0.1.0"
+description = "Local, offline text-and-image-to-3D-printable-part pipeline. Bit Primitive."
+readme = "README.md"
+requires-python = ">=3.11"
+
+# Kept deliberately tight. Nothing here is a GPU library, a cloud SDK or a web
+# framework, and httpx only ever talks to a loopback host - see bpcad/models/base.py.
+dependencies = [
+    "cadquery",
+    "numpy",
+    "pillow",
+    "scikit-image",
+    "trimesh",
+    "matplotlib",
+    "pydantic>=2",
+    "typer",
+    "httpx",
+    # spec.yaml is the durable artifact of this project and needs a parser.
+    # Approved as an addition to the dependency list in the brief.
+    "pyyaml",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+bpcad = "bpcad.cli:app"
+
+[tool.setuptools.packages.find]
+include = ["bpcad*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,48 @@
+# rain loop keyring - one piece, printed flat, face detail in Z.
+#
+# This file is the durable artifact. The model is a convenience layer that
+# writes one of these; everything downstream is deterministic Python. Edit it
+# by hand freely - `bpcad spec explain keyring_device` prints every parameter
+# with its units, default and bounds.
+
+name: loop_keyring
+level: 1
+material: petg          # a PLA keyring at this section snaps at the handle
+nozzle_mm: 0.4
+layer_mm: 0.12          # the face detail is in Z, which is the whole point
+
+template: keyring_device
+params:
+  body_width_mm: 30.0
+  depth_mm: 7.0
+
+  # logo_on now defaults to FALSE, because it requires a file path a model
+  # cannot know. This part wants the wordmark, so it opts in explicitly.
+  logo_on: true
+  logo_json: loop_logo.json    # relative to THIS file, not the shell's cwd
+
+assumptions:
+  - name: plan_corner_radius_px
+    value: 30
+    units: px
+    why: >-
+      The plan-view corner radius is invisible from a front-on render. One
+      side-on photo with a ruler in frame fixes it permanently.
+  - name: logo_centre_y_px
+    value: 58
+    units: px above the body bottom
+    why: >-
+      The wordmark is too low-contrast against the fabric weave to segment its
+      vertical position reliably.
+
+scale_departures:
+  - name: handle section
+    factor: 2.67
+    true_mm: 0.899
+    used_mm: 2.40
+    why: true scale puts the rod under the nozzle width, so it would not print
+  - name: boss diameter
+    factor: 1.66
+    true_mm: 2.646
+    used_mm: 4.40
+    why: the boss must bridge the handle-to-body joint, which carries the pull load

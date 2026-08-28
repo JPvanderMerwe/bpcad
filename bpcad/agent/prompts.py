@@ -1,0 +1,324 @@
+"""
+Prompt construction.
+
+WHAT THE MODEL IS ASKED TO DO, AND WHAT IT IS NOT
+--------------------------------------------------
+It is asked to fill in a form. It is never asked to write CAD code, choose a
+CadQuery selector, or reason about geometry. Structured extraction into a schema
+is something an 8B model does reliably; the rest is not, and the architecture is
+built so it never has to.
+
+The template catalogue goes into the prompt WITH its parameter schema, because a
+model that cannot see the legal parameter names invents plausible ones, and a
+model that cannot see the bounds picks round numbers that fail validation.
+"""
+
+from __future__ import annotations
+
+import json
+from typing import Any
+
+SYSTEM = """You fill in a part specification for a 3D printing pipeline.
+
+You do NOT write CAD code. You choose a template and fill in its parameters.
+Deterministic Python turns your specification into geometry.
+
+Rules:
+- Reply with JSON only. No prose, no explanation, no markdown fences.
+- `template` MUST be one of the template names listed. Never invent one, and
+  never put a material or a description there.
+- Use only the parameter names listed for the template you chose. A name that
+  is not on the list is rejected.
+- Every dimension is in millimetres and every angle is in degrees.
+- Respect the stated bounds. A value outside them is rejected.
+- Omit any parameter you have no information about; it will take its default.
+  Guessing is worse than omitting.
+"""
+
+
+def template_catalogue(max_params: int = 40) -> str:
+    """Every template with its parameters, units, defaults and bounds."""
+    from bpcad.spec import registry
+
+    blocks: list[str] = []
+    for name in registry.names():
+        t = registry.get(name)
+        lines = ["TEMPLATE %s" % name, "  %s" % t.summary, "  parameters:"]
+        for i, (fname, field) in enumerate(t.params_model.model_fields.items()):
+            if i >= max_params:
+                lines.append("    ... %d more, see `bpcad spec explain %s`"
+                             % (len(t.params_model.model_fields) - max_params, name))
+                break
+            bounds = []
+            for meta in field.metadata:
+                for attr, label in (("ge", ">="), ("gt", ">"), ("le", "<="), ("lt", "<")):
+                    v = getattr(meta, attr, None)
+                    if v is not None:
+                        bounds.append("%s %g" % (label, v))
+            default = field.default
+            shown = "required" if field.is_required() else (
+                "%g" % default if isinstance(default, float) else str(default)
+            )
+            lines.append(
+                "    %-22s default %-8s %-18s %s"
+                % (fname, shown, ", ".join(bounds), (field.description or "").split(".")[0])
+            )
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
+
+
+def build_user_prompt(
+    request: str,
+    material: str,
+    nozzle_mm: float,
+    layer_mm: float,
+    measurements: dict[str, Any] | None = None,
+) -> str:
+    """The task, the catalogue, and any measurements taken from a reference image."""
+    parts = [
+        "Requested part:",
+        "  %s" % request.strip(),
+        "",
+        "Fixed settings - copy these into your answer unchanged:",
+        "  material: %s" % material,
+        "  nozzle_mm: %g" % nozzle_mm,
+        "  layer_mm: %g" % layer_mm,
+        "",
+    ]
+
+    if measurements:
+        parts.append("Measurements taken from the reference image. These are MEASURED,")
+        parts.append("not estimated - prefer them over anything in the request text:")
+        for k, v in measurements.items():
+            parts.append("  %s: %s" % (k, v))
+        parts.append("")
+
+    parts.append("Templates available:")
+    parts.append("")
+    parts.append(template_catalogue())
+    return "\n".join(parts)
+
+
+def critique_prompt(previous: str, problem: str, hint: str = "") -> str:
+    """
+    Feed a failure back.
+
+    ORDER MATTERS MORE THAN CONTENT HERE. The first version of this put the
+    instruction last, behind the full validator dump and a line telling the
+    reader to run `bpcad spec explain` - advice aimed at a person, useless to a
+    model. Given that, a 7B model moved blade_chord_mm from 12.5 to 15 when it
+    had been told in as many words to set it to 10.2: it had the answer and
+    buried it.
+
+    So the correction leads, in the imperative, and the raw validator text is
+    demoted to context underneath. Human-facing CLI suggestions are stripped -
+    the model cannot run a command.
+    """
+    # Strip lines that are PURELY advice to a human - "Run `bpcad spec explain
+    # x`" - which a model cannot act on. Do NOT strip every line that mentions
+    # bpcad: the keyring's own message is "...or set logo_on: false" on the
+    # same line as a `bpcad measure trace` suggestion, and dropping the whole
+    # line throws away the answer along with the noise.
+    clean = "\n".join(
+        line for line in problem.strip().splitlines()
+        if not line.strip().startswith("Run `bpcad")
+        and not line.strip().startswith("bpcad ")
+    ).strip()
+
+    lines = ["Your previous answer was rejected. Fix exactly this and resend:", ""]
+    if hint:
+        lines += [hint.strip(), ""]
+    lines += [
+        "Change ONLY what is listed above. Keep every other value you sent.",
+        "",
+        "For reference, the validator said:",
+        clean,
+        "",
+        "You previously sent:",
+        previous.strip()[:1500],
+        "",
+        "Send the corrected JSON object. JSON only, no prose.",
+    ]
+    return "\n".join(lines)
+
+
+def ask_schema() -> dict:
+    """
+    The JSON schema handed to the daemon for constrained generation.
+
+    Deliberately FLAT rather than mirroring PartSpec exactly: `params` is a free
+    object here because a small model handles a flat form far better than a
+    discriminated union, and the real PartSpec validation happens afterwards in
+    Python where the errors are good. The `template` enum is the important part
+    - without it, models reliably put a material or a description in that field.
+    """
+    from bpcad.spec import registry
+
+    return {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": "Short lowercase identifier, words separated by underscores.",
+            },
+            "template": {"type": "string", "enum": registry.names()},
+            "material": {"type": "string"},
+            "nozzle_mm": {"type": "number"},
+            "layer_mm": {"type": "number"},
+            "print_axis": {"type": "string", "enum": ["x", "y", "z"]},
+            "params": {
+                "type": "object",
+                "description": "Parameters for the chosen template, names exactly as listed.",
+            },
+        },
+        "required": ["name", "template", "material", "nozzle_mm", "layer_mm", "params"],
+    }
+
+
+def parse_reply(raw: str) -> dict:
+    """
+    Turn a model's reply into a dict, forgiving the usual decorations.
+
+    Even under schema constraint a model occasionally wraps its answer in a
+    markdown fence or adds a sentence. Stripping that here is not encouraging
+    sloppiness; it is refusing to fail a run over punctuation.
+    """
+    text = (raw or "").strip()
+    if not text:
+        raise ValueError("the model returned nothing at all")
+
+    if text.startswith("```"):
+        text = text.split("```")[1] if "```" in text[3:] else text[3:]
+        if text.lstrip().startswith("json"):
+            text = text.lstrip()[4:]
+        text = text.strip()
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start == -1 or end <= start:
+            raise ValueError(
+                "the reply is not JSON and contains no JSON object. It began: %r"
+                % text[:200]
+            )
+        try:
+            data = json.loads(text[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise ValueError("the reply is not valid JSON: %s" % exc) from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(
+            "the reply is a %s, but a spec must be a JSON object" % type(data).__name__
+        )
+    return data
+
+
+DSL_SYSTEM = """You describe a 3D part as a list of primitive operations.
+
+You do NOT write CAD code and you do NOT write CadQuery selector strings.
+You choose operations from a fixed list and give each one its numbers.
+
+Rules:
+- Reply with JSON only. No prose, no markdown fences.
+- `ops` is a list. Each entry has an `op` field naming the operation.
+- The FIRST op must create geometry: rounded_prism, disc or arc_rod.
+- Faces are addressed by NAME - top_face, front_face and so on. Never by a
+  selector like ">Z" or "|Z".
+- Every dimension is in millimetres and every angle is in degrees.
+- A cavity must open along the print direction, never against it.
+"""
+
+
+def dsl_catalogue() -> str:
+    """Every level-2 op with its fields, plus the legal anchors and edge groups."""
+    from bpcad.spec.dsl import EDGE_GROUPS, FACE_FRAMES, OP_NAMES, AnyOp
+    from pydantic import TypeAdapter
+
+    import typing
+
+    blocks: list[str] = []
+    for member in typing.get_args(typing.get_args(AnyOp)[0]):
+        fields = member.model_fields
+        name = fields["op"].annotation
+        literal = typing.get_args(name)[0] if typing.get_args(name) else str(name)
+        lines = ["OP %s" % literal, "  %s" % (member.__doc__ or "").strip().split("\n")[0]]
+        for fname, field in fields.items():
+            if fname == "op":
+                continue
+            bounds = []
+            for meta in field.metadata:
+                for attr, label in (("ge", ">="), ("gt", ">"), ("le", "<="), ("lt", "<")):
+                    v = getattr(meta, attr, None)
+                    if v is not None:
+                        bounds.append("%s %g" % (label, v))
+            default = field.default
+            shown = "required" if field.is_required() else (
+                "%g" % default if isinstance(default, float) else str(default)
+            )
+            lines.append("    %-18s default %-8s %-14s %s"
+                         % (fname, shown, ", ".join(bounds),
+                            (field.description or "").split(".")[0]))
+        blocks.append("\n".join(lines))
+
+    return "\n\n".join(blocks) + (
+        "\n\nANCHOR NAMES: %s"
+        "\nEDGE GROUPS:  %s"
+        % (", ".join(sorted(FACE_FRAMES)), ", ".join(sorted(EDGE_GROUPS)))
+    )
+
+
+def build_dsl_prompt(
+    request: str,
+    material: str,
+    nozzle_mm: float,
+    layer_mm: float,
+    why_escalated: str = "",
+) -> str:
+    """The level-2 task: compose ops, because no template fitted."""
+    parts = ["Requested part:", "  %s" % request.strip(), ""]
+    if why_escalated:
+        parts += [
+            "No template could be made to fit. The last attempt failed with:",
+            "  %s" % why_escalated.split("\n")[0][:300],
+            "",
+        ]
+    parts += [
+        "Build it from primitive operations instead.",
+        "",
+        "Fixed settings - copy these into your answer unchanged:",
+        "  material: %s" % material,
+        "  nozzle_mm: %g" % nozzle_mm,
+        "  layer_mm: %g" % layer_mm,
+        "",
+        "Operations available:",
+        "",
+        dsl_catalogue(),
+    ]
+    return "\n".join(parts)
+
+
+def dsl_schema() -> dict:
+    """Constrained shape for a level-2 answer."""
+    from bpcad.spec.dsl import OP_NAMES
+
+    return {
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"},
+            "material": {"type": "string"},
+            "nozzle_mm": {"type": "number"},
+            "layer_mm": {"type": "number"},
+            "print_axis": {"type": "string", "enum": ["x", "y", "z"]},
+            "ops": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "properties": {"op": {"type": "string", "enum": list(OP_NAMES)}},
+                    "required": ["op"],
+                },
+            },
+        },
+        "required": ["name", "ops"],
+    }

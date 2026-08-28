@@ -1,0 +1,154 @@
+# bpcad default configuration
+# ---------------------------
+# Every value here is either MEASURED, taken from the brief, or marked "UNSET".
+# Nothing is estimated. A value marked "UNSET" has no source yet, and bpcad
+# refuses to use it rather than substituting a plausible-looking number - a
+# wrong tolerance is worse than no tolerance.
+#
+# Run `bpcad config show` to see the resolved values and everything still unset.
+
+
+[print]
+# Source: NOZZLE_MM = 0.40 in reference/rain_loop_keyring.py, and the print
+# notes of every reference part.
+nozzle_mm = 0.40
+
+# Source: the print notes in the louvre vent reference. Note the reference
+# parts each pick their own: keyring 0.12 (its face detail is in Z), the
+# six-part assembly 0.16, the vent 0.20. This is the general default and a
+# spec may override it per part.
+layer_mm = 0.20
+
+
+[limits]
+# Smallest printable feature, as a multiple of the nozzle width. 1.0 x nozzle
+# per the brief. verify/features.py flags anything within 10% as MARGINAL.
+min_feature_multiple = 1.0
+
+# Thinnest engraved or embossed line worth cutting.
+# Source: MIN_STROKE_MM = 0.45 in reference/rain_loop_keyring.py.
+min_engrave_stroke_mm = 0.45
+
+# Thinnest pin or rod section that survives handling.
+# Source: two independent reference values agree on this floor -
+#   MIN_HANDLE_MM = 2.40      (rain_loop_keyring.py, keyring handle)
+#   "Below 2.4 it snaps."     (rain_loop.py, on the pivot spigot)
+min_pin_mm = 2.40
+
+# Face-normal overhang limit against the print axis, in degrees from vertical.
+max_overhang_deg = 45.0
+
+# Largest fall an underside can have before it needs support. Anything shorter
+# is closed by the layer printing above it.
+# Source: PIN_GAP_Z = 0.30 mm in reference/vent_louvre.py, a print-in-place
+# mechanism that prints with no support at all at 0.20 mm layers. Padded to
+# 0.50 so a proven 0.30 gap clears with margin instead of sitting on the line.
+max_bridge_gap_mm = 0.50
+
+
+[export]
+# STL export tolerances. These are not taste, they are a bug fix: a finer
+# tolerance produced tens of thousands of degenerate facets and a mesh that
+# was no longer watertight. Watertightness is re-checked after every export.
+# Source: the brief, and reference/rain_loop_keyring.py uses exactly these.
+stl_tolerance = 0.005
+stl_angular_tolerance = 0.05
+
+
+# ---------------------------------------------------------------------------
+# MODEL LAYER
+# ---------------------------------------------------------------------------
+
+[models]
+# Hosts permitted in addition to loopback. Empty means loopback only, which is
+# the current setting - there is no Tailscale host in play. Adding a host here
+# is the ONLY way a non-loopback endpoint can ever be accepted.
+allowed_model_hosts = []
+
+
+# ---------------------------------------------------------------------------
+# MATERIALS
+# ---------------------------------------------------------------------------
+# clearance_mm  total diametral clearance for a running fit in this material
+# shrink_pct    linear shrink compensation, percent
+#
+# WHERE THESE COME FROM - read this before trusting them.
+#
+# You said you had never needed clearance or shrink numbers, which is exactly
+# right for single solid parts: neither matters until two printed parts have to
+# fit each other. Rather than invent a table, these are HARVESTED from your own
+# reference parts, which printed and worked:
+#
+#   PIVOT_CLEAR_MM  = 0.30   rain_loop.py, lug bore over the pivot spigot
+#   PIN_CLEAR_R     = 0.30   vent_louvre.py, radial, so 0.60 diametral
+#   REGISTER_CLEAR  = 0.20   rain_loop.py, cap register socket
+#   SCREEN_FIT_MM   = 0.30   rain_loop.py, insert in its pocket
+#
+# PETG is set to 0.30 mm, the value proven by both a pivot and a print-in-place
+# linkage. PLA shrinks and creeps less, so it is given the tighter 0.20 mm from
+# the register fit. TPU is UNSET: it is flexible, none of your reference parts
+# use it, and a clearance guessed for a flexible material is worse than none.
+#
+# shrink_pct is 0.0 for PLA and PETG on the evidence that you have never applied
+# shrink compensation and your parts came out right. That is a recorded
+# observation, not a measurement - if a part ever comes out undersize, measure
+# it and put the real number here.
+#
+# Override any of these the moment you measure better ones.
+
+[materials.pla]
+clearance_mm = 0.20
+shrink_pct = 0.0
+
+[materials.petg]
+clearance_mm = 0.30
+shrink_pct = 0.0
+
+[materials.tpu]
+clearance_mm = "UNSET"
+shrink_pct = "UNSET"
+
+
+# ---------------------------------------------------------------------------
+# MACHINE PROFILES
+# ---------------------------------------------------------------------------
+# Selected by --machine, an env var, or CUDA auto-detection. Model tags are
+# UNSET until the candidates have been benchmarked on the actual hardware -
+# see Phase 4. Nothing about a model gets hardcoded before that.
+
+[machines.desktop]
+# Home desktop. NVIDIA, 8 GB VRAM (confirmed). The machine for the larger model
+# and for batch runs.
+backend = "ollama"
+host = "http://127.0.0.1:11434"
+model_primary = "UNSET"
+model_small = "UNSET"
+num_ctx = 16384
+timeout_s = 120
+max_attempts_per_level = 3
+
+[machines.laptop]
+# Work laptop, Dell 14 Plus DB14250, Intel Core Ultra 7 258V, 32 GB RAM.
+#
+# MEASURED 2026-08-27, not assumed. `ollama ps` reports 100% CPU for every
+# model: this Ollama build uses neither the Intel iGPU nor the NPU. CPU speed
+# is therefore the entire constraint. One schema-constrained generation against
+# the real template catalogue (~1700 prompt tokens):
+#
+#   qwen2.5-coder:7b   120s   102 gen tokens   4 params, all correct
+#   gemma4:latest      167s   378 gen tokens   28 params
+#   hermes3:latest     309s   417 gen tokens   33 params
+#
+# qwen is fastest here because it emits only the parameters that matter and
+# lets the rest default, which is also the behaviour the prompt asks for. The
+# others restate the whole catalogue, which is not wrong but costs 2-3x the
+# wall-clock for no extra information.
+#
+# timeout_s is 420 to leave headroom over the slowest measured run.
+backend = "ollama"
+host = "http://127.0.0.1:11434"
+model_primary = "qwen2.5-coder:7b"
+model_small = "hermes3:latest"
+num_ctx = 8192
+timeout_s = 420
+max_attempts_per_level = 2

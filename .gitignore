@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+
+# Generated part output. spec.yaml, report.md, run.json and regression.json
+# ARE tracked - they are the durable record. The meshes are rebuilt from the
+# spec in seconds and would otherwise churn the history on every build.
+parts/*/out/
+
+# The original drop of the reference material. reference/ holds a byte-identical
+# copy, is read-only, and is what the tests and templates actually use. Keeping
+# both in the repo would only create doubt about which one is canonical.
+files/
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store

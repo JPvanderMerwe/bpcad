@@ -1,0 +1,35 @@
+# Print-in-place adjustable louvre vent with a parallel-crank linkage.
+#
+# NOTE ON EXPORT TOLERANCE
+# The reference vent_louvre.stl was exported at CadQuery's defaults (0.1 / 0.1),
+# which is coarser than this project's standard 0.005 / 0.05. They are pinned
+# here so the build reproduces that baseline exactly. Drop these two lines to
+# use the project standard - the part is identical, the mesh is just finer.
+
+name: vent_louvre
+level: 1
+material: petg          # PLA creeps and the blades go slack
+nozzle_mm: 0.4
+layer_mm: 0.2
+
+template: louvre_vent
+params:
+  frame_w_mm: 76.0
+  frame_d_mm: 22.0
+  frame_h_mm: 30.0
+  blade_angle_deg: 0.0
+
+  # STATED EXPLICITLY, NOT LEFT TO DERIVE.
+  # These five now default to values derived from the frame, which is what makes
+  # a vent of any other size work first time. Derivation lands within a few
+  # hundredths of these numbers - close enough to print identically, not close
+  # enough to hash identically - so the reference part pins them and keeps
+  # reproducing the stored STL bit for bit.
+  n_blades: 4
+  blade_chord_mm: 14.0
+  crank_r_mm: 5.0
+  grip_len_mm: 20.0
+  grip_blade: 2
+
+stl_tolerance: 0.1
+stl_angular_tolerance: 0.1
