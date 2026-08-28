@@ -33,6 +33,19 @@ JSON_MODE = "json"              # daemon enforced "valid JSON", not our shape
 PROMPT_ONLY = "prompt"          # nothing enforced, the schema went in the prompt
 UNCONSTRAINED = "none"          # no schema was requested
 
+# Pass this instead of a schema to ask for valid JSON and nothing more.
+#
+# WHY THIS IS SOMETIMES BETTER THAN A SCHEMA. Ollama accepts a JSON Schema
+# containing a oneOf with a discriminator, and then does not enforce it: it
+# constrains the outer object and lets array items through as minimal stubs. On
+# the level-2 operations list that is not merely unhelpful, it is destructive -
+# qwen2.5-coder:7b answered {"op": "rounded_prism"} with no dimensions at all,
+# five attempts running, while the SAME model on the SAME prompt in plain JSON
+# mode produced a complete and correct answer first time. Measured 2026-08-28.
+#
+# So: a schema for a flat object, JSON mode for anything with a union in it.
+JSON_ONLY = "__json_only__"
+
 
 class OllamaError(RuntimeError):
     """The daemon could not be reached, or refused the request."""
@@ -141,7 +154,10 @@ class OllamaBackend:
         }
 
         mechanism = UNCONSTRAINED
-        if schema is not None:
+        if schema is JSON_ONLY or schema == JSON_ONLY:
+            payload["format"] = "json"
+            mechanism = JSON_MODE
+        elif schema is not None:
             payload["format"] = schema
             mechanism = SCHEMA_NATIVE
 

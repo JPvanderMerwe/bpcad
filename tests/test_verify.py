@@ -396,3 +396,131 @@ def test_baseline_round_trips(keyring_report, tmp_path):
     sig = signature_of(keyring_report)
     save_baseline(path, sig)
     assert load_baseline(path) == sig
+
+
+# -- does the part resemble what was asked for? -----------------------------
+#
+# Everything else in this file answers "can this be made?". A 573 cm3 solid
+# slab answers that perfectly well while not being the birdhouse that was
+# requested, and nothing was looking.
+
+
+def test_stated_dimensions_are_read_out_of_a_request():
+    from bpcad.verify.intent import stated_dimensions
+
+    dims = stated_dimensions(
+        "a birdhouse, 120 mm wide, 140 mm tall, 100 mm deep, "
+        "with a 32 mm entrance hole and a sloped roof"
+    )
+    assert dims == [140.0, 120.0, 100.0]
+    assert 32.0 not in dims, "an entrance hole is not an envelope dimension"
+
+
+def test_inner_features_are_not_matched_against_the_envelope():
+    from bpcad.verify.intent import stated_dimensions
+
+    for phrase in ("a 32 mm entrance hole", "5 mm wall thickness",
+                   "a 12 mm bore", "0.3 mm clearance"):
+        assert stated_dimensions("a box, " + phrase) == []
+
+
+def test_the_triple_form_is_understood():
+    from bpcad.verify.intent import stated_dimensions
+
+    assert stated_dimensions("a box 120 x 140 x 100") == [140.0, 120.0, 100.0]
+
+
+def test_a_dropped_dimension_is_caught():
+    """The exact case: 100 mm deep was asked for and 40 mm was built."""
+    from bpcad.verify.intent import check_intent
+
+    r = check_intent(
+        "a birdhouse, 120 mm wide, 140 mm tall, 100 mm deep",
+        (134.4, 174.3, 40.0),
+    )
+    assert not r.ok
+    assert 100.0 in r.missing
+    assert "not the part that was asked for" in r.problems[0]
+
+
+def test_a_part_that_matches_stays_quiet():
+    """
+    A check that fires on good parts gets switched off. A flange or a chamfer
+    legitimately adds a few mm and must not trip it.
+    """
+    from bpcad.verify.intent import check_intent
+
+    assert check_intent("a louvre vent 76 mm wide and 30 mm tall",
+                        (86.0, 31.0, 35.0)).ok
+    assert check_intent("a keyring 30 mm wide", (34.6, 44.3, 7.0)).ok
+
+
+def test_a_request_with_no_dimensions_is_not_second_guessed():
+    from bpcad.verify.intent import check_intent
+
+    r = check_intent("a small birdhouse", (100.0, 100.0, 100.0))
+    assert r.ok and not r.checked
+
+
+def test_the_intent_problem_reaches_the_report():
+    from bpcad.verify.intent import check_intent
+    from bpcad.verify.mesh import MeshReport
+    from bpcad.verify.overhang import OverhangReport
+    from bpcad.verify.report import VerifyReport
+
+    report = VerifyReport(
+        path="x", nozzle_mm=0.4, print_axis="z",
+        mesh=MeshReport("x", True, True, True, 1, 10, 10, 1.0, (1, 1, 1), (0, 0, 0), 0),
+        overhang=OverhangReport(
+            print_axis="z", max_deg=45.0, max_bridge_gap_mm=0.5,
+            worst_overhang_deg=0.0, overhang_area_mm2=0.0, bridged_area_mm2=0.0,
+            unsupported_area_mm2=0.0, max_drop_mm=0.0, downward_area_mm2=0.0,
+            total_area_mm2=1.0, bed_area_mm2=1.0, overhang_face_count=0,
+            unsupported_face_count=0,
+        ),
+        intent=check_intent("a box 100 mm deep", (10.0, 10.0, 10.0)),
+    )
+    assert report.warnings
+    assert "asked for" in report.warnings[0]
+
+
+def test_a_suspiciously_solid_part_is_flagged():
+    """
+    Asked for a birdhouse, the DSL path produced a 120 x 100 x 145 mm block
+    that was 96% solid - correct on the outside, 2.1 kg of filament, and
+    useless as a birdhouse because nothing was hollow. Nothing was looking.
+    """
+    from bpcad.verify.mesh import report_for
+
+    block = trimesh.creation.box(extents=(120, 100, 145))
+    r = report_for(block)
+    assert r.solidity > 0.99
+    assert r.warnings
+    assert "hollow" in r.warnings[0]
+    assert r.problems == [], "a solid block is legal, just worth saying"
+
+
+def test_the_real_parts_are_not_flagged_as_bulk(keyring):
+    """A check that fires on good parts gets switched off."""
+    from bpcad.verify.mesh import report_for
+
+    assert report_for(keyring).warnings == []
+
+
+def test_a_small_solid_part_is_left_alone():
+    """A spacer or a wedge is legitimately solid and nobody needs telling."""
+    from bpcad.verify.mesh import report_for
+
+    assert report_for(trimesh.creation.box(extents=(20, 20, 20))).warnings == []
+
+
+def test_a_hollow_part_of_the_same_size_is_left_alone():
+    from bpcad.verify.mesh import report_for
+
+    outer = trimesh.creation.box(extents=(120, 100, 145))
+    inner = trimesh.creation.box(extents=(110, 90, 135))
+    inner.invert()
+    shell = trimesh.util.concatenate([outer, inner])
+    r = report_for(shell)
+    assert r.solidity < 0.5
+    assert r.warnings == []

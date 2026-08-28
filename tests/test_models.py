@@ -445,8 +445,40 @@ def test_the_template_field_is_an_enum():
     Without it, models reliably put a MATERIAL or a description in `template`.
     Both did on the very first benchmark run.
     """
-    schema = prompts.ask_schema()
-    assert schema["properties"]["template"]["enum"] == ["keyring_device", "louvre_vent"]
+    enum = prompts.ask_schema()["properties"]["template"]["enum"]
+    assert "keyring_device" in enum and "louvre_vent" in enum
+
+
+def test_the_model_can_say_no_template_fits():
+    """
+    A constrained decoder cannot emit anything outside the enum, so without an
+    escape hatch it is FORCED to name a template even when none makes the part.
+    Asked for a birdhouse with only a keyring and a vent available, it produced
+    a 573 cm3 solid slab with a keyring handle - and every downstream check
+    passed, because the thing was perfectly manufacturable. It just was not a
+    birdhouse.
+    """
+    enum = prompts.ask_schema()["properties"]["template"]["enum"]
+    assert prompts.NO_TEMPLATE in enum
+
+    # The escape hatch has to be in the enum AND explained, or a model that
+    # can technically emit it never learns that it is allowed to.
+    assert prompts.NO_TEMPLATE in prompts.SYSTEM
+    assert "not a keyring with different numbers" in prompts.SYSTEM
+
+    user = prompts.build_user_prompt("a birdhouse", "petg", 0.4, 0.2)
+    assert prompts.NO_TEMPLATE in user
+    assert "correct answer, not a failure" in user
+
+
+def test_declining_a_template_is_not_treated_as_an_error():
+    from bpcad.agent.loop import NoTemplateFits, validate_reply
+
+    with pytest.raises(NoTemplateFits):
+        validate_reply(
+            {"name": "b", "template": prompts.NO_TEMPLATE, "params": {}},
+            {"material": "petg", "nozzle_mm": 0.4, "layer_mm": 0.2},
+        )
 
 
 def test_the_catalogue_carries_bounds_and_units():

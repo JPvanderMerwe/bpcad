@@ -719,7 +719,8 @@ def _run(
             return None
         emit("building", spec)
         result, report, stl = compile_and_verify(
-            spec, cfg, None, scratch / "out", allow_level_3=allow_level_3
+            spec, cfg, None, scratch / "out",
+            allow_level_3=allow_level_3, request=request,
         )
         holder["result"], holder["report"], holder["stl"] = result, report, stl
         return None

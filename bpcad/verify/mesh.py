@@ -12,6 +12,12 @@ from pathlib import Path
 import numpy as np
 import trimesh
 
+# A part at least this big, and at least this proportion of its own bounding
+# box, is flagged as suspiciously solid. Both thresholds are deliberately high:
+# small parts are legitimately solid, and so is a spacer or a wedge.
+BULK_CM3 = 150.0
+BULK_SOLIDITY = 0.80
+
 
 @dataclass
 class MeshReport:
@@ -29,10 +35,23 @@ class MeshReport:
     bbox_min_mm: tuple[float, float, float]
     degenerate_faces: int
     problems: list[str] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return not self.problems
+
+    @property
+    def solidity(self) -> float:
+        """
+        How much of its own bounding box the part actually fills, 0 to 1.
+
+        Near 1 on a large part means a solid block, which is almost never what
+        was wanted and is expensive enough to be worth saying out loud.
+        """
+        x, y, z = self.bbox_mm
+        box_cm3 = (x * y * z) / 1000.0
+        return self.volume_cm3 / box_cm3 if box_cm3 > 0 else 0.0
 
 
 def load_mesh(stl_path: str | Path) -> trimesh.Trimesh:
@@ -101,6 +120,29 @@ def report_for(mesh: trimesh.Trimesh, path: str = "<mesh>") -> MeshReport:
             "is NOT the fix, raise it. See config [export]." % degenerate
         )
 
+    # A part that is nearly its own bounding box, and big, is almost certainly
+    # missing a hollow. Asked for a birdhouse, the level-2 path produced a
+    # 120 x 100 x 145 mm block that was 96% solid - correct on the outside,
+    # 2.1 kg of filament, and useless as a birdhouse. Nothing was looking.
+    #
+    # A warning, never a failure: a solid block is sometimes exactly right, and
+    # a check that refuses one would be wrong. But at this size you should have
+    # to mean it.
+    warnings: list[str] = []
+    extents = mesh.bounds[1] - mesh.bounds[0]
+    box_cm3 = float(extents[0] * extents[1] * extents[2]) / 1000.0
+    volume_cm3 = float(mesh.volume) / 1000.0
+    if box_cm3 > 0:
+        solidity = volume_cm3 / box_cm3
+        if volume_cm3 >= BULK_CM3 and solidity >= BULK_SOLIDITY:
+            warnings.append(
+                "this part is %.0f%% of its own bounding box and %.0f cm3 of "
+                "solid material. Nothing is hollow. If it was meant to be a "
+                "shell, a container or an enclosure, a hollow operation is "
+                "missing - as built it is roughly %.1f kg of filament."
+                % (100 * solidity, volume_cm3, volume_cm3 * 1.27 / 1000.0)
+            )
+
     return MeshReport(
         path=path,
         watertight=bool(mesh.is_watertight),
@@ -114,4 +156,5 @@ def report_for(mesh: trimesh.Trimesh, path: str = "<mesh>") -> MeshReport:
         bbox_min_mm=tuple(float(v) for v in mesh.bounds[0]),
         degenerate_faces=degenerate,
         problems=problems,
+        warnings=warnings,
     )

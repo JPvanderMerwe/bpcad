@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+NO_TEMPLATE = "none_of_these_fit"
+
 SYSTEM = """You fill in a part specification for a 3D printing pipeline.
 
 You do NOT write CAD code. You choose a template and fill in its parameters.
@@ -27,6 +29,11 @@ Rules:
 - Reply with JSON only. No prose, no explanation, no markdown fences.
 - `template` MUST be one of the template names listed. Never invent one, and
   never put a material or a description there.
+- If NONE of the templates makes the part that was asked for, answer
+  "none_of_these_fit". Do not bend an unrelated template to the dimensions -
+  a birdhouse is not a keyring with different numbers, and a wrong template
+  silently produces a part that passes every check and is not what was wanted.
+  Saying it does not fit is a correct and useful answer.
 - Use only the parameter names listed for the template you chose. A name that
   is not on the list is rejected.
 - Every dimension is in millimetres and every angle is in degrees.
@@ -96,6 +103,12 @@ def build_user_prompt(
     parts.append("Templates available:")
     parts.append("")
     parts.append(template_catalogue())
+    parts.append("")
+    parts.append(
+        "If none of these makes the part that was asked for, set template to "
+        "%r. That is a correct answer, not a failure - the request will be "
+        "built from primitive shapes instead." % NO_TEMPLATE
+    )
     return "\n".join(parts)
 
 
@@ -161,7 +174,14 @@ def ask_schema() -> dict:
                 "type": "string",
                 "description": "Short lowercase identifier, words separated by underscores.",
             },
-            "template": {"type": "string", "enum": registry.names()},
+            # NO_TEMPLATE is in the enum deliberately. A constrained decoder
+            # cannot emit anything outside it, so without this the model is
+            # FORCED to name a template even when none makes the requested part.
+            # Asked for a birdhouse with only a keyring and a vent available, it
+            # produced a 573 cm3 solid slab with a keyring handle - and every
+            # downstream check passed, because the part was manufacturable. It
+            # was simply not a birdhouse.
+            "template": {"type": "string", "enum": registry.names() + [NO_TEMPLATE]},
             "material": {"type": "string"},
             "nozzle_mm": {"type": "number"},
             "layer_mm": {"type": "number"},
@@ -230,6 +250,19 @@ Rules:
 """
 
 
+WORKED_EXAMPLE = """{
+  "name": "hollow_box",
+  "ops": [
+    {"op": "rounded_prism", "width_mm": 80, "depth_mm": 50,
+     "height_mm": 60, "corner_r_mm": 3},
+    {"op": "hollow", "wall_mm": 3, "opening": "top_face"},
+    {"op": "pocket", "anchor": "front_face", "width_mm": 20,
+     "height_mm": 20, "depth_mm": 4, "corner_r_mm": 10}
+  ],
+  "print_axis": "z"
+}"""
+
+
 def dsl_catalogue() -> str:
     """Every level-2 op with its fields, plus the legal anchors and edge groups."""
     from bpcad.spec.dsl import EDGE_GROUPS, FACE_FRAMES, OP_NAMES, AnyOp
@@ -290,6 +323,20 @@ def build_dsl_prompt(
         "  material: %s" % material,
         "  nozzle_mm: %g" % nozzle_mm,
         "  layer_mm: %g" % layer_mm,
+        "",
+        # A worked example, not a description of one. Ollama does not enforce
+        # the per-op fields even when the schema declares them, so a model given
+        # only the catalogue reliably answers {"op": "rounded_prism"} with no
+        # numbers at all. Showing one complete valid answer fixes that far more
+        # reliably than any amount of instruction.
+        "EVERY op needs its numbers. An op with only its name is rejected.",
+        "",
+        "Here is a complete, valid answer for a different part - a hollow box",
+        "80 mm wide, 60 mm tall and 50 mm deep with a 20 mm hole in the front:",
+        "",
+        WORKED_EXAMPLE,
+        "",
+        "Now do the same for the part requested above.",
         "",
         "Operations available:",
         "",

@@ -48,6 +48,16 @@ STAGE_COMPILE = "compile"
 STAGE_VERIFY = "verify"
 
 
+class NoTemplateFits(Exception):
+    """
+    The model said, correctly, that no template makes this part.
+
+    Not a failure. It is the signal to go to level 2 and build the thing from
+    primitives, and it arrives far cheaper than discovering the same fact by
+    watching a wrong template pass every check.
+    """
+
+
 class SpecRejected(Exception):
     """
     One attempt produced something that did not survive to a verified part.
@@ -85,6 +95,7 @@ class AskResult:
     problems: list[FieldProblem] = field(default_factory=list)
     level: int = 1
     note: str = ""          # what a refinement says it changed, in its words
+    no_template_fits: bool = False
 
     @property
     def ok(self) -> bool:
@@ -141,6 +152,11 @@ def validate_reply(data: dict, defaults: dict[str, Any]) -> PartSpec:
     merged.update(defaults)
     merged.setdefault("level", 1)
     template = merged.get("template")
+
+    if template == prompts.NO_TEMPLATE:
+        raise NoTemplateFits(
+            "no template makes this part - going to primitive shapes instead"
+        )
 
     try:
         spec = PartSpec.model_validate(merged)
@@ -343,6 +359,10 @@ def ask(
         state["best"] = data
         try:
             spec = validate_reply(data, defaults)
+        except NoTemplateFits:
+            # Retrying will only produce the same correct answer more slowly.
+            state["declined"] = True
+            raise
         except SpecRejected as exc:
             exc.raw = raw
             state["problems"] = exc.problems
@@ -352,6 +372,8 @@ def ask(
         if verify_fn is not None:
             try:
                 verify_fn(spec)
+            except NoTemplateFits:
+                raise
             except SpecRejected as exc:
                 exc.raw = raw
                 state["problems"] = exc.problems
@@ -365,7 +387,7 @@ def ask(
 
     ladder = run_ladder(profile, one_attempt, on_attempt=on_attempt)
 
-    return AskResult(
+    result = AskResult(
         spec=ladder.value if ladder.ok else None,
         ladder=ladder,
         request=request,
@@ -374,6 +396,8 @@ def ask(
         problems=state["problems"],
         level=level,
     )
+    result.no_template_fits = state.get("declined", False)
+    return result
 
 
 def ask_level_2(
@@ -399,7 +423,13 @@ def ask_level_2(
     base_user = prompts.build_dsl_prompt(
         request, material, nozzle_mm, layer_mm, why_escalated
     )
-    schema = prompts.dsl_schema()
+    # JSON MODE, NOT A SCHEMA. See models.ollama.JSON_ONLY: a schema with a
+    # discriminated union in it makes this model emit ops with no dimensions,
+    # while plain JSON mode on the identical prompt gets it right first time.
+    # The shape is carried by the prompt's worked example instead.
+    from bpcad.models.ollama import JSON_ONLY
+
+    schema = JSON_ONLY
     state: dict[str, Any] = {"user": base_user, "best": {}, "problems": []}
 
     def one_attempt(backend) -> PartSpec:
@@ -445,6 +475,7 @@ def compile_and_verify(
     base_dir: Path | None,
     out_dir: Path,
     allow_level_3: bool = False,
+    request: str = "",
 ):
     """
     Compile a spec, export it, and verify the result.
@@ -520,6 +551,26 @@ def compile_and_verify(
     if report.features is not None and report.features.too_fine:
         problem, hint = _verify_critique(report)
         raise SpecRejected(problem, stage=STAGE_VERIFY, hint=hint)
+
+    # Does it resemble what was asked for? Everything above answers "can this be
+    # made?", which a 573 cm3 solid slab answers perfectly well while not being
+    # the birdhouse that was requested. This compares the numbers the request
+    # stated against the numbers the part came out with.
+    if request:
+        from bpcad.verify.intent import check_intent
+
+        intent = check_intent(request, report.mesh.bbox_mm)
+        report.intent = intent
+        if intent.problems:
+            raise SpecRejected(
+                intent.problems[0],
+                stage=STAGE_VERIFY,
+                hint=(
+                    "- the part must actually be the size that was asked for. "
+                    "Set the parameter that controls the missing dimension, or "
+                    "answer 'none_of_these_fit' if no template can make this."
+                ),
+            )
 
     return result, report, stl
 

@@ -30,6 +30,7 @@ class VerifyReport:
     features: FeatureReport | None = None
     regression: RegressionResult | None = None
     material: str | None = None
+    intent: Any = None          # does it resemble what was asked for?
     notes: list[str] = field(default_factory=list)
 
     # -- verdict -----------------------------------------------------------
@@ -61,7 +62,10 @@ class VerifyReport:
     @property
     def warnings(self) -> list[str]:
         """Worth knowing before printing, but not defects in the geometry."""
-        out = list(self.overhang.problems)
+        out = list(self.mesh.warnings)
+        out += list(self.overhang.problems)
+        if self.intent is not None:
+            out += list(self.intent.problems)
         if self.features is not None:
             out += [
                 "feature %r is %.3f mm, within 10%% of the %.2f mm limit - it "
