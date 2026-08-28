@@ -238,3 +238,113 @@ def test_the_intent_check_uses_the_nominal_size(tmp_path):
         s, api.config(), None, tmp_path / "out", request=request
     )
     assert report.intent.ok
+
+
+# -- what an actual birdhouse needs -----------------------------------------
+
+
+def test_the_predator_guard_adds_material_around_the_entrance():
+    """
+    A cat on the roof reaches down through a 3 mm wall and takes the chicks.
+    The same hole through 25 mm of material is a tunnel it cannot reach along.
+    """
+    base = dict(width_mm=140.0, depth_mm=120.0, height_mm=190.0,
+                entrance_dia_mm=32.0, wall_mm=4.0)
+    plain = build(EnclosureParams(**base), spec(**base)).solid.val().Volume()
+    guarded = build(
+        EnclosureParams(**base, predator_guard_mm=22.0),
+        spec(**base, predator_guard_mm=22.0),
+    ).solid.val().Volume()
+    assert guarded > plain
+
+
+def test_the_guard_is_bored_through_not_a_plug():
+    """A collar with no hole in it seals the box."""
+    import cadquery as cq
+
+    from bpcad.build.helpers import BuildLog
+    from bpcad.build.templates.enclosure import build_box
+
+    p = EnclosureParams(width_mm=140.0, depth_mm=120.0, height_mm=190.0,
+                        entrance_dia_mm=32.0, wall_mm=4.0, predator_guard_mm=22.0)
+    box = build_box(p, derive(p), BuildLog())
+
+    probe = (cq.Workplane("XZ").center(0, p.entrance_z_mm)
+             .circle(2.0).extrude(400).translate((0, -200, 0)))
+    assert probe.cut(box).val().Volume() > 3000, (
+        "a probe on the entrance axis must pass clean through the collar"
+    )
+
+
+def test_a_guard_too_big_for_the_face_is_refused():
+    """
+    A 42 mm entrance with 6 mm walls needs a 66 mm collar, which does not fit
+    on a 60 mm face. The entrance itself fits; the collar around it does not.
+    """
+    with pytest.raises(ValidationError) as exc:
+        EnclosureParams(width_mm=60.0, entrance_dia_mm=42.0, wall_mm=6.0,
+                        predator_guard_mm=20.0, height_mm=140.0)
+    assert "collar" in format_validation_error(exc.value)
+
+
+def test_a_guard_that_does_fit_is_allowed():
+    p = EnclosureParams(width_mm=140.0, entrance_dia_mm=32.0, wall_mm=4.0,
+                        predator_guard_mm=22.0)
+    assert p.predator_guard_mm == 22.0
+
+
+def test_the_back_plate_extends_above_and_below():
+    p = EnclosureParams(back_plate_mm=45.0)
+    assert p.total_height_mm == p.height_mm + 90.0
+    result = build(p, spec(back_plate_mm=45.0))
+    bb = result.solid.val().BoundingBox()
+    assert bb.zlen > p.height_mm + 80
+
+
+def test_there_is_deliberately_no_perch():
+    """
+    The commonest mistake on a homemade birdhouse. Nest-box birds do not need a
+    perch and it gives a predator somewhere to stand and reach in. Its absence
+    is a decision, so it is pinned here rather than left to be "added later".
+    """
+    fields = set(EnclosureParams.model_fields)
+    assert not any("perch" in f for f in fields)
+
+    source = (
+        __import__("pathlib").Path(__file__).resolve().parent.parent
+        / "bpcad" / "build" / "templates" / "enclosure.py"
+    ).read_text()
+    assert "NO PERCH" in source, "the reason must stay next to the decision"
+
+
+def test_mount_holes_move_to_the_plate_when_there_is_one():
+    """
+    Inside the box a screwdriver will not reach. On the plate it will.
+    """
+    from bpcad.build.helpers import BuildLog
+    from bpcad.build.templates.enclosure import build_box
+
+    a = EnclosureParams(back_plate_mm=45.0, mount_holes=True)
+    b = EnclosureParams(back_plate_mm=45.0, mount_holes=False)
+    holed = build_box(a, derive(a), BuildLog()).val().Volume()
+    plain = build_box(b, derive(b), BuildLog()).val().Volume()
+    assert holed < plain, (
+        "the holes must actually be cut - an XZ workplane extrudes along -Y, "
+        "so a cutter started behind the box goes further away and nothing "
+        "happens, silently"
+    )
+
+
+def test_a_fully_specified_birdhouse_builds_and_verifies(tmp_path):
+    """Everything on at once - the part someone would actually print."""
+    params = dict(
+        width_mm=140.0, depth_mm=120.0, height_mm=190.0, wall_mm=4.0,
+        entrance_dia_mm=32.0, predator_guard_mm=22.0, back_plate_mm=45.0,
+        roof_overhang_mm=30.0, roof_pitch_deg=22.0, vent_slots=3, drain_holes=4,
+    )
+    part = api.build(spec=spec(**params), out_dir=tmp_path)
+    m = part.report.mesh
+    assert m.watertight
+    assert m.body_count == 2
+    assert m.solidity < 0.15
+    assert not m.warnings

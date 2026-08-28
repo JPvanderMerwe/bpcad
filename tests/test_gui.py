@@ -268,3 +268,57 @@ def test_the_bootstrap_refuses_to_reexec_what_it_cannot_rebuild(monkeypatch):
 
     monkeypatch.setattr(sys, "argv", ["-c"])
     assert platform.can_reexec() is False
+
+
+def test_no_job_takes_an_argument_the_worker_injects():
+    """
+    The worker injects `report` and `should_cancel` into every job, so no job
+    may accept a caller-supplied argument of either name. One did: api.refine
+    takes a `report` - the verify report of the part being changed - and the
+    refine job passed it straight through, so Python saw two values for the
+    same keyword and refinement died with a TypeError before any work started.
+
+    That is invisible until someone presses the button, which is why it is
+    checked here rather than trusted.
+    """
+    import inspect
+
+    from bpcad.gui import workers
+
+    injected = {"report", "should_cancel"}
+    for name in dir(workers):
+        if not name.endswith("_job"):
+            continue
+        fn = getattr(workers, name)
+        params = inspect.signature(fn).parameters
+        for bad in injected:
+            if bad in params:
+                kind = params[bad].kind
+                assert kind is inspect.Parameter.POSITIONAL_OR_KEYWORD, name
+                # It must be the injected one, never a passthrough with a
+                # default that a caller could also supply.
+                assert params[bad].default is inspect.Parameter.empty, (
+                    "%s takes %r with a default - a caller supplying it would "
+                    "collide with the one the worker injects" % (name, bad)
+                )
+
+
+def test_the_refine_job_forwards_the_verify_report(qt_app, monkeypatch):
+    """The report still has to reach api.refine, under its own name."""
+    from bpcad import api
+    from bpcad.gui import workers
+
+    seen = {}
+
+    def fake_refine(spec, instruction, **kwargs):
+        seen.update(kwargs)
+        return api.GenerateResult(ok=False, message="stub")
+
+    monkeypatch.setattr(api, "refine", fake_refine)
+    result = workers.session_refine_job(
+        "spec", "wider", report=lambda *a: None, should_cancel=lambda: False,
+        base_report="THE-REPORT", cfg=None,
+    )
+    assert result.message == "stub"
+    assert seen["report"] == "THE-REPORT", "the verify report must still arrive"
+    assert seen["cfg"] is None

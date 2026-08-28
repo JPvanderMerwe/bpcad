@@ -56,6 +56,13 @@ class Worker(QObject):
     def run(self) -> None:
         self.started_work.emit()
         try:
+            # These two names are INJECTED into every job, so no job may take a
+            # caller-supplied argument called `report` or `should_cancel`. It
+            # collided once: api.refine takes a `report` (the verify report of
+            # the part being changed) and the refine job passed it straight
+            # through, so Python saw two values for the same keyword and the
+            # whole refinement died before it started. Jobs name such arguments
+            # differently now - see session_refine_job - and a test checks it.
             result = self._fn(
                 *self._args,
                 report=lambda kind, payload=None: self.event.emit(kind, payload),
@@ -202,8 +209,15 @@ def model_status_job(report, should_cancel, machine=None):
     return api.model_status(machine=machine)
 
 
-def refine_job(spec, instruction: str, report, should_cancel, **options):
-    """Change an existing part by describing the change."""
+def refine_job(spec, instruction: str, report, should_cancel,
+               base_report=None, **options):
+    """
+    Change an existing part by describing the change.
+
+    `base_report` is the verify report of the part being changed. It is NOT
+    called `report`, because that name belongs to the event callback the worker
+    injects, and using it for both is a TypeError before any work starts.
+    """
     from bpcad import api
 
     def on_event(kind, payload):
@@ -211,7 +225,8 @@ def refine_job(spec, instruction: str, report, should_cancel, **options):
             raise Cancelled()
         report(kind, payload)
 
-    return api.refine(spec, instruction, on_event=on_event, **options)
+    return api.refine(spec, instruction, report=base_report,
+                      on_event=on_event, **options)
 
 
 def session_create_job(prompt: str, report, should_cancel, **options):
@@ -235,8 +250,13 @@ def session_create_job(prompt: str, report, should_cancel, **options):
     return result
 
 
-def session_refine_job(spec, instruction: str, report, should_cancel, **options):
-    """A refinement, plus its thumbnail."""
+def session_refine_job(spec, instruction: str, report, should_cancel,
+                       base_report=None, **options):
+    """
+    A refinement, plus its thumbnail.
+
+    See refine_job on why the verify report is `base_report` here.
+    """
     from bpcad import api
 
     def on_event(kind, payload):
@@ -244,7 +264,8 @@ def session_refine_job(spec, instruction: str, report, should_cancel, **options)
             raise Cancelled()
         report(kind, payload)
 
-    result = api.refine(spec, instruction, on_event=on_event, **options)
+    result = api.refine(spec, instruction, report=base_report,
+                        on_event=on_event, **options)
     if result.ok and result.part:
         report("thumbnail", _thumb(result.part))
     return result

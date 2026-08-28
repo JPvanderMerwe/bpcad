@@ -204,7 +204,7 @@ class MainWindow(QMainWindow):
         self._busy(True)
         self.runner.start(
             session_refine_job, base.spec, instruction,
-            report=base.part.report if base.part else None,
+            base_report=base.part.report if base.part else None,
             measurements=self.session.measurements,
             out_dir=str(self.session.version_dir(index)),
             render=True, cfg=self.cfg,
