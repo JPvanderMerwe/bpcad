@@ -94,6 +94,95 @@ def validate_changes(
     return merged, []
 
 
+def apply_ops(spec: PartSpec, ops: list) -> PartSpec:
+    """Replace a level-2 spec's operation list, returning a new spec."""
+    data = spec.model_dump(exclude_none=True)
+    data["ops"] = ops
+    data["level"] = 2
+    return PartSpec.model_validate(data)
+
+
+def refine_ops(
+    spec: PartSpec,
+    instruction: str,
+    profile: Profile,
+    report: Any = None,
+    on_attempt: Callable[[Attempt], None] | None = None,
+    verify_fn: Callable[[PartSpec], Any] | None = None,
+) -> AskResult:
+    """
+    Change a part built from primitives.
+
+    JSON mode, not a schema: the operation list is a discriminated union and
+    Ollama does not enforce those, so constraining it makes the model emit
+    operations with no numbers. See models.ollama.JSON_ONLY.
+    """
+    from bpcad.agent.loop import _hint
+    from bpcad.models.ollama import JSON_ONLY
+    from bpcad.spec.dsl import DslError, parse_op
+
+    system = prompts.REFINE_OPS_SYSTEM
+    base_user = prompts.build_refine_ops_prompt(spec, instruction, report=report)
+    state: dict[str, Any] = {"user": base_user, "best": {}, "problems": [], "note": ""}
+
+    def one_attempt(backend) -> PartSpec:
+        raw = backend.complete(system, state["user"], JSON_ONLY)
+        try:
+            data = prompts.parse_reply(raw)
+        except ValueError as exc:
+            state["user"] = prompts.critique_prompt(
+                raw, str(exc), '- send a single JSON object with an "ops" list'
+            )
+            raise SpecRejected(str(exc), stage=STAGE_PARSE, raw=raw) from exc
+
+        ops = data.get("ops")
+        if not isinstance(ops, list) or not ops:
+            problem = 'the reply had no "ops" list. Send {"ops": [...]}.'
+            state["user"] = prompts.critique_prompt(raw, problem, "- add an ops list")
+            raise SpecRejected(problem, stage=STAGE_VALIDATE, raw=raw)
+
+        state["best"] = {"ops": ops}
+        state["note"] = data.get("note", "")
+
+        for i, op in enumerate(ops):
+            if not isinstance(op, dict):
+                problem = "ops[%d] is not an object" % i
+                state["user"] = prompts.critique_prompt(raw, problem, "- fix ops[%d]" % i)
+                raise SpecRejected(problem, stage=STAGE_VALIDATE, raw=raw)
+            try:
+                parse_op(op)
+            except DslError as exc:
+                problem = "ops[%d] is invalid: %s" % (i, exc)
+                state["user"] = prompts.critique_prompt(
+                    raw, problem,
+                    "- fix ops[%d]. %s" % (i, str(exc).split(chr(10))[0]),
+                )
+                raise SpecRejected(problem, stage=STAGE_VALIDATE, raw=raw) from exc
+
+        try:
+            merged = apply_ops(spec, ops)
+            if verify_fn is not None:
+                verify_fn(merged)
+        except SpecRejected as exc:
+            exc.raw = raw
+            state["problems"] = exc.problems
+            state["user"] = prompts.critique_prompt(
+                raw, str(exc), exc.hint or _hint(exc.problems)
+            )
+            raise
+        state["problems"] = []
+        return merged
+
+    ladder = run_ladder(profile, one_attempt, on_attempt=on_attempt)
+    result = AskResult(
+        spec=ladder.value if ladder.ok else None, ladder=ladder,
+        request=instruction, machine=profile.name,
+        best_attempt_data=state["best"], problems=state["problems"], level=2,
+    )
+    result.note = state["note"]
+    return result
+
+
 def refine(
     spec: PartSpec,
     instruction: str,
@@ -110,6 +199,15 @@ def refine(
     not need a second code path for "this was a refinement".
     """
     from bpcad.agent.loop import _hint
+
+    # A part built from primitives has no template and no params, so the
+    # parameter-diff path has nothing to show the model. Send it to the
+    # operations path instead.
+    if spec.level == 2 or not spec.template:
+        return refine_ops(
+            spec, instruction, profile, report=report,
+            on_attempt=on_attempt, verify_fn=verify_fn,
+        )
 
     system = prompts.REFINE_SYSTEM
     base_user = prompts.build_refine_prompt(
@@ -178,6 +276,33 @@ def refine(
     return result
 
 
+def describe_op_changes(before: PartSpec, after: PartSpec) -> list[str]:
+    """What changed in an operation list, read off the two specs."""
+    old = [dict(o) for o in (before.ops or [])]
+    new = [dict(o) for o in (after.ops or [])]
+    out: list[str] = []
+
+    old_names = [o.get("op") for o in old]
+    new_names = [o.get("op") for o in new]
+    for name in set(new_names) - set(old_names):
+        out.append("added %s" % name)
+    for name in set(old_names) - set(new_names):
+        out.append("removed %s" % name)
+
+    for i, (a, b) in enumerate(zip(old, new)):
+        if a.get("op") != b.get("op"):
+            out.append("op %d: %s -> %s" % (i, a.get("op"), b.get("op")))
+            continue
+        for key in sorted(set(a) | set(b)):
+            if key == "op" or a.get(key) == b.get(key):
+                continue
+            out.append("%s.%s: %s -> %s" % (b.get("op"), key, a.get(key), b.get(key)))
+
+    if len(new) != len(old):
+        out.append("%d operations -> %d" % (len(old), len(new)))
+    return out or ["no change to the operations"]
+
+
 def describe_changes(before: PartSpec, after: PartSpec) -> list[str]:
     """
     What actually changed between two specs, in plain language.
@@ -186,6 +311,9 @@ def describe_changes(before: PartSpec, after: PartSpec) -> list[str]:
     that says it made something wider and did not is exactly the case worth
     catching, and it is invisible if the interface only ever repeats the claim.
     """
+    if before.level == 2 or after.level == 2:
+        return describe_op_changes(before, after)
+
     old = dict(before.params or {})
     new = dict(after.params or {})
     out: list[str] = []

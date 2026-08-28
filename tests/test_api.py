@@ -19,7 +19,16 @@ REF_VENT = ROOT / "reference" / "vent_louvre.stl"
 
 
 def test_templates_are_discoverable():
-    assert api.templates() == ["keyring_device", "louvre_vent"]
+    """
+    Asserts the contract, not a snapshot of the list. Adding a template is the
+    normal way this project grows and must not break a test that was only ever
+    checking that discovery works.
+    """
+    names = api.templates()
+    assert names == sorted(names), "the catalogue is shown to a model in order"
+    assert {"keyring_device", "louvre_vent", "enclosure"} <= set(names)
+    for name in names:
+        assert api.template_info(name)["summary"]
 
 
 def test_template_info_carries_everything_a_form_needs():

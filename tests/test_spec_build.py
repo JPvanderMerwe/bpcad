@@ -362,8 +362,10 @@ def test_compound_keeps_bodies_separate():
 # -- registry and explain ---------------------------------------------------
 
 
-def test_both_templates_are_registered():
-    assert registry.names() == ["keyring_device", "louvre_vent"]
+def test_the_reference_templates_are_registered():
+    names = registry.names()
+    assert {"keyring_device", "louvre_vent"} <= set(names)
+    assert names == sorted(names)
 
 
 @pytest.mark.parametrize("name", ["keyring_device", "louvre_vent"])

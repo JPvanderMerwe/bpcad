@@ -51,6 +51,18 @@ _INNER = (
 TOLERANCE_FRACTION = 0.18
 
 
+# Words that name which way a dimension runs. A request that says "120 mm wide,
+# 140 mm tall" has told you the axes, and ignoring that lets a part come back
+# with the right three numbers on the wrong three axes - which is what happened:
+# a birdhouse asked for 120 wide and 140 tall came back 140 wide and 100 tall,
+# and passed, because every number appeared somewhere.
+AXIS_WORDS = {
+    "wide": 0, "width": 0, "across": 0, "broad": 0,
+    "deep": 1, "depth": 1, "front to back": 1,
+    "tall": 2, "height": 2, "high": 2, "long": 2,
+}
+
+
 @dataclass
 class IntentReport:
     """Which stated dimensions the part accounts for, and which it does not."""
@@ -59,6 +71,7 @@ class IntentReport:
     envelope_mm: tuple[float, float, float] = (0.0, 0.0, 0.0)
     matched: list[tuple[float, float]] = field(default_factory=list)
     missing: list[float] = field(default_factory=list)
+    misplaced: list[str] = field(default_factory=list)
     problems: list[str] = field(default_factory=list)
 
     @property
@@ -98,6 +111,42 @@ def stated_dimensions(request: str) -> list[float]:
     return sorted({v for v in found if v >= 3.0}, reverse=True)
 
 
+def labelled_dimensions(request: str) -> dict[int, float]:
+    """
+    Dimensions the request tied to a named axis: {0: width, 1: depth, 2: height}.
+
+    Only counts a label within a few words of the number, so "120 mm wide" is
+    read and "120 mm, and make the walls wide enough" is not.
+    """
+    text = request.lower()
+    out: dict[int, float] = {}
+    for match in _DIM.finditer(text):
+        value = float(match.group(1))
+        if value < 3.0:
+            continue
+
+        # Stop at the next number, so "140 mm tall, 100 mm deep" does not read
+        # "deep" as the label for 140. Taking the first label BY POSITION rather
+        # than by dictionary order matters for the same reason: iterating the
+        # dict found "deep" before "tall" and put the height on the depth axis,
+        # which is exactly the failure this function exists to catch.
+        tail = text[match.end(): match.end() + 30]
+        cut = re.search(r"\d", tail)
+        window = tail[: cut.start()] if cut else tail
+
+        if any(word in window for word in _INNER):
+            continue
+
+        best: tuple[int, int] | None = None
+        for word, axis in AXIS_WORDS.items():
+            at = window.find(word)
+            if at >= 0 and (best is None or at < best[0]):
+                best = (at, axis)
+        if best is not None:
+            out.setdefault(best[1], value)
+    return out
+
+
 def check_intent(
     request: str,
     envelope_mm: tuple[float, float, float],
@@ -121,6 +170,25 @@ def check_intent(
             report.matched.append((value, best))
         else:
             report.missing.append(value)
+
+    # If the request named the axes, check they line up. Three right numbers on
+    # three wrong axes is a different part, and it passes every other check.
+    labelled = labelled_dimensions(request)
+    if len(labelled) >= 2:
+        for axis, value in labelled.items():
+            got = envelope_mm[axis]
+            if abs(got - value) > max(value * tolerance_fraction, 1.0):
+                report.misplaced.append(
+                    "%s should be %g mm and is %.1f mm"
+                    % (("width", "depth", "height")[axis], value, got)
+                )
+        if report.misplaced and not report.missing:
+            report.problems.append(
+                "the dimensions are on the wrong axes: %s. The request said %s."
+                % ("; ".join(report.misplaced),
+                   ", ".join("%g mm %s" % (v, ("wide", "deep", "tall")[a])
+                             for a, v in sorted(labelled.items())))
+            )
 
     if report.missing:
         report.problems.append(
@@ -148,4 +216,6 @@ def summary(report: IntentReport) -> list[str]:
         out.append("  %-8g accounted for by %.1f mm" % (value, got))
     for value in report.missing:
         out.append("  %-8g NOT FOUND in the part" % value)
+    for line in report.misplaced:
+        out.append("  wrong axis: %s" % line)
     return out

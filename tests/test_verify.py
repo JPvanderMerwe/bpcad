@@ -524,3 +524,53 @@ def test_a_hollow_part_of_the_same_size_is_left_alone():
     r = report_for(shell)
     assert r.solidity < 0.5
     assert r.warnings == []
+
+
+def test_axis_labels_are_read_from_the_request():
+    """
+    "120 mm wide, 140 mm tall, 100 mm deep" names the axes. Ignoring that let a
+    birdhouse come back with the right three numbers on the wrong three axes -
+    a squat wide box instead of a tall one - and pass, because every number
+    appeared somewhere.
+    """
+    from bpcad.verify.intent import labelled_dimensions
+
+    d = labelled_dimensions(
+        "a birdhouse, 120 mm wide, 140 mm tall, 100 mm deep, with a 32 mm entrance hole"
+    )
+    assert d == {0: 120.0, 1: 100.0, 2: 140.0}
+
+
+def test_the_label_search_stops_at_the_next_number():
+    """
+    "140 mm tall, 100 mm deep" must not read "deep" as the label for 140. The
+    first version searched 22 characters and did exactly that.
+    """
+    from bpcad.verify.intent import labelled_dimensions
+
+    assert labelled_dimensions("80 mm tall, 60 mm deep") == {2: 80.0, 1: 60.0}
+
+
+def test_the_first_label_by_position_wins_not_by_dictionary_order():
+    from bpcad.verify.intent import labelled_dimensions
+
+    assert labelled_dimensions("a box 90 mm tall")[2] == 90.0
+    assert labelled_dimensions("a box 90 mm wide")[0] == 90.0
+
+
+def test_transposed_dimensions_are_caught():
+    from bpcad.verify.intent import check_intent
+
+    req = "a birdhouse, 120 mm wide, 140 mm tall, 100 mm deep"
+    assert not check_intent(req, (140.0, 120.0, 100.0)).ok
+    assert check_intent(req, (120.0, 100.0, 140.0)).ok
+
+
+def test_unlabelled_dimensions_are_not_second_guessed():
+    """
+    A request that does not say which way round it means must not be told it
+    got the axes wrong.
+    """
+    from bpcad.verify.intent import check_intent
+
+    assert check_intent("a box 120 x 100 x 140", (140.0, 120.0, 100.0)).ok

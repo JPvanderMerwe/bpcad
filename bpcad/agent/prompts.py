@@ -375,6 +375,26 @@ def dsl_schema() -> dict:
 # refinement: changing a part you have already built
 # ---------------------------------------------------------------------------
 
+REFINE_OPS_SYSTEM = """You adjust an existing 3D part built from primitive operations.
+
+You do NOT write CAD code. You are given a list of operations that already
+builds, and one instruction about what to change. You reply with the COMPLETE
+updated list.
+
+Rules:
+- Reply with JSON only. No prose, no markdown fences.
+- Return {"ops": [...]} holding the whole list, in order, with every operation
+  carrying all of its numbers. An operation with only its name is rejected.
+- Keep the operations that were already right. Change, add or remove only what
+  the instruction asks for.
+- The FIRST operation must create geometry: rounded_prism, disc or arc_rod.
+- Faces are addressed by NAME - top_face, front_face and so on. Never by a
+  selector like ">Z".
+- A cavity must open along the print direction, never against it.
+- Every dimension is in millimetres and every angle is in degrees.
+"""
+
+
 REFINE_SYSTEM = """You adjust an existing 3D part specification.
 
 You do NOT write CAD code and you do NOT rewrite the whole specification. You
@@ -390,6 +410,51 @@ Rules:
 - Every dimension is in millimetres and every angle is in degrees.
 - Respect the stated bounds.
 """
+
+
+def build_refine_ops_prompt(
+    spec,
+    instruction: str,
+    report=None,
+) -> str:
+    """
+    Refining a part built from primitives.
+
+    The WHOLE operation list is asked for rather than a diff. Operations are
+    ordered and they compose - a pocket cuts whatever is under it at the time -
+    so "change op 2" is ambiguous in a way that "change wall_mm" is not. Asking
+    for the full list costs tokens and removes the ambiguity.
+    """
+    import json
+
+    lines = ["The part is currently built from these operations:", ""]
+    lines.append(json.dumps({"ops": [dict(o) for o in (spec.ops or [])]}, indent=2))
+    lines.append("")
+
+    if report is not None:
+        m = report.mesh
+        lines += [
+            "What that actually built:",
+            "  envelope   %.1f x %.1f x %.1f mm" % m.bbox_mm,
+            "  volume     %.1f cm3" % m.volume_cm3,
+            "  solid      %.0f%% of its own bounding box" % (100 * m.solidity),
+        ]
+        for w in getattr(m, "warnings", []):
+            lines.append("  NOTE       %s" % w.split(".")[0])
+        lines.append("")
+
+    lines += [
+        "Change requested:",
+        "  %s" % instruction.strip(),
+        "",
+        "Operations available:",
+        "",
+        dsl_catalogue(),
+        "",
+        "Reply with {\"ops\": [...]} - the complete updated list, every operation",
+        "carrying all of its numbers.",
+    ]
+    return "\n".join(lines)
 
 
 def build_refine_prompt(

@@ -559,7 +559,21 @@ def compile_and_verify(
     if request:
         from bpcad.verify.intent import check_intent
 
-        intent = check_intent(request, report.mesh.bbox_mm)
+        # Measure the ASSEMBLED part, not the print layout. A part that prints
+        # as two pieces side by side has a bounding box that describes the bed,
+        # not the object: the enclosure's box is 120 mm wide and its print
+        # layout is 288, because the roof lies next to it. Checking the layout
+        # rejected a correct birdhouse for not being 100 mm deep when it was.
+        if getattr(result, "nominal_mm", None):
+            measured = result.nominal_mm
+        else:
+            try:
+                bb = result.solid.val().BoundingBox()
+                measured = (bb.xlen, bb.ylen, bb.zlen)
+            except Exception:
+                measured = report.mesh.bbox_mm
+
+        intent = check_intent(request, measured)
         report.intent = intent
         if intent.problems:
             raise SpecRejected(

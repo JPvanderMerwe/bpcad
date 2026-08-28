@@ -44,7 +44,9 @@ def register(template: Template) -> Template:
 
 def _load_builtins() -> None:
     """Import the built-in templates so they self-register. Idempotent."""
-    from bpcad.build.templates import keyring_device, louvre_vent  # noqa: F401
+    from bpcad.build.templates import (  # noqa: F401
+        enclosure, keyring_device, louvre_vent,
+    )
 
 
 def names() -> list[str]:
