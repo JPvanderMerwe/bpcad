@@ -36,8 +36,17 @@ class VerifyReport:
 
     @property
     def problems(self) -> list[str]:
+        """
+        Things that make the part WRONG, not merely inconvenient.
+
+        Needing support is deliberately NOT here. Plenty of good parts need it -
+        the louvre vent reference is one, and its top rail bridges the aperture
+        by design. Calling that FAIL is both untrue and corrosive: a verdict that
+        cries wolf on a known-good part teaches you to ignore the verdict.
+
+        The overhang findings are still reported in full, under warnings.
+        """
         out = list(self.mesh.problems)
-        out += self.overhang.problems
         if self.features is not None:
             out += [
                 "feature %r is %.3f mm, below the %.2f mm the nozzle can resolve"
@@ -50,12 +59,27 @@ class VerifyReport:
         return out
 
     @property
+    def warnings(self) -> list[str]:
+        """Worth knowing before printing, but not defects in the geometry."""
+        out = list(self.overhang.problems)
+        if self.features is not None:
+            out += [
+                "feature %r is %.3f mm, within 10%% of the %.2f mm limit - it "
+                "will print, but it is one tuning change away from not printing"
+                % (c.name, c.value_mm, c.threshold_mm)
+                for c in self.features.marginal
+            ]
+        return out
+
+    @property
     def ok(self) -> bool:
         return not self.problems
 
     @property
     def verdict(self) -> str:
-        return "PASS" if self.ok else "FAIL"
+        if self.problems:
+            return "FAIL"
+        return "PASS, with warnings" if self.warnings else "PASS"
 
     # -- renderings --------------------------------------------------------
 
@@ -114,6 +138,12 @@ class VerifyReport:
                 L.append("  %s" % d)
             L.append("")
 
+        if self.warnings:
+            L.append("WARNINGS - printable, but know about these")
+            for w in self.warnings:
+                L.append("  - %s" % w)
+            L.append("")
+
         if self.notes:
             L.append("NOTES")
             for n in self.notes:
@@ -140,6 +170,7 @@ class VerifyReport:
             "overhang": asdict(self.overhang),
             "surface_levels": [asdict(lv) for lv in self.levels],
             "notes": list(self.notes),
+            "warnings": self.warnings,
             "problems": self.problems,
         }
         data["overhang"]["supports_needed"] = self.overhang.supports_needed

@@ -33,11 +33,42 @@ of this works with no model loaded at all:
 With a local model running, `bpcad gen "..."` does the whole thing at once -
 but it is a convenience layer over the commands above, never a dependency.
 
+## Two ways in
+
+A desktop app:
+
+    bpcad-gui
+
+and a command line:
+
+    bpcad build parts/vent/spec.yaml
+
+Both sit on `bpcad.api`, which is also the way to drive it from a script:
+
+    from bpcad import api
+
+    part = api.build("parts/vent/spec.yaml")
+    print(part.volume_cm3, part.report.verdict)
+
+The GUI owns no pipeline logic of its own - a test enforces that. When a GUI
+grows its own copy of a workflow the two drift, and eventually they disagree
+about what a part is.
+
 ## Install
 
     conda create -n bpcad python=3.12
     conda activate bpcad
-    pip install -e ".[dev]"
+    pip install -e ".[dev,gui]"
+
+On a Wayland desktop the app moves itself onto XWayland at start-up, because
+Qt runs natively on Wayland and VTK's OpenGL window does not, and the two
+disagreeing produces `BadWindow` rather than anything that names the cause.
+That needs `libxcb-cursor`, which is in the conda environment:
+
+    conda install -c conda-forge xcb-util-cursor
+
+Without it the app still runs; the interactive 3D view degrades and the
+rendered images and height maps, which are produced on the CPU, do not.
 
 ## Status
 

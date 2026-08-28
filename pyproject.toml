@@ -27,10 +27,18 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The desktop app. Kept optional so the pipeline still installs on a headless
+# box - the CLI, and everything it drives, needs none of this.
+# VTK is not listed: it arrives with cadquery, and pinning it separately would
+# only create a chance for the two to disagree.
+gui = ["PySide6>=6.6"]
 dev = ["pytest"]
 
 [project.scripts]
 bpcad = "bpcad.cli:app"
+
+[project.gui-scripts]
+bpcad-gui = "bpcad.gui.app:main"
 
 [tool.setuptools.packages.find]
 include = ["bpcad*"]
