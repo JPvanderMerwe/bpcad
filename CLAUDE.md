@@ -22,9 +22,27 @@ debugging time, written down so it does not happen twice.
 
 ## Architecture
 
-10. **Local inference only.** No cloud model, no API key, no hosted endpoint,
-    ever. Non-loopback hosts raise `NonLocalEndpointError` at construction.
-    There are exactly two backends: `ollama` and `null`. Do not add a third.
+10. **Local by default, remote only by explicit opt-in.** Inference runs on
+    loopback unless someone has deliberately configured otherwise.
+    `assert_local_endpoint` stays, and a non-loopback host must be named in
+    `allowed_model_hosts` in config - never reached by silent fallback, never
+    by an environment variable, never because loopback was down. A host that
+    was not opted into raises `NonLocalEndpointError` at construction, as it
+    always did.
+
+    **The system must still work with no network at all.** That is not
+    sentiment about privacy, it is the reason the program is trustworthy: a
+    build that only succeeds when a server answers is a build you cannot
+    repeat. Every part in `parts/` must remain rebuildable offline from its
+    `spec.yaml`.
+
+    Backends: `ollama` and `null` locally. A remote backend is allowed when
+    the hosted product needs one, under the same opt-in rule and the same
+    spec contract - it fills a validated spec, it does not write CAD code.
+
+    *Changed 2026-08-31 on the owner's explicit decision to build a hosted,
+    phone-reachable product. The previous rule said "no hosted endpoint,
+    ever".*
 11. **The system must stay fully usable with zero model.** `spec.yaml` is the
     durable artifact. Never put logic in the agent layer that is not reachable
     from a spec file.
