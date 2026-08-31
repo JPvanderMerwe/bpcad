@@ -253,14 +253,40 @@ You choose operations from a fixed list and give each one its numbers.
 Rules:
 - Reply with JSON only. No prose, no markdown fences.
 - `ops` is a list. Each entry has an `op` field naming the operation.
-- The FIRST op must create geometry: rounded_prism, disc or arc_rod.
+- The FIRST op must create geometry, in add mode: rounded_prism, disc, cone,
+  sphere, wedge, profile_extrude or arc_rod.
 - Faces are addressed by NAME - top_face, front_face and so on. Never by a
   selector like ">Z" or "|Z".
 - Every dimension is in millimetres and every angle is in degrees.
 - A cavity must open along the print direction, never against it.
+
+HOW TO MAKE A HOLE. There is no hole operation. Every shape takes a `mode`,
+and `"mode": "cut"` removes that shape from the part instead of adding it. A
+disc in cut mode is a round hole. A rounded_prism in cut mode is a slot. A cone
+in cut mode is a countersink. This is the single most useful thing here.
+
+WHERE SHAPES GO. Every shape takes x_mm, y_mm, z_mm, and it is built at the
+origin, then turned by rotate_deg about rotate_axis, THEN moved to x/y/z.
+- Prisms, discs, cones, wedges and extruded profiles STAND ON that point: it is
+  the centre of their base.
+- Spheres are CENTRED on that point. To rest one on a surface, add its radius.
+
+CUTTERS MUST OVERSHOOT. A cutter that stops exactly flush with a surface leaves
+a zero-thickness face. Start it a millimetre outside the part and make it a
+couple of millimetres longer than it needs to be.
+
+THE PART MUST BE ONE CONNECTED PIECE. Every shape you add has to touch or
+overlap something already there. Shapes that do not touch come out as separate
+pieces lying apart on the bed, which is never what was asked for.
 """
 
 
+# TWO examples, not one, and the second one is doing the work. A single example
+# of a hollow box taught the model to make hollow boxes: every answer came back
+# as a prism, a hollow and a pocket, whatever had been asked for. The second
+# example exists to show a cut, a placed shape and a pattern, because those
+# three are what the whole vocabulary is built on and none of them appear in
+# the first.
 WORKED_EXAMPLE = """{
   "name": "hollow_box",
   "ops": [
@@ -274,41 +300,98 @@ WORKED_EXAMPLE = """{
 }"""
 
 
-def dsl_catalogue() -> str:
-    """Every level-2 op with its fields, plus the legal anchors and edge groups."""
-    from bpcad.spec.dsl import EDGE_GROUPS, FACE_FRAMES, OP_NAMES, AnyOp
-    from pydantic import TypeAdapter
+SECOND_EXAMPLE = """{
+  "name": "divided_tray_with_a_drain",
+  "ops": [
+    {"op": "rounded_prism", "width_mm": 160, "depth_mm": 100,
+     "height_mm": 40, "corner_r_mm": 4},
+    {"op": "hollow", "wall_mm": 3, "opening": "top_face", "floor_mm": 3},
+    {"op": "pattern_linear", "count": 3, "dx_mm": 50,
+     "step": {"op": "rounded_prism", "width_mm": 3, "depth_mm": 94,
+              "height_mm": 34, "x_mm": -50, "z_mm": 3}},
+    {"op": "disc", "diameter_mm": 6, "height_mm": 8, "z_mm": -2,
+     "x_mm": -60, "mode": "cut"}
+  ],
+  "print_axis": "z"
+}"""
 
+
+def dsl_catalogue() -> str:
+    """
+    Every level-2 op with its fields, plus the legal anchors and edge groups.
+
+    THE SHARED FIELDS ARE PRINTED ONCE. Every creator carries the same five
+    placement fields, and spelling them out on all seven shapes cost 2 400
+    characters of pure repetition - a quarter of the whole prompt, saying the
+    same thing seven times. On a machine with no GPU that is prefill the model
+    pays for on every single attempt, and this laptop was spending about four
+    minutes per part largely reading its own instructions twice over.
+
+    Generic bounds are dropped too. "x_mm >= -2000, <= 2000" is not information
+    - nobody was going to put a bracket two metres off the origin, and the bed
+    check catches it if they try. Bounds that a person could plausibly hit, and
+    that change the answer, are kept.
+    """
     import typing
+
+    from bpcad.spec.dsl import (
+        EDGE_GROUPS, FACE_FRAMES, Creator, AnyOp,
+    )
+
+    shared = set(Creator.model_fields)
+
+    def bounds_of(field) -> str:
+        out = []
+        for meta in field.metadata:
+            for attr, label in (("ge", ">="), ("gt", ">"), ("le", "<="), ("lt", "<")):
+                v = getattr(meta, attr, None)
+                if v is not None:
+                    out.append("%s %g" % (label, v))
+        text = ", ".join(out)
+        # The two generic ranges every numeric field carries. They are noise.
+        if text in ("> 0, <= 1000", ">= -2000, <= 2000", ">= -1000, <= 1000",
+                    ">= 0, <= 1000", ">= 0, <= 500", "> 0, <= 500"):
+            return ""
+        return text
+
+    def line(fname, field) -> str:
+        default = field.default
+        shown = "required" if field.is_required() else (
+            "%g" % default if isinstance(default, float) else str(default)
+        )
+        return "    %-16s %-9s %-12s %s" % (
+            fname, shown, bounds_of(field),
+            (field.description or "").split(".")[0]
+        )
 
     blocks: list[str] = []
     for member in typing.get_args(typing.get_args(AnyOp)[0]):
         fields = member.model_fields
-        name = fields["op"].annotation
-        literal = typing.get_args(name)[0] if typing.get_args(name) else str(name)
-        lines = ["OP %s" % literal, "  %s" % (member.__doc__ or "").strip().split("\n")[0]]
+        literal = typing.get_args(fields["op"].annotation)[0]
+        doc = (member.__doc__ or "").strip().split("\n\n")[0]
+        lines = ["OP %s" % literal, "  %s" % " ".join(doc.split())]
+        is_creator = issubclass(member, Creator)
         for fname, field in fields.items():
-            if fname == "op":
+            if fname == "op" or (is_creator and fname in shared):
                 continue
-            bounds = []
-            for meta in field.metadata:
-                for attr, label in (("ge", ">="), ("gt", ">"), ("le", "<="), ("lt", "<")):
-                    v = getattr(meta, attr, None)
-                    if v is not None:
-                        bounds.append("%s %g" % (label, v))
-            default = field.default
-            shown = "required" if field.is_required() else (
-                "%g" % default if isinstance(default, float) else str(default)
-            )
-            lines.append("    %-18s default %-8s %-14s %s"
-                         % (fname, shown, ", ".join(bounds),
-                            (field.description or "").split(".")[0]))
+            lines.append(line(fname, field))
+        if is_creator:
+            lines.append("    (plus the placement fields above)")
         blocks.append("\n".join(lines))
 
-    return "\n\n".join(blocks) + (
-        "\n\nANCHOR NAMES: %s"
-        "\nEDGE GROUPS:  %s"
-        % (", ".join(sorted(FACE_FRAMES)), ", ".join(sorted(EDGE_GROUPS)))
+    placement = ["EVERY SHAPE ALSO TAKES THESE. They are the same on all of them."]
+    for fname, field in Creator.model_fields.items():
+        placement.append(line(fname, field))
+
+    return (
+        "\n".join(placement)
+        + "\n\n"
+        + "\n\n".join(blocks)
+        + (
+            "\n\nANCHOR NAMES: %s"
+            "\nEDGE GROUPS:  %s"
+            % (", ".join(sorted(FACE_FRAMES)), ", ".join(sorted(EDGE_GROUPS)))
+        )
     )
 
 
@@ -343,11 +426,18 @@ def build_dsl_prompt(
         "EVERY op needs its numbers. An op with only its name is rejected.",
         "",
         "Here is a complete, valid answer for a different part - a hollow box",
-        "80 mm wide, 60 mm tall and 50 mm deep with a 20 mm hole in the front:",
+        "80 mm wide, 60 mm tall and 50 mm deep with a 20 mm recess in the front:",
         "",
         WORKED_EXAMPLE,
         "",
-        "Now do the same for the part requested above.",
+        "And a second one, showing a shape placed away from the centre, a",
+        "repeat, and a shape in cut mode making a hole - a 160 x 100 x 40 mm",
+        "tray with three dividers and a drain hole:",
+        "",
+        SECOND_EXAMPLE,
+        "",
+        "Now do the same for the part requested above. Use whichever operations",
+        "fit it - do not copy the shape of these examples.",
         "",
         "Operations available:",
         "",

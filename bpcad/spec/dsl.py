@@ -16,6 +16,49 @@ than "|Z", ">Z", "<Z".
 Level 2 carries no geometry risk in the sense level 3 does - every op is a
 Python function that has been tested - but it is more expressive than picking a
 template, which is the point.
+
+WHAT COVERAGE COSTS, AND WHY THE CREATORS ALL LOOK THE SAME NOW
+----------------------------------------------------------------
+The first version of this layer could make nine kinds of thing and could not
+make a hole. Not a round one: `pocket` cuts rectangles into faces and `disc`
+only ever added material, so the birdhouse entrance - the single most obvious
+feature on the single most obvious test part - was unreachable without a
+template. `rounded_prism` had no position either, so no part could contain two
+boxes in different places: no L-bracket, no tray divider, no wall hook, no
+foot, no rib. That is not a DSL with gaps in it, that is a DSL that can build
+almost nothing.
+
+The fix is one idea applied uniformly rather than one new op per missing
+shape. Every creator now carries the same five fields:
+
+    x_mm, y_mm, z_mm    where it goes
+    rotate_deg          turned about
+    rotate_axis         one of x, y, z
+    mode                add, cut or intersect
+
+`mode` is what buys the coverage. A disc that can cut is a drilled hole. A
+rounded prism that can cut is a slot, a rebate, a keyway. A cone that can cut
+is a countersink. A rotated prism that can cut is a chamfer at any angle. Six
+creators times three modes times free placement covers a range that no
+reasonable number of hand-written ops would have.
+
+The ops are deliberately uniform for a second reason: a 7B model composing
+these has to hold the whole vocabulary in its head at once, and six shapes
+sharing one placement convention is far less to remember than eighteen ops
+each with their own.
+
+ONE CONVENTION, STATED ONCE, BECAUSE GETTING IT WRONG IS SILENT
+----------------------------------------------------------------
+Everything is built at the origin, THEN rotated about the origin, THEN moved to
+(x, y, z). Rotate-then-move, never move-then-rotate: moving first and rotating
+after swings the body around the world origin on the end of a long arm, and
+lands it somewhere nobody predicted.
+
+Prisms, discs, cones, wedges and extruded profiles STAND ON their placement
+point - the point is the centre of their base. Spheres are CENTRED on it. That
+asymmetry is real and is repeated in every docstring that needs it, because a
+sphere sitting on a surface and a sphere half-buried in it look equally
+plausible in a render.
 """
 
 from __future__ import annotations
@@ -57,6 +100,8 @@ EDGE_GROUPS: dict[str, str] = {
 
 AXIS_VECTOR = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
 
+MIRROR_PLANES = {"yz": "YZ", "xz": "XZ", "xy": "XY"}
+
 
 class DslError(ValueError):
     """A DSL op could not be applied. The message says which and why."""
@@ -80,8 +125,8 @@ class Scene:
         if self.solid is None:
             raise DslError(
                 "op %r needs an existing solid, but nothing has been created yet. "
-                "The first op must be one that creates geometry: rounded_prism, "
-                "disc or arc_rod." % op_name
+                "The first op must be one that creates geometry, in `add` mode: "
+                "%s." % (op_name, ", ".join(CREATOR_NAMES))
             )
         return self.solid
 
@@ -130,6 +175,8 @@ Anchor = Literal[
     "top_face", "bottom_face", "front_face", "back_face", "left_face", "right_face"
 ]
 EdgeGroup = Literal["vertical", "top", "bottom", "all"]
+Mode = Literal["add", "cut", "intersect"]
+Axis = Literal["x", "y", "z"]
 
 
 class DslOp(BaseModel):
@@ -146,61 +193,246 @@ class DslOp(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class RoundedPrism(DslOp):
-    """A rectangular prism with rounded vertical corners. The usual starting point."""
+class Creator(DslOp):
+    """
+    A shape, placed, and either added to the part or cut out of it.
+
+    Subclasses supply `_emit()`, which builds the shape at the origin in its
+    own natural orientation and knows nothing about placement. Everything to do
+    with where it goes and what it does to the part happens here, once, so
+    every shape behaves identically.
+    """
+
+    x_mm: float = Field(0.0, ge=-2000, le=2000, description="Where to put it, X.")
+    y_mm: float = Field(0.0, ge=-2000, le=2000, description="Where to put it, Y.")
+    z_mm: float = Field(0.0, ge=-2000, le=2000, description="Where to put it, Z.")
+    rotate_deg: float = Field(
+        0.0, ge=-360, le=360,
+        description="Turn about the origin BEFORE moving into place.",
+    )
+    rotate_axis: Axis = Field("z", description="Which axis to turn about: x, y or z.")
+    mode: Mode = Field(
+        "add",
+        description=(
+            "add fuses it on, cut removes it from the part, intersect keeps "
+            "only the overlap. cut is how holes, slots and countersinks are "
+            "made - there is no separate hole op."
+        ),
+    )
+
+    def _emit(self) -> cq.Workplane:  # pragma: no cover - abstract
+        raise NotImplementedError
+
+    def _label(self) -> str:
+        return getattr(self, "op", type(self).__name__)
+
+    def apply(self, scene: Scene) -> Scene:
+        body = self._emit()
+
+        # Rotate FIRST, about the origin, then move. The other order swings the
+        # shape around the world origin on the end of a long arm and puts it
+        # somewhere nobody intended.
+        if self.rotate_deg:
+            axis = AXIS_VECTOR[self.rotate_axis]
+            body = body.rotate((0, 0, 0), axis, self.rotate_deg)
+        if self.x_mm or self.y_mm or self.z_mm:
+            body = body.translate((self.x_mm, self.y_mm, self.z_mm))
+
+        if self.mode == "add":
+            scene.solid = body if scene.solid is None else scene.solid.union(body)
+            return scene
+
+        solid = scene.require_solid(self._label())
+        before = _volume(solid)
+        if self.mode == "cut":
+            result = solid.cut(body)
+        else:
+            result = solid.intersect(body)
+
+        after = _volume(result)
+        if after <= 1e-6:
+            raise DslError(
+                "%s in %s mode removed the entire part - nothing is left. Either "
+                "it is far larger than the part, or it is positioned over all of "
+                "it. The part was %.1f mm3 before."
+                % (self._label(), self.mode, before)
+            )
+        if self.mode == "cut" and abs(after - before) < 1e-6:
+            scene.log.notes.append(
+                "%s in cut mode removed nothing - it does not touch the part"
+                % self._label()
+            )
+        scene.solid = result
+        return scene
+
+
+def _volume(solid: cq.Workplane) -> float:
+    """Volume in mm3, or 0.0 for an empty result rather than an exception."""
+    try:
+        if not solid.vals():
+            return 0.0
+        return float(abs(solid.val().Volume()))
+    except Exception:
+        return 0.0
+
+
+class RoundedPrism(Creator):
+    """
+    A rectangular block with rounded vertical corners. The usual starting point.
+
+    Stands ON its placement point: (x, y, z) is the centre of its base.
+    """
 
     op: Literal["rounded_prism"]
     width_mm: float = Field(..., gt=0, le=1000, description="X extent.")
     depth_mm: float = Field(..., gt=0, le=1000, description="Y extent.")
-    height_mm: float = Field(..., gt=0, le=1000, description="Z extent, from z=0 up.")
+    height_mm: float = Field(..., gt=0, le=1000, description="Z extent, upward from the base.")
     corner_r_mm: float = Field(0.0, ge=0, le=500, description="Vertical corner radius.")
 
-    def apply(self, scene: Scene) -> Scene:
-        solid = rrect(
+    def _emit(self) -> cq.Workplane:
+        return rrect(
             self.width_mm, self.depth_mm, self.corner_r_mm,
             -self.depth_mm / 2.0, self.height_mm,
         )
-        scene.solid = solid if scene.solid is None else scene.solid.union(solid)
-        return scene
 
 
-class Disc(DslOp):
-    """A cylinder standing on z0, axis along Z."""
+class Disc(Creator):
+    """
+    A cylinder, axis along Z. In `cut` mode this is a round hole.
+
+    Stands ON its placement point: (x, y, z) is the centre of its base. To
+    drill right through a part, start below it and make it longer than the
+    part - a cutter that stops exactly flush leaves a zero-thickness face that
+    the mesher may or may not close.
+    """
 
     op: Literal["disc"]
     diameter_mm: float = Field(..., gt=0, le=1000)
+    height_mm: float = Field(..., gt=0, le=1000, description="Length along its axis.")
+
+    def _emit(self) -> cq.Workplane:
+        return _disc(self.diameter_mm, 0.0, 0.0, self.height_mm, z0=0.0)
+
+
+class Cone(Creator):
+    """
+    A cone or a truncated cone, axis along Z. In `cut` mode, a countersink.
+
+    Stands ON its placement point. `top_d_mm` of 0 gives a point.
+    """
+
+    op: Literal["cone"]
+    bottom_d_mm: float = Field(..., ge=0, le=1000, description="Diameter at the base.")
+    top_d_mm: float = Field(0.0, ge=0, le=1000, description="Diameter at the top. 0 is a point.")
     height_mm: float = Field(..., gt=0, le=1000)
-    x_mm: float = Field(0.0, ge=-1000, le=1000)
-    y_mm: float = Field(0.0, ge=-1000, le=1000)
-    z_mm: float = Field(0.0, ge=-1000, le=1000, description="Base height.")
 
-    def apply(self, scene: Scene) -> Scene:
-        solid = _disc(self.diameter_mm, self.x_mm, self.y_mm, self.height_mm, z0=self.z_mm)
-        scene.solid = solid if scene.solid is None else scene.solid.union(solid)
-        return scene
+    def _emit(self) -> cq.Workplane:
+        if self.bottom_d_mm <= 0 and self.top_d_mm <= 0:
+            raise DslError(
+                "cone: both ends have zero diameter, which is a line and not a "
+                "solid. At least one of bottom_d_mm and top_d_mm must be above 0."
+            )
+        solid = cq.Solid.makeCone(
+            self.bottom_d_mm / 2.0, self.top_d_mm / 2.0, self.height_mm
+        )
+        return cq.Workplane("XY").newObject([solid])
 
 
-class ArcRod(DslOp):
+class Sphere(Creator):
+    """
+    A ball. In `cut` mode, a spherical dish.
+
+    CENTRED on its placement point, unlike every other creator, which stands on
+    it. A sphere at z=0 is therefore half below the bed. To sit one on a
+    surface, put z at the surface plus the radius.
+    """
+
+    op: Literal["sphere"]
+    diameter_mm: float = Field(..., gt=0, le=1000)
+
+    def _emit(self) -> cq.Workplane:
+        return cq.Workplane("XY").sphere(self.diameter_mm / 2.0)
+
+
+class Wedge(Creator):
+    """
+    A ramp: a triangular prism rising along +Y, flat underneath.
+
+    This is what makes stands, gussets, brackets and any sloped face. In `cut`
+    mode it is a chamfer of any angle, on any edge, which the fixed-size
+    chamfer in blend_edges cannot do.
+
+    Stands ON its placement point, which is the centre of its rectangular base.
+    The slope runs from zero height at -depth/2 up to `height_mm` at +depth/2,
+    so `rotate_deg: 180, rotate_axis: z` makes it fall the other way.
+    """
+
+    op: Literal["wedge"]
+    width_mm: float = Field(..., gt=0, le=1000, description="X extent, the constant one.")
+    depth_mm: float = Field(..., gt=0, le=1000, description="Y extent, the direction it rises in.")
+    height_mm: float = Field(..., gt=0, le=1000, description="Z extent at the high end.")
+
+    def _emit(self) -> cq.Workplane:
+        half_d = self.depth_mm / 2.0
+        # A YZ workplane's local x is world Y and local y is world Z, and it
+        # extrudes along +X - which is exactly the axis the wedge is constant on.
+        profile = (
+            cq.Workplane("YZ")
+            .moveTo(-half_d, 0)
+            .lineTo(half_d, 0)
+            .lineTo(half_d, self.height_mm)
+            .close()
+            .extrude(self.width_mm)
+        )
+        return profile.translate((-self.width_mm / 2.0, 0, 0))
+
+
+class ProfileExtrude(Creator):
+    """
+    Any closed outline, extruded upward. The general-purpose shape maker.
+
+    Points are (x, y) pairs in the outline's own units, multiplied by
+    `scale_mm`. Give it the silhouette and it gives you the part: a hook, a
+    bottle opener, a cam, a gear tooth, a traced logo. In `cut` mode it is a
+    shaped hole.
+
+    Stands ON its placement point, which corresponds to (0, 0) in the outline's
+    own coordinates - NOT the centre of the outline, which is usually not the
+    same place.
+    """
+
+    op: Literal["profile_extrude"]
+    points: list[tuple[float, float]] = Field(
+        ..., min_length=3, max_length=2000,
+        description="Closed outline as (x, y) pairs. Do not repeat the first point at the end.",
+    )
+    scale_mm: float = Field(1.0, gt=0, le=1000, description="Multiplier from outline units to mm.")
+    height_mm: float = Field(..., gt=0, le=1000, description="Extrusion in Z.")
+
+    def _emit(self) -> cq.Workplane:
+        return poly_prism(self.points, self.scale_mm, 0.0, 0.0, 0.0, self.height_mm)
+
+
+class ArcRod(Creator):
     """
     A rod following a circular arc, lying in the XY plane and extruded in Z.
 
     Built as an annulus trimmed to a half-plane, which is how the reference
     keyring's fused handle is made: it gives exactly the render's arc without
-    a sweep or a revolve.
+    a sweep or a revolve. Whole rings, split rings, handles, hooks, clips.
+
+    Stands ON its placement point, which is the centre of the arc.
     """
 
     op: Literal["arc_rod"]
     arc_r_mm: float = Field(..., gt=0, le=1000, description="Centreline radius.")
     rod_d_mm: float = Field(..., gt=0, le=500, description="Rod section diameter.")
     thickness_mm: float = Field(..., gt=0, le=1000, description="Extrusion in Z.")
-    centre_x_mm: float = Field(0.0, ge=-1000, le=1000)
-    centre_y_mm: float = Field(0.0, ge=-1000, le=1000)
-    z_mm: float = Field(0.0, ge=-1000, le=1000)
     trim_below_y_mm: float | None = Field(
         None, description="Keep only the part of the arc above this y. Omit to keep the ring."
     )
 
-    def apply(self, scene: Scene) -> Scene:
+    def _emit(self) -> cq.Workplane:
         if self.rod_d_mm / 2.0 >= self.arc_r_mm:
             raise DslError(
                 "arc_rod: rod_d_mm %.3f is too thick for arc_r_mm %.3f - the "
@@ -209,16 +441,15 @@ class ArcRod(DslOp):
                 % (self.rod_d_mm, self.arc_r_mm, 2 * self.arc_r_mm)
             )
         outer = _disc(2 * (self.arc_r_mm + self.rod_d_mm / 2.0),
-                      self.centre_x_mm, self.centre_y_mm, self.thickness_mm, z0=self.z_mm)
+                      0.0, 0.0, self.thickness_mm, z0=0.0)
         inner = _disc(2 * (self.arc_r_mm - self.rod_d_mm / 2.0),
-                      self.centre_x_mm, self.centre_y_mm, self.thickness_mm, z0=self.z_mm)
+                      0.0, 0.0, self.thickness_mm, z0=0.0)
         ring = outer.cut(inner)
         if self.trim_below_y_mm is not None:
             from bpcad.build.helpers import clip
 
             ring = clip(ring, "y", self.trim_below_y_mm, keep="above")
-        scene.solid = ring if scene.solid is None else scene.solid.union(ring)
-        return scene
+        return ring
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +470,11 @@ class Pocket(DslOp):
 
     Positive `depth_mm` goes INTO the part. Position is in the face's own
     coordinates: u to the right and v up, both measured from the face centre.
+
+    This is the face-relative way to make a recess, and it stays because
+    "10 mm in from the middle of the front" is how a person describes a
+    feature. For anything that is not a rectangle on a flat outer face, use a
+    creator in `cut` mode instead.
     """
 
     op: Literal["pocket"]
@@ -290,6 +526,59 @@ class EmbossPolygon(DslOp):
         )
         placed = _place_on_anchor(scene, self.anchor, local)
         scene.solid = solid.cut(placed) if self.cut else solid.union(placed)
+        return scene
+
+
+class EmbossText(DslOp):
+    """
+    Raise or cut lettering on a named face.
+
+    "with my name on it" is one of the most common things anyone asks a printer
+    for, and it was unreachable. The glyph SIZE is recorded as a feature, not
+    the stroke width: the stroke depends on the typeface and is not something
+    this can measure, so it is not claimed. As a rule of thumb a stroke is
+    around a tenth of the size, which means text under about 4 mm on a 0.4 mm
+    nozzle will not resolve - but that is a rule of thumb and it is reported as
+    one, not as a measurement.
+    """
+
+    op: Literal["emboss_text"]
+    anchor: Anchor = Field(..., description="Face to letter. A name, not a selector.")
+    text: str = Field(..., min_length=1, max_length=200)
+    size_mm: float = Field(..., gt=0, le=500, description="Cap height of the lettering.")
+    depth_mm: float = Field(..., gt=0, le=100, description="Relief height, or cut depth if cut.")
+    cut: bool = Field(False, description="True engraves into the face, False raises off it.")
+    u_mm: float = Field(0.0, ge=-1000, le=1000)
+    v_mm: float = Field(0.0, ge=-1000, le=1000)
+
+    def apply(self, scene: Scene) -> Scene:
+        solid = scene.require_solid("emboss_text")
+        over = 1.0 if self.cut else 0.0
+        z0 = -self.depth_mm if self.cut else 0.0
+        try:
+            local = (
+                cq.Workplane("XY", origin=(self.u_mm, self.v_mm, z0))
+                .text(self.text, self.size_mm, self.depth_mm + over)
+            )
+        except Exception as exc:
+            raise DslError(
+                "emboss_text could not letter %r: %s. This needs a system font "
+                "and there may not be one - the part is buildable without the "
+                "lettering." % (self.text, exc)
+            ) from exc
+        if not local.vals() or _volume(local) <= 0:
+            raise DslError(
+                "emboss_text produced no geometry for %r - every character came "
+                "out empty." % self.text
+            )
+        placed = _place_on_anchor(scene, self.anchor, local)
+        scene.solid = solid.cut(placed) if self.cut else solid.union(placed)
+        scene.features["lettering cap height"] = self.size_mm
+        scene.log.notes.append(
+            "lettering %r at %.1f mm cap height - the STROKE is roughly a tenth "
+            "of that and is not measured here, so check it resolves"
+            % (self.text, self.size_mm)
+        )
         return scene
 
 
@@ -391,6 +680,43 @@ class Hollow(DslOp):
         return scene
 
 
+class Mirror(DslOp):
+    """
+    Reflect the part and keep both halves.
+
+    Most things people ask for are symmetrical, and building half of something
+    and mirroring it is both less to describe and impossible to get subtly
+    lopsided. `plane` names the plane the part is reflected ACROSS: "yz" swaps
+    left and right, "xz" swaps front and back, "xy" swaps top and bottom.
+    """
+
+    op: Literal["mirror"]
+    plane: Literal["yz", "xz", "xy"] = Field(
+        "yz", description="Reflect across this plane. yz swaps left/right."
+    )
+    at_mm: float = Field(
+        0.0, ge=-2000, le=2000,
+        description="Where the mirror plane sits along its normal. 0 is through the origin.",
+    )
+    keep_original: bool = Field(
+        True, description="True keeps both halves. False replaces the part with its reflection."
+    )
+
+    def apply(self, scene: Scene) -> Scene:
+        solid = scene.require_solid("mirror")
+        normal = {"yz": (1, 0, 0), "xz": (0, 1, 0), "xy": (0, 0, 1)}[self.plane]
+        base = tuple(c * self.at_mm for c in normal)
+        flipped = solid.mirror(mirrorPlane=MIRROR_PLANES[self.plane], basePointVector=base)
+        if not self.keep_original:
+            scene.solid = flipped
+            return scene
+        joined = solid.union(flipped)
+        if _volume(joined) <= 1e-6:
+            raise DslError("mirror produced nothing - the union of the two halves is empty")
+        scene.solid = joined
+        return scene
+
+
 # ---------------------------------------------------------------------------
 # patterns
 # ---------------------------------------------------------------------------
@@ -429,14 +755,32 @@ class PatternPolar(DslOp):
     total_deg: float = Field(360.0, gt=0, le=360)
     centre_x_mm: float = Field(0.0, ge=-1000, le=1000)
     centre_y_mm: float = Field(0.0, ge=-1000, le=1000)
+    turn_with_angle: bool = Field(
+        False,
+        description=(
+            "True also turns each copy to face outward, which is what gear "
+            "teeth, fan blades and knurling need. False keeps every copy "
+            "upright, which is what a ring of screw holes needs."
+        ),
+    )
     step: "AnyOp" = Field(..., description="The op to repeat.")
 
     def apply(self, scene: Scene) -> Scene:
         full = abs(self.total_deg - 360.0) < 1e-9
         divisor = self.count if full else max(self.count - 1, 1)
         for i in range(self.count):
-            angle = math.radians(self.start_deg + self.total_deg * i / divisor)
+            deg = self.start_deg + self.total_deg * i / divisor
+            angle = math.radians(deg)
             shifted = self.step.model_copy(deep=True)
+            if self.turn_with_angle:
+                if not isinstance(shifted, Creator):
+                    raise DslError(
+                        "pattern_polar: turn_with_angle needs a shape it can "
+                        "turn, and %r is not one. Legal: %s."
+                        % (getattr(shifted, "op", "?"), ", ".join(CREATOR_NAMES))
+                    )
+                shifted.rotate_axis = "z"
+                shifted.rotate_deg = _wrap_deg(shifted.rotate_deg + deg)
             _shift_op(
                 shifted,
                 self.centre_x_mm + self.radius_mm * math.cos(angle),
@@ -447,42 +791,39 @@ class PatternPolar(DslOp):
         return scene
 
 
+def _wrap_deg(deg: float) -> float:
+    """Keep an angle inside the -360..360 the field allows."""
+    return math.fmod(deg, 360.0)
+
+
 def _shift_op(op: DslOp, dx: float, dy: float, dz: float) -> None:
     """
     Offset whatever positional fields an op has.
 
-    Deliberately explicit rather than clever: an op that gains a new position
-    field and is not listed here will pattern in the wrong place, and a loud
-    failure beats a silently misplaced copy.
+    Every creator shares one set of position fields now, so this is no longer
+    a per-op lookup table that a new op could be forgotten from - which is what
+    it used to be, and it was already wrong for two of them.
     """
-    if isinstance(op, Disc):
+    if isinstance(op, Creator):
         op.x_mm += dx
         op.y_mm += dy
         op.z_mm += dz
-    elif isinstance(op, ArcRod):
-        op.centre_x_mm += dx
-        op.centre_y_mm += dy
-        op.z_mm += dz
-    elif isinstance(op, (Pocket, EmbossPolygon)):
+    elif isinstance(op, (Pocket, EmbossPolygon, EmbossText)):
         op.u_mm += dx
         op.v_mm += dy
-    elif isinstance(op, RoundedPrism):
-        raise DslError(
-            "pattern: rounded_prism has no position of its own, so patterning it "
-            "would stack every copy in the same place. Pattern a disc, a pocket "
-            "or an emboss_polygon instead."
-        )
     else:
         raise DslError(
-            "pattern: op %r cannot be patterned - it has no position to offset."
+            "pattern: op %r cannot be patterned - it has no position to offset. "
+            "Pattern a shape or a face feature instead."
             % getattr(op, "op", type(op).__name__)
         )
 
 
 AnyOp = Annotated[
     Union[
-        RoundedPrism, Disc, ArcRod, Pocket, EmbossPolygon,
-        BlendEdges, Hollow, PatternLinear, PatternPolar,
+        RoundedPrism, Disc, Cone, Sphere, Wedge, ProfileExtrude, ArcRod,
+        Pocket, EmbossPolygon, EmbossText, BlendEdges, Hollow, Mirror,
+        PatternLinear, PatternPolar,
     ],
     Field(discriminator="op"),
 ]
@@ -490,9 +831,13 @@ AnyOp = Annotated[
 PatternLinear.model_rebuild()
 PatternPolar.model_rebuild()
 
-OP_NAMES = (
-    "rounded_prism", "disc", "arc_rod", "pocket", "emboss_polygon",
-    "blend_edges", "hollow", "pattern_linear", "pattern_polar",
+CREATOR_NAMES = (
+    "rounded_prism", "disc", "cone", "sphere", "wedge", "profile_extrude", "arc_rod",
+)
+
+OP_NAMES = CREATOR_NAMES + (
+    "pocket", "emboss_polygon", "emboss_text", "blend_edges", "hollow", "mirror",
+    "pattern_linear", "pattern_polar",
 )
 
 
