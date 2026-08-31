@@ -1204,3 +1204,29 @@ def render_cmd(
 
 if __name__ == "__main__":
     app()
+
+
+@app.command("web")
+def web_cmd(
+    host: str = typer.Option(
+        "127.0.0.1", "--host",
+        help="Interface to bind. 0.0.0.0 makes it reachable from a phone on "
+             "the same network - and from everything else on that network too.",
+    ),
+    port: int = typer.Option(8765, "--port", help="Port to listen on."),
+    lan: bool = typer.Option(
+        False, "--lan",
+        help="Shorthand for --host 0.0.0.0, and print the URL to open on a phone.",
+    ),
+) -> None:
+    """
+    Serve bpcad to a browser, on this machine or on your phone.
+
+    Binds to loopback by default so nothing is exposed by accident. `--lan`
+    opens it to the network and says so, loudly, because a CAD tool quietly
+    listening on every interface with no password is not something anybody
+    should discover later.
+    """
+    from bpcad.web.server import serve
+
+    serve("0.0.0.0" if lan else host, port)

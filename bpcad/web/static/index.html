@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<!-- viewport-fit=cover so the notch on a phone does not eat the header -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#09090b">
+<title>bpcad — Bit Primitive</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="scanlines" aria-hidden="true"></div>
+
+<header class="bar">
+  <div class="brand">
+    <span class="glyph" aria-hidden="true">▚</span>
+    <span class="wordmark">BIT<span class="dim">·</span>PRIMITIVE</span>
+    <span class="tool">bpcad</span>
+  </div>
+  <div class="status" id="status">
+    <span class="dot" id="statusDot"></span>
+    <span id="statusText">checking…</span>
+  </div>
+</header>
+
+<main>
+  <!-- ── ask ──────────────────────────────────────────────────────────── -->
+  <section class="panel" id="askPanel">
+    <h1 class="lede">What do you want to make?</h1>
+    <p class="sub">
+      Plain language, with the dimensions you know. Everything you leave out is
+      derived. You get a dimensioned, editable part — not a mesh — so you can
+      change it afterwards by asking.
+    </p>
+
+    <div class="promptwrap">
+      <textarea id="prompt" rows="3" spellcheck="false"
+        placeholder="a wall hook for a coat, screwed through two holes"></textarea>
+    </div>
+
+    <div class="row">
+      <label class="field">
+        <span class="tag">material</span>
+        <select id="material"></select>
+      </label>
+      <button class="btn primary" id="createBtn">
+        <span class="label">Create</span>
+      </button>
+    </div>
+    <p class="hint" id="printerHint"></p>
+  </section>
+
+  <!-- ── running ──────────────────────────────────────────────────────── -->
+  <section class="panel term" id="runPanel" hidden>
+    <div class="termhead">
+      <span class="tag">working</span>
+      <span class="elapsed" id="elapsed">0s</span>
+      <button class="btn ghost small" id="hideRun">hide</button>
+    </div>
+    <pre class="log" id="log"></pre>
+  </section>
+
+  <!-- ── result ───────────────────────────────────────────────────────── -->
+  <section class="panel" id="partPanel" hidden>
+    <div class="parthead">
+      <div>
+        <h2 id="partName">—</h2>
+        <p class="sub" id="partMeta"></p>
+      </div>
+      <span class="verdict" id="verdict"></span>
+    </div>
+
+    <div class="viewer" id="viewer">
+      <img id="frame" alt="the part" draggable="false">
+      <div class="spinhint" id="spinhint">drag to spin</div>
+    </div>
+
+    <div class="row wrap">
+      <a class="btn" id="dlStl" download>Download STL</a>
+      <button class="btn ghost" id="showReport">Report</button>
+      <button class="btn ghost" id="showSpec">Spec</button>
+    </div>
+
+    <div class="refine">
+      <span class="tag">not right? say what to change</span>
+      <div class="row">
+        <input id="refine" type="text" spellcheck="false"
+          placeholder="make it 20 mm taller and move the hole up">
+        <button class="btn primary" id="refineBtn"><span class="label">Apply</span></button>
+      </div>
+    </div>
+
+    <details class="doc" id="reportBox"><summary>report</summary>
+      <pre id="reportText"></pre>
+    </details>
+    <details class="doc" id="specBox"><summary>spec.yaml</summary>
+      <pre id="specText"></pre>
+    </details>
+  </section>
+
+  <!-- ── library ──────────────────────────────────────────────────────── -->
+  <section class="panel">
+    <div class="parthead">
+      <h2>Your parts</h2>
+      <input id="search" type="search" placeholder="search" spellcheck="false">
+    </div>
+    <div class="grid" id="library"></div>
+  </section>
+</main>
+
+<footer>
+  <span>local build · nothing leaves this machine</span>
+  <span id="footPrinter"></span>
+</footer>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

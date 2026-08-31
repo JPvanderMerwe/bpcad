@@ -276,7 +276,7 @@ def render(
     elev_deg: float = 25.0,
     azim_deg: float = 315.0,
     colour: tuple[float, float, float] = (0.62, 0.66, 0.72),
-    background: tuple[float, float, float] = (0.078, 0.086, 0.102),
+    background: tuple[float, float, float] = (0.035, 0.035, 0.043),
     light_dir: np.ndarray | None = None,
     ambient: float = 0.32,
     margin: float = 0.06,
