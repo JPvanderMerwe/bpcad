@@ -3,8 +3,13 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-build/
-dist/
+# LEADING SLASH. Written as `build/` this matches a directory called build at
+# ANY depth, which meant bpcad/build/ - the compiler, the helpers and every
+# template, 3104 lines and the entire geometry engine - was silently untracked
+# for the whole life of the repo. Three commits shipped a package that could
+# not build anything. Anchor it to the top level.
+/build/
+/dist/
 
 # Generated part output. spec.yaml, report.md, run.json and regression.json
 # ARE tracked - they are the durable record. The meshes are rebuilt from the
