@@ -138,9 +138,23 @@ def test_a_stored_part_claims_no_verdict(base_url):
     assert "verdict" not in data
 
 
-def test_the_stl_downloads(base_url):
+def a_built_part(base_url) -> dict:
+    """
+    A part with a mesh on disk, or a skip that says why.
+
+    parts/*/out/ is gitignored deliberately - the meshes rebuild from the spec
+    in seconds - so a fresh clone has specs and no STLs, and a test that
+    assumed otherwise died with a bare StopIteration that said nothing.
+    """
     parts = get_json(base_url + "/api/parts")["parts"]
-    built = next(p for p in parts if p.get("built"))
+    built = [p for p in parts if p.get("built")]
+    if not built:
+        pytest.skip("no part has been built yet - run `bpcad build parts/<name>/spec.yaml`")
+    return built[0]
+
+
+def test_the_stl_downloads(base_url):
+    built = a_built_part(base_url)
     with get("%s/api/part/%s/stl" % (base_url, built["name"])) as response:
         body = response.read()
     assert len(body) > 1000
@@ -148,8 +162,7 @@ def test_the_stl_downloads(base_url):
 
 
 def test_a_turntable_frame_renders_and_is_not_blank(base_url):
-    parts = get_json(base_url + "/api/parts")["parts"]
-    built = next(p for p in parts if p.get("built"))
+    built = a_built_part(base_url)
     url = "%s/api/part/%s/frame/3?w=240" % (base_url, built["name"])
     with get(url) as response:
         assert response.status == 200

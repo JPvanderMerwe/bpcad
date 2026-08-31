@@ -821,6 +821,7 @@ def build(params: EnclosureParams, spec, base_dir: Path | None = None):
 register(Template(
     name="enclosure",
     summary=(
+        "RECTANGULAR. For anything round use `vessel`. "
         "A hollow box: walls, a floor, an optional opening in one wall, an "
         "optional lift-off roof or lid, drainage, ventilation, a predator "
         "guard and a mounting plate. Everything optional is off by setting it "
@@ -831,11 +832,25 @@ register(Template(
     # said only "birdhouse, nesting box, planter" and fell through to composing
     # primitives, which makes a far worse part.
     makes=(
-        "container", "box", "storage box", "bin", "tub", "tray", "caddy",
-        "organiser", "pot", "planter", "plant pot", "case", "enclosure",
-        "housing", "shell", "project box", "junction box",
+        # RECTANGULAR THINGS ONLY. This list used to claim "pot", "planter",
+        # "plant pot" and "tub", and a model picking a template matches on
+        # words: every request for a bowl or a pot found one of them, chose
+        # this, and was handed a square box. It passed every check, because
+        # nothing downstream knows what a bowl looks like. Claiming a word you
+        # cannot make is worse than claiming nothing - falling through to
+        # primitives gives a rough bowl, this gave a confident brick.
+        # Round vessels live in the `vessel` template.
+        #
+        # "container" stays here AND on vessel, deliberately. It is not a shape
+        # word - a container is as often square as round - so both claim it and
+        # the rest of the request decides. Removing it from here entirely made
+        # "make me a container" match nothing at all, which is worse than
+        # either template answering.
+        "container", "box", "storage box", "bin", "crate", "tote", "tray", "caddy",
+        "organiser", "drawer insert", "case", "enclosure", "housing", "shell",
+        "project box", "junction box", "electronics enclosure",
         "birdhouse", "bird box", "nesting box", "nest box", "bat box",
-        "hive", "feeder body", "letterbox", "post box",
+        "hive", "feeder body", "letterbox", "post box", "donation box",
     ),
     params_model=EnclosureParams,
     builder=build,

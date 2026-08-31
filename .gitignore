@@ -15,6 +15,12 @@ __pycache__/
 # ARE tracked - they are the durable record. The meshes are rebuilt from the
 # spec in seconds and would otherwise churn the history on every build.
 parts/*/out/
+# AND under a version folder. `parts/*/out/` matches parts/birdhouse/out/ and
+# not parts/birdhouse/v02/out/, so every refinement's meshes leaked back in -
+# a 39 MB STL was staged before anyone noticed. Same class of mistake as the
+# `build/` rule above: a pattern that looked right for the layout it was
+# written against and not for the one that grew.
+parts/*/*/out/
 
 # The original drop of the reference material. reference/ holds a byte-identical
 # copy, is read-only, and is what the tests and templates actually use. Keeping

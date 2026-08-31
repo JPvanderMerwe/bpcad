@@ -29,10 +29,16 @@ def test_the_library_finds_the_parts(entries):
 
 
 def test_an_entry_knows_its_template_without_building(entries):
+    """
+    WITHOUT BUILDING is the whole point, so this must not require a build.
+    It used to assert `vent.built`, which contradicted its own name and failed
+    in a fresh clone - parts/*/out/ is gitignored on purpose, because the
+    meshes rebuild from the spec in seconds and would otherwise churn the
+    history on every build.
+    """
     vent = next(e for e in entries if e.name == "vent_louvre")
     assert vent.template == "louvre_vent"
     assert vent.material == "petg"
-    assert vent.built
 
 
 def test_the_envelope_comes_from_the_stored_baseline(entries):

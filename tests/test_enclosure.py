@@ -199,15 +199,31 @@ def test_the_catalogue_describes_what_it_is_for():
     """
     A model picks a template by matching words. The summary says what the thing
     IS; `makes` says what people CALL it - and the second is what a request
-    like "a container" or "a plant pot" actually matches on.
+    like "a container" or "a storage box" actually matches on.
+
+    This test used to require "plant pot" here, and that requirement WAS the
+    bug: a plant pot is round, this template is rectangular, and claiming the
+    word meant every request for one was confidently built as a square box.
+    Round words belong to `vessel` now. "container" is shared, because a
+    container is as often square as round and it is not a shape word.
     """
     info = api.template_info("enclosure")
     assert "hollow" in info["summary"].lower()
     assert "box" in info["summary"].lower()
+    assert "rectangular" in info["summary"].lower(), (
+        "the summary has to say the shape out loud - it is what a model reads "
+        "when the words alone do not decide it"
+    )
 
     makes = {m.lower() for m in info["makes"]}
-    for word in ("container", "birdhouse", "storage box", "plant pot", "case"):
+    for word in ("container", "birdhouse", "storage box", "case", "bin"):
         assert word in makes, "%r would not find this template" % word
+
+    for word in ("bowl", "plant pot", "pot", "vase", "dish"):
+        assert word not in makes, (
+            "the rectangular template claims %r, so every request for one will "
+            "be built as a square box" % word
+        )
 
 
 def test_every_parameter_is_documented():

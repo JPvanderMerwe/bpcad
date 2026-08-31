@@ -1149,11 +1149,36 @@ def measure_reference(
     return out
 
 
+def _as_measurement_facts(measurements):
+    """
+    Accept either a measurement OBJECT or the flat dict it produces.
+
+    THE SAME THING HAS TWO NAMES AND TWO TYPES. `generate` takes
+    `measurement=<PartMeasurement>` and calls as_facts() on it; `refine` took
+    `measurements=<dict>` and did not. The GUI holds one object and passed it
+    to both, so refining a part with a reference image attached died with
+    "'list' object is not callable" - because PartMeasurement has an `items`
+    LIST, and the prompt builder called `.items()` on it.
+
+    Normalising here rather than at the three call sites means the next caller
+    cannot get it wrong either.
+    """
+    if measurements is None or isinstance(measurements, dict):
+        return measurements
+    facts = getattr(measurements, "as_facts", None)
+    if callable(facts):
+        return facts()
+    raise ApiError(
+        "measurements must be a dict of facts or an object with as_facts(), "
+        "not %s" % type(measurements).__name__
+    )
+
+
 def refine(
     spec,
     instruction: str,
     report=None,
-    measurements: dict[str, Any] | None = None,
+    measurements: "dict[str, Any] | Any | None" = None,
     machine: str | None = None,
     out_dir: str | Path | None = None,
     cfg: Config | None = None,
@@ -1199,7 +1224,7 @@ def refine(
 
     outcome = run_refine(
         spec=spec, instruction=instruction, profile=profile,
-        report=report, measurements=measurements,
+        report=report, measurements=_as_measurement_facts(measurements),
         on_attempt=lambda a: emit("attempt", a),
         verify_fn=verify_candidate if build_it else None,
     )

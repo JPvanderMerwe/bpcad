@@ -73,6 +73,37 @@ class BuildResult:
     derived: dict[str, float] = field(default_factory=dict)
     body_count_expected: int = 1
 
+    # EXPORT TOLERANCE, WHEN THE TEMPLATE KNOWS BETTER THAN THE DEFAULT.
+    #
+    # Nothing uses this yet, and the story of why is worth keeping.
+    #
+    # The first curved template exported at 777 920 triangles and 39 MB, took
+    # 24 seconds to write, and then had to be walked several times over by the
+    # mesh checks - so a single bowl did not finish inside ten minutes. The
+    # obvious conclusion was that the project default of 0.005 mm / 0.05 rad is
+    # a FLAT-PART number, learned from parts where anything finer produced
+    # degenerate facets, and that curved parts need a coarser one.
+    #
+    # That conclusion was wrong. The real cause was `loft(ruled=False)`, which
+    # fits a B-spline surface through the sections and is punishing to
+    # tessellate. Lofting ruled - a stack of conical bands - gives the same
+    # bowl to within 0.02% by volume, at the SAME 0.005/0.05 tolerance, in
+    # 93 488 triangles and half a second. Measured against fresh solids each
+    # time, because OpenCascade caches a triangulation on the shape and
+    # re-exporting the same one reports the first tessellation's numbers:
+    #
+    #   splined, 0.005/0.05    24.4 s   777 920 tris   38.9 MB
+    #   splined, 0.020/0.10     1.5 s   157 910 tris    7.9 MB
+    #   ruled,   0.005/0.05     0.5 s    93 488 tris    4.7 MB
+    #   ruled,   0.020/0.10     0.1 s    28 472 tris    1.4 MB
+    #
+    # So rule 24's numbers stand, and the fix belonged in the geometry. The
+    # override stays because the next curved template may genuinely need it,
+    # and because reaching for it should mean measuring first rather than
+    # assuming the default is the problem.
+    stl_tolerance: float | None = None
+    stl_angular_tolerance: float | None = None
+
     # The part's NOMINAL size, when the template knows it: the numbers a person
     # would quote if asked how big it is. Neither bounding box answers that. The
     # enclosure's print layout is 288 mm wide because the roof lies beside the

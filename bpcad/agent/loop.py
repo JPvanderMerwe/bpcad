@@ -507,12 +507,20 @@ def compile_and_verify(
                  "geometry together. Try more conservative values.",
         ) from exc
 
-    tol = spec.stl_tolerance if spec.stl_tolerance is not None else float(cfg.export["stl_tolerance"])
-    ang = (
-        spec.stl_angular_tolerance
-        if spec.stl_angular_tolerance is not None
-        else float(cfg.export["stl_angular_tolerance"])
-    )
+    # Spec first - somebody asked for it by name. Then the template, which
+    # knows whether it makes flat faces or turned ones. Then the config default,
+    # which is a flat-part number. See BuildResult for the measurements.
+    def _tolerance(field: str, config_key: str) -> float:
+        from_spec = getattr(spec, field, None)
+        if from_spec is not None:
+            return float(from_spec)
+        from_template = getattr(result, field, None)
+        if from_template is not None:
+            return float(from_template)
+        return float(cfg.export[config_key])
+
+    tol = _tolerance("stl_tolerance", "stl_tolerance")
+    ang = _tolerance("stl_angular_tolerance", "stl_angular_tolerance")
     stl = export_solid(result.print_solid, out_dir / ("%s.stl" % spec.name), tol, ang)
 
     problems = check_export(stl, expected_bodies=result.body_count_expected)
