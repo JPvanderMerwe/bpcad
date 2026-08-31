@@ -714,3 +714,40 @@ def test_a_frame_too_narrow_for_its_depth_says_so():
         LouvreVentParams(frame_w_mm=40.0, wall_mm=3.0)
     msg = str(exc.value)
     assert "reduce frame_d_mm" in msg or "widen frame_w_mm" in msg
+
+
+def test_every_template_says_what_people_call_it():
+    """
+    A model picks a template by matching words. The enclosure described itself
+    as "birdhouse, nesting box, planter" and a request for "a container"
+    matched nothing, so it fell through to composing primitives - which makes a
+    far worse part than the template that was sitting right there.
+    """
+    for name in registry.names():
+        assert registry.get(name).makes, "%s does not say what it makes" % name
+
+
+def test_the_words_reach_the_model(monkeypatch):
+    """
+    They have to be in the CATALOGUE, not only in `bpcad spec explain`. They
+    were added to explain() first and the model never saw them.
+    """
+    from bpcad.agent import prompts
+
+    catalogue = prompts.template_catalogue()
+    for word in ("container", "storage box", "plant pot", "vent", "keyring"):
+        assert word in catalogue, "%r is not findable by a model" % word
+
+
+def test_a_container_is_the_enclosure_with_the_extras_off():
+    """
+    "Make a container" should not need a new template. Everything optional on
+    the enclosure turns off with a zero.
+    """
+    params = {"entrance_dia_mm": 0.0, "roof": False, "drain_holes": 0,
+              "vent_slots": 0, "mount_holes": False}
+    spec = PartSpec(name="c", level=1, material="petg", nozzle_mm=0.4,
+                    layer_mm=0.24, template="enclosure", params=params)
+    result = compile_spec(spec)
+    assert result.body_count_expected == 1
+    assert result.solid.val().Volume() > 0

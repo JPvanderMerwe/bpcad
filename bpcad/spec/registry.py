@@ -24,10 +24,22 @@ class TemplateError(KeyError):
 
 @dataclass(frozen=True)
 class Template:
+    """
+    One template: a name, a parameter model, and a builder.
+
+    `makes` is the list of things people actually call this. It exists because
+    a model choosing a template matches on words, and the enclosure's summary
+    said "birdhouse, nesting box, storage box, planter or case" - so a request
+    for "a container" or "a bin" or "a pot" found nothing and fell through to
+    composing primitives, which produces a far worse part. The catalogue lists
+    these, so a template is findable by whatever the thing is called.
+    """
+
     name: str
     summary: str
     params_model: type[BaseModel]
     builder: Callable
+    makes: tuple[str, ...] = ()
     anchors: tuple[str, ...] = ()
     print_notes: tuple[str, ...] = ()
 
@@ -85,6 +97,8 @@ def explain(name: str) -> str:
     lines: list[str] = []
     lines.append("template   %s" % t.name)
     lines.append("           %s" % t.summary)
+    if t.makes:
+        lines.append("           use it for: %s" % ", ".join(t.makes))
     lines.append("")
 
     fields = t.params_model.model_fields

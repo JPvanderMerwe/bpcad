@@ -197,13 +197,17 @@ def test_the_template_covers_a_family(label, params, tmp_path):
 
 def test_the_catalogue_describes_what_it_is_for():
     """
-    A model picks a template from this line. If it does not say "birdhouse",
-    a birdhouse request will not find it.
+    A model picks a template by matching words. The summary says what the thing
+    IS; `makes` says what people CALL it - and the second is what a request
+    like "a container" or "a plant pot" actually matches on.
     """
     info = api.template_info("enclosure")
-    summary = info["summary"].lower()
-    for word in ("hollow", "birdhouse", "box"):
-        assert word in summary
+    assert "hollow" in info["summary"].lower()
+    assert "box" in info["summary"].lower()
+
+    makes = {m.lower() for m in info["makes"]}
+    for word in ("container", "birdhouse", "storage box", "plant pot", "case"):
+        assert word in makes, "%r would not find this template" % word
 
 
 def test_every_parameter_is_documented():

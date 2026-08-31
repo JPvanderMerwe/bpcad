@@ -50,7 +50,13 @@ def template_catalogue(max_params: int = 40) -> str:
     blocks: list[str] = []
     for name in registry.names():
         t = registry.get(name)
-        lines = ["TEMPLATE %s" % name, "  %s" % t.summary, "  parameters:"]
+        lines = ["TEMPLATE %s" % name, "  %s" % t.summary]
+        if t.makes:
+            # The words people actually use. A model picks a template by
+            # matching on these, and "a container" matched nothing when the
+            # enclosure described itself only as a birdhouse.
+            lines.append("  use this for: %s" % ", ".join(t.makes))
+        lines.append("  parameters:")
         for i, (fname, field) in enumerate(t.params_model.model_fields.items()):
             if i >= max_params:
                 lines.append("    ... %d more, see `bpcad spec explain %s`"

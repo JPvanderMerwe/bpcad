@@ -165,6 +165,7 @@ def template_info(name: str) -> dict[str, Any]:
     return {
         "name": t.name,
         "summary": t.summary,
+        "makes": list(t.makes),
         "anchors": list(t.anchors),
         "print_notes": list(t.print_notes),
         "params": params,

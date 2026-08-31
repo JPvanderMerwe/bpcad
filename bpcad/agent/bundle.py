@@ -117,9 +117,14 @@ def filament_estimate(volume_cm3: float, material: str, infill: float = 1.0) -> 
     return (grams, metres)
 
 
-def slicer_settings(spec, report, template_notes: tuple[str, ...] = ()) -> list[str]:
+def slicer_settings(spec, report, template_notes: tuple[str, ...] = (),
+                    printer: str = "", bed_mm=None) -> list[str]:
     """Recommended settings, derived from the spec and what verify found."""
-    out = [
+    out = []
+    if printer:
+        out.append("printer        %s%s" % (
+            printer, "  (%.0f x %.0f x %.0f mm)" % tuple(bed_mm) if bed_mm else ""))
+    out += [
         "layer height   %.2f mm" % spec.layer_mm,
         "nozzle         %.2f mm" % spec.nozzle_mm,
         "material       %s" % spec.material.upper(),
@@ -146,6 +151,8 @@ def write_report(
     elapsed_s: float = 0.0,
     template_notes: tuple[str, ...] = (),
     review_required: bool = False,
+    printer_name: str = "",
+    bed_mm=None,
 ) -> Path:
     """Write report.md, in the order the brief sets."""
     m = report.mesh
@@ -260,7 +267,8 @@ def write_report(
     # 7. recommended slicer settings
     L.append("## Recommended slicer settings")
     L.append("")
-    for line in slicer_settings(spec, report, template_notes):
+    for line in slicer_settings(spec, report, template_notes,
+                                printer=printer_name, bed_mm=bed_mm):
         L.append("- %s" % line)
     L.append("")
 
@@ -349,11 +357,20 @@ def write_bundle(
         except Exception:
             notes = ()
 
+    try:
+        from bpcad.config import load_config
+
+        cfg = load_config()
+        printer_name, bed_mm = cfg.printer_name, cfg.bed_mm
+    except Exception:
+        printer_name, bed_mm = "", None
+
     written["report"] = write_report(
         spec, result, report, part_dir / "report.md",
         model_used=model_used, machine=machine, attempts=attempts,
         elapsed_s=elapsed_s, template_notes=notes,
         review_required=any("REVIEW REQUIRED" in n for n in result.log.notes),
+        printer_name=printer_name, bed_mm=bed_mm,
     )
 
     regression = check_regression(report.mesh, baseline_path_for(stl, part_dir))
