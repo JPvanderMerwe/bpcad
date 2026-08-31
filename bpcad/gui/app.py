@@ -88,7 +88,7 @@ class MainWindow(QMainWindow):
     # -- navigation --------------------------------------------------------
 
     def refresh(self) -> None:
-        entries = api.parts()
+        entries = api.library()
         self.gallery.set_parts(entries)
 
         missing = [e for e in entries if e.built and not e.images]
@@ -107,6 +107,7 @@ class MainWindow(QMainWindow):
 
     def _open_entry(self, entry) -> None:
         """Open a part from the gallery, rebuilding its session from disk."""
+        entry = self._as_part_entry(entry)
         self.session = self._session_for(entry)
         self.viewing = len(self.session.versions) - 1 if self.session.versions else -1
         self.part_view.set_versions(self.session.versions, self.viewing)
@@ -128,6 +129,24 @@ class MainWindow(QMainWindow):
                 )
                 self.part_view.open_drawer(1)
         self.stack.setCurrentIndex(PART)
+
+    def _as_part_entry(self, entry):
+        """
+        A LibraryEntry carries more than the rest of the window needs. This
+        narrows it to the shape the part view and the session already take,
+        rather than teaching every one of them about a second type.
+        """
+        if isinstance(entry, api.PartEntry):
+            return entry
+        return api.PartEntry(
+            name=entry.name, directory=entry.directory,
+            spec_path=entry.spec_path, stl=entry.stl,
+            report_md=(entry.directory / "report.md")
+            if (entry.directory / "report.md").is_file() else None,
+            run_json=(entry.directory / "run.json")
+            if (entry.directory / "run.json").is_file() else None,
+            draft=entry.draft_path, images=dict(entry.images),
+        )
 
     def _session_for(self, entry) -> api.Session:
         """
@@ -330,6 +349,15 @@ class MainWindow(QMainWindow):
         act.setShortcut(QKeySequence.Open)
         act.triggered.connect(self._open_stl)
         part.addAction(act)
+        part.addSeparator()
+
+        act = QAction("&Import a spec...", self)
+        act.triggered.connect(self._import_spec)
+        part.addAction(act)
+
+        act = QAction("&Share this part...", self)
+        act.triggered.connect(self._export_spec)
+        part.addAction(act)
         act = QAction("&Refresh", self)
         act.setShortcut(QKeySequence.Refresh)
         act.triggered.connect(self.refresh)
@@ -349,6 +377,62 @@ class MainWindow(QMainWindow):
         act = QAction("&About", self)
         act.triggered.connect(self._about)
         helpm.addAction(act)
+
+    def _import_spec(self) -> None:
+        """Take a spec someone sent and put it in the library."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import a spec", "", "Specs (*.yaml *.yml)"
+        )
+        if not path:
+            return
+        try:
+            entry = api.import_spec(path)
+        except api.ApiError as exc:
+            QMessageBox.warning(self, "That spec could not be imported", str(exc))
+            return
+        self.refresh()
+        self.statusBar().showMessage(
+            "imported %s - open it and press Apply to build it here" % entry.name, 10000
+        )
+
+    def _export_spec(self) -> None:
+        """
+        Share the SPEC, not the mesh.
+
+        The recipient rebuilds it at their size, in their material, for their
+        nozzle. A mesh would give them one frozen object instead.
+        """
+        entry = None
+        if self.session is not None:
+            v = self._viewed()
+            if v is not None and v.part is not None:
+                entry = api.library([v.part.part_dir.parent])
+                entry = next((e for e in entry if e.name == v.part.name), None)
+        if entry is None and self.current is not None:
+            entry = next(
+                (e for e in api.library() if e.name == self.current.name), None
+            )
+        if entry is None:
+            QMessageBox.information(
+                self, "Nothing to share", "Open a part first."
+            )
+            return
+
+        target, _ = QFileDialog.getSaveFileName(
+            self, "Share this part", "%s.spec.yaml" % entry.name,
+            "Specs (*.yaml)",
+        )
+        if not target:
+            return
+        try:
+            written = api.export_spec(entry, target)
+        except api.ApiError as exc:
+            QMessageBox.warning(self, "Could not share it", str(exc))
+            return
+        self.statusBar().showMessage(
+            "wrote %s - twenty lines of text, and it rebuilds at any size" % written,
+            10000,
+        )
 
     def _open_stl(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Open an STL", ".", "Meshes (*.stl)")

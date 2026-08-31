@@ -33,6 +33,21 @@ of this works with no model loaded at all:
 With a local model running, `bpcad gen "..."` does the whole thing at once -
 but it is a convenience layer over the commands above, never a dependency.
 
+## The library
+
+Everything you make is indexed and searchable - by name, template, material,
+the prompt that made it, or the words its template says it makes, so
+"container" finds anything built from the enclosure.
+
+Parts are shared as SPECS, not meshes. A downloaded STL is frozen: you cannot
+make it 20 mm wider or change it for a different printer. A spec is about a
+kilobyte of readable text that rebuilds the part exactly, at whatever size, in
+whatever material, for whatever nozzle. Part > Share this part writes one;
+Part > Import a spec takes one in and validates it on the way.
+
+Entirely offline. It reads directories; there is a test asserting it never
+opens a socket.
+
 ## Two ways in
 
 A desktop app:

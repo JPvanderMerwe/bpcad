@@ -459,6 +459,58 @@ class PartEntry:
         return self.stl is not None and self.stl.is_file()
 
 
+def library(roots=None) -> list:
+    """
+    Everything you have made, newest first, as LibraryEntry objects.
+
+    Richer than parts(): it carries the template, the prompt that made it, the
+    words the template says it makes, and the envelope read from the stored
+    regression rather than by loading every mesh on disk.
+    """
+    from bpcad import library as _library
+
+    return _library.scan(roots)
+
+
+def find(query: str, roots=None) -> list:
+    """
+    Search the library by any word that describes a part.
+
+    Including the words its TEMPLATE says it makes - so "container" finds a
+    part built from the enclosure, even though that word appears nowhere in
+    its own spec.
+    """
+    from bpcad import library as _library
+
+    return _library.search(query, roots=roots)
+
+
+def export_spec(entry, target: str | Path) -> Path:
+    """
+    Write a part's spec somewhere you can send it.
+
+    The spec and what it needs to build - not the mesh. The recipient rebuilds
+    it at their size, in their material, for their nozzle, which is the whole
+    reason for keeping specs rather than meshes.
+    """
+    from bpcad import library as _library
+
+    try:
+        return _library.export_spec(entry, target)
+    except (ValueError, OSError) as exc:
+        raise ApiError(str(exc)) from exc
+
+
+def import_spec(path: str | Path, into: str | Path = "parts"):
+    """Take a spec someone sent you, validate it, and put it in the library."""
+    from bpcad import library as _library
+
+    try:
+        return _library.import_spec(path, into)
+    except (ValueError, FileNotFoundError, OSError) as exc:
+        raise ApiError(str(exc)) from exc
+
+
 def parts(root: str | Path = "parts") -> list[PartEntry]:
     """Everything under parts/, including drafts that failed and need editing."""
     base = Path(root)

@@ -91,15 +91,20 @@ class PartCard(QFrame):
             self.thumb.setText("no preview yet" if e.built else "not built")
             self.thumb.setStyleSheet("border: none; color: %s;" % TEXT_DIM)
 
+        detail = e.summary() if hasattr(e, "summary") else ""
         if e.is_draft:
             self.sub.setText("needs editing")
             self.sub.setStyleSheet("border: none; font-size: 11px; color: %s;" % WARN)
         elif e.built:
-            self.sub.setText("ready")
+            self.sub.setText(detail or "ready")
             self.sub.setStyleSheet("border: none; font-size: 11px; color: %s;" % OK)
         else:
             self.sub.setText("spec only")
             self.sub.setStyleSheet("border: none; font-size: 11px; color: %s;" % TEXT_DIM)
+        if getattr(e, "template", None):
+            self.setToolTip("%s\n\ntemplate: %s%s" % (
+                e.name, e.template,
+                "\nfrom: " + e.prompt if getattr(e, "prompt", "") else ""))
 
     def enterEvent(self, event) -> None:  # noqa: N802 - Qt naming
         self._hover = True
@@ -131,6 +136,7 @@ class GalleryPanel(QWidget):
         super().__init__(parent)
         self._cfg = cfg
         self._cards: list[PartCard] = []
+        self._all: list = []
         self._measurements: dict[str, Any] | None = None
 
         outer = QVBoxLayout(self)
@@ -266,11 +272,26 @@ class GalleryPanel(QWidget):
         wrap.setContentsMargins(26, 20, 26, 26)
         wrap.setSpacing(12)
 
+        head = QHBoxLayout()
         self.heading = QLabel("Your parts")
         self.heading.setStyleSheet(
             "font-size: 15px; font-weight: 600; color: %s;" % TEXT_DIM
         )
-        wrap.addWidget(self.heading)
+        head.addWidget(self.heading)
+        head.addStretch(1)
+
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("search  -  container, vent, birdhouse, petg...")
+        self.search.setFixedWidth(320)
+        self.search.setClearButtonEnabled(True)
+        self.search.setToolTip(
+            "Searches the name, the template, the material, the prompt that "
+            "made it, and the words the template says it makes - so "
+            "\u201ccontainer\u201d finds anything built from the enclosure."
+        )
+        self.search.textChanged.connect(self._filter)
+        head.addWidget(self.search)
+        wrap.addLayout(head)
 
         self.grid_holder = QWidget()
         self.grid = QGridLayout(self.grid_holder)
@@ -299,14 +320,37 @@ class GalleryPanel(QWidget):
                 card._load()
                 return
 
+    def _filter(self, text: str) -> None:
+        """Live filter over the entries already loaded - no disk work per keystroke."""
+        from bpcad import library as _library
+
+        hits = _library.search(text, self._all)
+        self._show(hits)
+        n, total = len(hits), len(self._all)
+        self.heading.setText(
+            "Your parts" if n == total else "%d of %d" % (n, total)
+        )
+
     def set_parts(self, entries: list) -> None:
+        self._all = list(entries)
+        self._filter(self.search.text())
+
+    def _show(self, entries: list) -> None:
         for card in self._cards:
             self.grid.removeWidget(card)
             card.deleteLater()
         self._cards.clear()
 
-        self.empty.setVisible(not entries)
-        self.heading.setVisible(bool(entries))
+        self.empty.setVisible(not entries and not self._all)
+        if self._all and not entries:
+            self.empty.setText("Nothing matches that.")
+            self.empty.setVisible(True)
+        elif not self._all:
+            self.empty.setText(
+                "Nothing yet. Describe something above and press Create.\n\n"
+                "It takes about ninety seconds on this machine - local "
+                "inference, no cloud, nothing leaves the computer."
+            )
 
         columns = 4
         for i, entry in enumerate(entries):
