@@ -73,12 +73,23 @@ class VesselParams(TemplateParams):
         description="Thickness of the base. Defaults to a little over the wall.",
     )
 
-    profile: Literal["straight", "flared", "belly", "cylinder"] = Field(
+    profile: Literal["straight", "flared", "belly", "cylinder", "custom"] = Field(
         "flared",
         description=(
             "straight is a plain cone. flared opens out towards the rim like a "
             "bowl. belly bulges in the middle and draws back in like a vase. "
-            "cylinder is a straight-sided pot."
+            "cylinder is a straight-sided pot. custom takes the silhouette "
+            "from profile_points, which is how a shape MEASURED off a mesh "
+            "becomes an editable part."
+        ),
+    )
+    profile_points: list[tuple[float, float]] | None = Field(
+        None, min_length=3, max_length=400,
+        description=(
+            "The silhouette as (radius_mm, height_mm) pairs from the base up. "
+            "Only used when profile is custom. This is what a generated mesh "
+            "turns into: measured off the surface, then editable like any "
+            "other number."
         ),
     )
     rim_dia_mm: float | None = Field(
@@ -110,6 +121,41 @@ class VesselParams(TemplateParams):
         6.0, gt=0.5, le=60.0, description="Diameter of each drainage hole.",
     )
 
+    # --- cellular shell ----------------------------------------------------
+    # The Voronoi web. See bpcad/build/cells.py for what this is and, more
+    # importantly, what it is not: it reaches the visual language of a grown
+    # cellular piece, and it is not a growth simulation.
+    pattern: Literal["solid", "cells"] = Field(
+        "solid",
+        description=(
+            "solid is a plain wall. cells cuts a Voronoi web through it, "
+            "leaving a strut between every pair of holes."
+        ),
+    )
+    cell_count: int = Field(
+        110, ge=8, le=600,
+        description="How many cells around and up the wall. More means finer.",
+    )
+    strut_mm: float = Field(
+        3.0, gt=0.4, le=30.0,
+        description="Width of the web between two holes. This is the part that carries the load.",
+    )
+    cell_seed: int = Field(
+        7, ge=0, le=10_000_000,
+        description=(
+            "Which arrangement of cells. Change it for a different pattern of "
+            "the same character. The same seed always gives the same bowl."
+        ),
+    )
+    rim_band_mm: float = Field(
+        7.0, ge=0.0, le=200.0,
+        description="Solid band left under the rim. The rim is what holds the whole thing round.",
+    )
+    base_band_mm: float = Field(
+        6.0, ge=0.0, le=200.0,
+        description="Solid band left above the floor, so the base is not perforated.",
+    )
+
     # -- derived ------------------------------------------------------------
 
     @property
@@ -126,6 +172,8 @@ class VesselParams(TemplateParams):
     def rim(self) -> float:
         if self.rim_dia_mm is not None:
             return self.rim_dia_mm
+        if self.profile == "custom" and self.profile_points:
+            return self.profile_points[-1][0] * 2.0
         return {
             "straight": self.outer_dia_mm,
             "cylinder": self.outer_dia_mm,
@@ -136,6 +184,8 @@ class VesselParams(TemplateParams):
     def base(self) -> float:
         if self.base_dia_mm is not None:
             return self.base_dia_mm
+        if self.profile == "custom" and self.profile_points:
+            return self.profile_points[0][0] * 2.0
         return {
             "straight": self.outer_dia_mm * 0.62,
             "cylinder": self.outer_dia_mm,
@@ -150,6 +200,28 @@ class VesselParams(TemplateParams):
 
     @model_validator(mode="after")
     def _check(self):
+        if self.profile == "custom":
+            if not self.profile_points:
+                raise ValueError(
+                    "profile is custom but profile_points is empty. Legal: give "
+                    "the silhouette as (radius_mm, height_mm) pairs, or pick one "
+                    "of straight, flared, belly, cylinder."
+                )
+            zs = [z for _r, z in self.profile_points]
+            if any(b <= a for a, b in zip(zs, zs[1:])):
+                raise ValueError(
+                    "profile_points must climb: every height above the one "
+                    "before it. A profile that doubles back is not a silhouette "
+                    "a lathe can follow."
+                )
+            if min(r for r, _z in self.profile_points) <= 0:
+                raise ValueError("a profile point with zero or negative radius is not on the part")
+        elif self.profile_points:
+            raise ValueError(
+                "profile_points was given but profile is %r, so it would be "
+                "silently ignored. Legal: set profile to custom, or drop the "
+                "points." % self.profile
+            )
         if 2 * self.wall_mm + 2.0 >= min(self.base(), self.rim()):
             raise ValueError(
                 "wall_mm %.2f leaves no cavity - two walls is %.2f mm and the "
@@ -179,6 +251,37 @@ class VesselParams(TemplateParams):
                 % (lean, MAX_LEAN_DEG)
             )
 
+        if self.pattern == "cells":
+            # A strut is a printed wall and obeys the same rule as any other:
+            # narrower than two extrusions and the slicer either drops it or
+            # prints a single wobbling bead. The nozzle is not known here, so
+            # this is the floor for a 0.4 - the real check is the feature
+            # linter, which sees the actual nozzle.
+            if self.strut_mm < 0.8:
+                raise ValueError(
+                    "a %.2f mm strut is thinner than two extrusions of a 0.4 mm "
+                    "nozzle, so the web would not print. Legal: strut_mm above 0.8."
+                    % self.strut_mm
+                )
+            band = self.banded_height_mm()
+            if band <= self.strut_mm * 2:
+                raise ValueError(
+                    "the bands leave only %.1f mm of wall to pattern, which is "
+                    "less than two struts. Legal: a taller vessel, or smaller "
+                    "rim_band_mm and base_band_mm." % band
+                )
+            # Cells have to be bigger than the struts between them, or the web
+            # closes up into a solid wall with dimples in it.
+            span = self.pattern_span_mm()
+            per_cell = math.sqrt(max(span * band / self.cell_count, 0.0))
+            if per_cell < self.strut_mm * 1.8:
+                raise ValueError(
+                    "%d cells over %.0f x %.0f mm of wall gives about %.1f mm "
+                    "per cell, and a %.1f mm strut would close them up. Legal: "
+                    "fewer cells, or a thinner strut."
+                    % (self.cell_count, span, band, per_cell, self.strut_mm)
+                )
+
         if self.drain_holes and self.drain_dia_mm >= self.foot() * 0.6:
             raise ValueError(
                 "%d holes of %.1f mm will not fit in a %.1f mm base. Legal: "
@@ -187,6 +290,28 @@ class VesselParams(TemplateParams):
                    self.foot() * 0.6)
             )
         return self
+
+    def pattern_u_ref_mm(self) -> float:
+        """
+        The reference radius the unwrap uses.
+
+        Three quarters of the widest radius rather than the mean, because on a
+        flared bowl most of the WALL AREA is up near the rim, and unwrapping
+        about the mean makes the cells up there noticeably coarser than the
+        ones below.
+        """
+        return self.outer_dia_mm / 2.0 * 0.75
+
+    def pattern_span_mm(self) -> float:
+        return 2.0 * math.pi * self.pattern_u_ref_mm()
+
+    def pattern_z_range(self) -> tuple[float, float]:
+        lo = self.foot_mm + self.floor_thickness_mm + self.base_band_mm
+        return lo, self.height_mm - self.rim_band_mm
+
+    def banded_height_mm(self) -> float:
+        lo, hi = self.pattern_z_range()
+        return max(hi - lo, 0.0)
 
     def worst_lean_deg(self) -> float:
         """Steepest outward lean of the outer wall, in degrees from vertical."""
@@ -218,6 +343,24 @@ def _outer_profile(p: VesselParams) -> list[tuple[float, float]]:
     # which is slower, heavier, and the thing that made the shape upgrader
     # fall over. Curves need the stations; straight lines do not.
     steps = 1 if p.profile in ("straight", "cylinder") else STATIONS
+
+    if p.profile == "custom":
+        # The points carry the SHAPE; height_mm and outer_dia_mm carry the SIZE.
+        #
+        # Without this the points carried both, and "make it 200 mm tall" on a
+        # fitted vase came back 147 mm tall - the number was accepted, stored
+        # in the spec, and silently ignored. A parameter that does nothing is
+        # worse than one that is missing.
+        #
+        # The shape itself is never resampled or smoothed: that would throw
+        # away the thing that was measured.
+        pts = [(float(r), float(zz)) for r, zz in p.profile_points]
+        src_h = pts[-1][1] - pts[0][1]
+        src_max_r = max(r for r, _z in pts)
+        z_scale = (p.body_height_mm / src_h) if src_h > 1e-9 else 1.0
+        r_scale = (p.outer_dia_mm / 2.0 / src_max_r) if src_max_r > 1e-9 else 1.0
+        return [(max(r * r_scale, 0.4), z0 + (zz - pts[0][1]) * z_scale)
+                for r, zz in pts]
 
     out = []
     for i in range(steps + 1):
@@ -309,6 +452,8 @@ def build_core(p: VesselParams, log: BuildLog) -> cq.Workplane:
     z_bottom = p.foot_mm + floor_t
     z_top = p.height_mm + 1.0
     steps = 1 if p.profile in ("straight", "cylinder") else STATIONS
+    if p.profile == "custom":
+        steps = max(len(p.profile_points) - 1, 1)
 
     inner: list[tuple[float, float]] = []
     for i in range(steps + 1):
@@ -320,11 +465,89 @@ def build_core(p: VesselParams, log: BuildLog) -> cq.Workplane:
     for cutter in _drains(p):
         body = body.cut(cutter)
 
+    if p.pattern == "cells":
+        body = _cut_cells(p, outer_stations, body, log)
+
     if p.rim_round_mm > MIN_FILLET_MM:
         r = safe_fillet_radius(p.rim_round_mm, p.wall_mm)
         body = try_edge_op(body, ">Z", "fillet", r, "rim", log)
 
     return body
+
+
+def _cut_cells(p: VesselParams, stations, body: cq.Workplane,
+               log: BuildLog) -> cq.Workplane:
+    """
+    Cut the Voronoi web through the wall.
+
+    ONE CUT AGAINST A COMPOUND, not a hundred cuts in a row. Each boolean on a
+    turned shell costs over a second, so cutting the cells one at a time is
+    minutes; handing OpenCascade the whole set at once is a few seconds.
+    """
+    from bpcad.build import cells as cellmod
+    from bpcad.build.helpers import compound_of
+
+    z_lo, z_hi = p.pattern_z_range()
+    u_ref = p.pattern_u_ref_mm()
+    polys = cellmod.cell_polygons(
+        p.cell_count, p.pattern_span_mm(), z_lo, z_hi, p.strut_mm, p.cell_seed
+    )
+    if not polys:
+        log.notes.append(
+            "the cell pattern produced no holes at all - the struts have closed "
+            "it up, and the vessel is solid-walled"
+        )
+        return body
+
+    z_min, z_max = stations[0][1], stations[-1][1]
+    radius_at = lambda z: _radius_at(stations, z)   # noqa: E731
+    depth = p.wall_mm + 6.0
+
+    cutters = []
+    for poly in polys:
+        try:
+            cutters.append(
+                cellmod.cell_cutter(poly, radius_at, u_ref, z_min, z_max, depth)
+            )
+        except Exception:
+            # One malformed cell is a missing hole, not a failed bowl.
+            continue
+
+    if not cutters:
+        log.notes.append("no cell could be turned into a cutter - wall left solid")
+        return body
+
+    holed = body.cut(compound_of(cutters))
+
+    # probe(), not isValid(). A shell with a hundred holes in it is exactly the
+    # sort of thing that reports valid and then breaks the next boolean.
+    from bpcad.build.helpers import probe
+
+    if not probe(holed) or not holed.vals():
+        # WHY THIS HAPPENS, so the note is worth reading. Each cell is cut by a
+        # prism standing on the surface's TANGENT PLANE, which is an excellent
+        # approximation over a small patch and a poor one over a large patch of
+        # a strongly curved profile - the prism stops following the wall and
+        # starts poking through it. Measured on a wobbly fitted vase: 90 cells
+        # fails, 160 and 220 both cut cleanly. So the fix is more cells, not
+        # fewer, which is the opposite of what anyone would guess.
+        log.notes.append(
+            "the %d-cell pattern would not cut cleanly on this profile and was "
+            "reverted, leaving the wall solid. Each cell is cut on the "
+            "surface's tangent plane, and a large cell on a strongly curved "
+            "wall stops following it. Try MORE cells - roughly %d - with a "
+            "thinner strut; smaller patches follow the curve."
+            % (p.cell_count, int(p.cell_count * 1.8))
+        )
+        return body
+
+    log.notes.append(
+        "%d cells cut, %.0f%% of the patterned band is open, %.1f mm struts"
+        % (len(cutters),
+           100 * cellmod.open_fraction(polys, p.pattern_span_mm(), z_lo, z_hi),
+           p.strut_mm)
+    )
+    return holed
 
 
 def _drains(p: VesselParams) -> list[cq.Workplane]:
@@ -364,6 +587,11 @@ def build(params: VesselParams, spec, base_dir: Path | None = None):
         features["drain hole"] = params.drain_dia_mm
     if params.rim_round_mm:
         features["rim round"] = params.rim_round_mm
+    if params.pattern == "cells":
+        # The strut is a printed wall. Recording it means the nozzle linter
+        # judges it against the REAL nozzle, rather than the 0.4 assumed by
+        # the validator's floor.
+        features["cell strut"] = params.strut_mm
 
     log.notes.append(
         "outer wall leans %.1f degrees from vertical at its steepest (%.0f is "
@@ -407,6 +635,9 @@ register(Template(
         "container", "round container", "pen pot", "pencil pot", "utensil pot",
         "ramekin",
         "trinket dish", "catch-all", "saucer", "plate", "tray round",
+        # What people call the cellular version.
+        "voronoi bowl", "cell bowl", "cellular bowl", "lattice bowl",
+        "fruit basket", "openwork bowl", "mesh bowl", "generative bowl",
     ),
     params_model=VesselParams,
     builder=build,

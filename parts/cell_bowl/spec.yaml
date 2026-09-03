@@ -1,0 +1,19 @@
+name: cell_bowl
+level: 1
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.24
+print_axis: z
+template: vessel
+params:
+  pattern: cells
+  profile: flared
+  outer_dia_mm: 180.0
+  height_mm: 70.0
+  wall_mm: 2.6
+  cell_count: 110
+  strut_mm: 3.0
+  cell_seed: 7
+  rim_band_mm: 7.0
+  base_band_mm: 6.0
+  rim_round_mm: 1.2
