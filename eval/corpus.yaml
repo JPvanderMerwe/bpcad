@@ -1,0 +1,324 @@
+# The fit-rate corpus.
+#
+# BRIEF 5: "of a corpus of realistic part requests with known-correct
+# dimensions, what fraction produce a part whose measured critical dimensions
+# match the spec, with no human editing?"
+#
+# Every entry is a request a maker would actually type, and every dimension in
+# `expect` is one they could check with calipers. Nothing here is aspirational:
+# if a request states 8 mm, the part has to measure 8 mm, and a part that is
+# beautifully made and 4 mm short fails.
+#
+# WHY EACH ENTRY CAN CARRY A `spec`
+# ----------------------------------
+# Two different questions get confused into one number, and separating them is
+# the difference between knowing what to fix and guessing:
+#
+#   REACHABLE   given a correct hand-written spec, does the geometry layer
+#               produce a part that meets the assertions? This tests the
+#               vocabulary - templates, primitives, fitters. No model runs, so
+#               it takes seconds and can gate a merge (brief 12.6).
+#
+#   FIRST-TRY   given only the prompt, does the pipeline produce a part that
+#               meets the assertions? This is the brief's number, and it tests
+#               the model on top of the vocabulary.
+#
+# A low first-try rate with a high reachable rate is a prompting problem. Both
+# low is a vocabulary problem. Only measuring the first tells you neither.
+#
+# Entries with no `spec` are ones the current vocabulary has no way to express.
+# They are deliberately left in: the corpus measures what the product claims,
+# not what this build happens to support, and a request that cannot be
+# expressed is the most important kind of failure to keep visible.
+
+entries:
+
+  # --- plates and brackets: the brief's own examples ---------------------
+
+  - id: plate_two_holes
+    request: a flat plate 80 by 40 by 6 mm with two 5 mm holes 60 mm apart
+    expect:
+      extent_x_mm: 80.0
+      extent_y_mm: 40.0
+      extent_z_mm: 6.0
+      hole_dia_mm: 5.0
+      hole_count: 2
+      hole_spacing_mm: 60.0
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: rounded_prism, width_mm: 80, depth_mm: 40, height_mm: 6}
+        - {op: pattern_linear, count: 2, dx_mm: 60,
+           step: {op: disc, diameter_mm: 5, height_mm: 10, x_mm: -30, z_mm: -2, mode: cut}}
+
+  - id: plate_four_holes_countersunk
+    request: a mounting plate 100 by 60 by 8 mm with four 4 mm holes 80 mm apart along the length
+    expect:
+      extent_x_mm: 100.0
+      extent_y_mm: 60.0
+      extent_z_mm: 8.0
+      hole_dia_mm: 4.0
+      hole_count: 4
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: rounded_prism, width_mm: 100, depth_mm: 60, height_mm: 8}
+        - {op: pattern_linear, count: 2, dx_mm: 80,
+           step: {op: disc, diameter_mm: 4, height_mm: 12, x_mm: -40, y_mm: -20, z_mm: -2, mode: cut}}
+        - {op: pattern_linear, count: 2, dx_mm: 80,
+           step: {op: disc, diameter_mm: 4, height_mm: 12, x_mm: -40, y_mm: 20, z_mm: -2, mode: cut}}
+
+  - id: shelf_bracket
+    request: a shelf bracket for a 200 mm shelf, 6 mm thick, with two 5 mm holes in the wall plate
+    expect:
+      extent_any_mm: 200.0
+      hole_dia_mm: 5.0
+      hole_count: 2
+      bodies: 1
+    spec:
+      level: 1
+      template: bracket
+      params: {shelf_length_mm: 200.0, thickness_mm: 6.0, hole_dia_mm: 5.0,
+               wall_holes: 2, shelf_holes: 0}
+
+  - id: rod_clamp_8mm
+    request: a clamp that holds an 8 mm rod against a flat surface, 40 mm wide, screwed down with two 4 mm holes
+    expect:
+      hole_dia_mm: 8.0
+      extent_any_mm: 40.0
+      bodies: 1
+    # No spec: nothing in the vocabulary makes a split clamp with a bore and a
+    # flange. This is the shape of request the brief is built around and it is
+    # the most valuable failure in the corpus.
+
+  - id: right_angle_gusset
+    request: an L bracket 60 by 60 mm, 5 mm thick, 40 mm wide, with a gusset
+    expect:
+      extent_any_mm: 60.0
+      extent_z_mm: 60.0
+      bodies: 1
+    spec:
+      level: 1
+      template: bracket
+      params: {shelf_length_mm: 60.0, wall_length_mm: 60.0, width_mm: 40.0,
+               thickness_mm: 5.0, gusset: true}
+
+  # --- enclosures and boxes ---------------------------------------------
+
+  - id: enclosure_pcb
+    request: an enclosure 100 by 60 by 30 mm outside with 2.5 mm walls
+    expect:
+      extent_x_mm: 100.0
+      extent_y_mm: 60.0
+      wall_mm: 2.5
+    spec:
+      level: 1
+      template: enclosure
+      params: {width_mm: 100.0, depth_mm: 60.0, height_mm: 30.0, wall_mm: 2.5,
+               roof: false, entrance_dia_mm: 0.0, drain_holes: 0, vent_slots: 0,
+               back_plate_mm: 0.0, mount_holes: false}
+
+  - id: divided_tray
+    request: a desk tray 160 by 100 by 40 mm divided into three compartments, 3 mm walls
+    expect:
+      extent_x_mm: 160.0
+      extent_y_mm: 100.0
+      extent_z_mm: 40.0
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: rounded_prism, width_mm: 160, depth_mm: 100, height_mm: 40, corner_r_mm: 4}
+        - {op: hollow, wall_mm: 3, opening: top_face, floor_mm: 3}
+        - {op: pattern_linear, count: 2, dx_mm: 51,
+           step: {op: rounded_prism, width_mm: 3, depth_mm: 94, height_mm: 34,
+                  x_mm: -25.5, z_mm: 3}}
+
+  - id: birdhouse_entrance
+    request: a birdhouse 120 mm wide and 160 mm tall with a 32 mm entrance hole
+    expect:
+      hole_dia_mm: 32.0
+      hole_count: 1
+    spec:
+      level: 1
+      template: enclosure
+      params: {width_mm: 120.0, height_mm: 160.0, entrance_dia_mm: 32.0}
+
+  - id: birdhouse_with_feeder
+    request: a birdhouse with a feeder tray and a retaining lip
+    expect:
+      bodies: 1
+    # No spec: the enclosure template has no feeder and no retainer, and there
+    # is no value of any parameter that adds one. Left in because this exact
+    # request came back as a plain box with the two features silently dropped,
+    # which is the failure the brief's section 9.4 exists to catch.
+
+  # --- round vessels -----------------------------------------------------
+
+  - id: bowl_180
+    request: a round bowl 180 mm across and 70 mm deep with a 2.4 mm wall
+    expect:
+      extent_x_mm: 180.0
+      extent_z_mm: 70.0
+      wall_mm: 2.4
+      bodies: 1
+    spec:
+      level: 1
+      template: vessel
+      params: {profile: flared, outer_dia_mm: 180.0, height_mm: 70.0, wall_mm: 2.4}
+
+  - id: plant_pot_drained
+    request: a plant pot 120 mm across and 110 mm tall with four 6 mm drainage holes
+    # KEPT AT 120.0 ON PURPOSE. The vessel template delivers 119.441 here: on a
+    # straight profile the widest point IS the rim, and the 1.2 mm cosmetic rim
+    # fillet takes 0.56 mm off the diameter that was asked for. That is a real
+    # 0.5 mm discrepancy between a stated parameter and the delivered part, and
+    # widening the tolerance until it passes would hide exactly the class of
+    # error this corpus exists to find. It fails until the template is fixed.
+    expect:
+      extent_x_mm: 120.0
+      extent_z_mm: 110.0
+      hole_dia_mm: 6.0
+      hole_count: 4
+      bodies: 1
+    spec:
+      level: 1
+      template: vessel
+      params: {profile: straight, outer_dia_mm: 120.0, height_mm: 110.0,
+               wall_mm: 2.4, foot_mm: 6.0, drain_holes: 4, drain_dia_mm: 6.0}
+
+  - id: pen_pot
+    request: a pen pot 80 mm across and 100 mm tall with a 2.4 mm wall
+    expect:
+      extent_x_mm: 80.0
+      extent_z_mm: 100.0
+      wall_mm: 2.4
+      bodies: 1
+    spec:
+      level: 1
+      template: vessel
+      params: {profile: cylinder, outer_dia_mm: 80.0, height_mm: 100.0, wall_mm: 2.4}
+
+  - id: cup_no_context
+    request: create a cup
+    expect:
+      bodies: 1
+    # DELIBERATELY UNDERSPECIFIED. Brief 6: the agent should ask two to four
+    # tappable questions rather than guessing. Nothing here can be asserted
+    # beyond "one piece" - which is the point. This entry exists to be measured
+    # once the clarifying-question step exists, and to record today that a
+    # bare request produces whatever the model felt like.
+
+  # --- small functional parts -------------------------------------------
+
+  - id: keyring_tag
+    request: a keyring tag 40 by 20 by 3 mm with a 5 mm hole
+    expect:
+      extent_x_mm: 40.0
+      extent_y_mm: 20.0
+      extent_z_mm: 3.0
+      hole_dia_mm: 5.0
+      hole_count: 1
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: rounded_prism, width_mm: 40, depth_mm: 20, height_mm: 3, corner_r_mm: 4}
+        - {op: disc, diameter_mm: 5, height_mm: 7, x_mm: -14, z_mm: -2, mode: cut}
+
+  - id: cable_clip
+    request: a cable clip that screws to a desk and holds two 5 mm cables
+    expect:
+      hole_dia_mm: 5.0
+      hole_count: 2
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: rounded_prism, width_mm: 40, depth_mm: 14, height_mm: 10, corner_r_mm: 2}
+        - {op: pattern_linear, count: 2, dx_mm: 16,
+           step: {op: disc, diameter_mm: 5, height_mm: 20, x_mm: -8, z_mm: 5,
+                  rotate_axis: x, rotate_deg: 90, y_mm: 10, mode: cut}}
+        - {op: disc, diameter_mm: 4, height_mm: 14, z_mm: -2, mode: cut}
+
+  - id: spacer_ring
+    request: a spacer ring 30 mm across with a 12 mm bore, 5 mm thick
+    expect:
+      extent_x_mm: 30.0
+      extent_z_mm: 5.0
+      hole_dia_mm: 12.0
+      hole_count: 1
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: disc, diameter_mm: 30, height_mm: 5}
+        - {op: disc, diameter_mm: 12, height_mm: 9, z_mm: -2, mode: cut}
+
+  - id: knob_6mm_shaft
+    request: a knob 40 mm across and 15 mm tall with a 6 mm hole for a shaft
+    expect:
+      extent_x_mm: 40.0
+      extent_z_mm: 15.0
+      hole_dia_mm: 6.0
+      hole_count: 1
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: disc, diameter_mm: 40, height_mm: 15}
+        - {op: disc, diameter_mm: 6, height_mm: 19, z_mm: -2, mode: cut}
+
+  - id: wall_hook
+    request: a wall hook 80 mm tall screwed through two 5 mm holes
+    expect:
+      extent_any_mm: 80.0
+      hole_dia_mm: 5.0
+      hole_count: 2
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: rounded_prism, width_mm: 40, depth_mm: 6, height_mm: 80, corner_r_mm: 3}
+        - {op: rounded_prism, width_mm: 40, depth_mm: 40, height_mm: 8, y_mm: -20, z_mm: 10}
+        - {op: rounded_prism, width_mm: 40, depth_mm: 6, height_mm: 22, y_mm: -37, z_mm: 18}
+        - {op: pattern_linear, count: 2, dz_mm: 40,
+           step: {op: disc, diameter_mm: 5, height_mm: 14, z_mm: 30, y_mm: 5,
+                  rotate_axis: x, rotate_deg: 90, mode: cut}}
+
+  - id: funnel_20mm_neck
+    request: a funnel with a 60 mm mouth and a spout that fits a 20 mm neck
+    expect:
+      extent_x_mm: 60.0
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: disc, diameter_mm: 20, height_mm: 25}
+        - {op: cone, bottom_d_mm: 20, top_d_mm: 60, height_mm: 50, z_mm: 25}
+        - {op: disc, diameter_mm: 13, height_mm: 27, z_mm: -1, mode: cut}
+        - {op: cone, bottom_d_mm: 13, top_d_mm: 53, height_mm: 52, z_mm: 24, mode: cut}
+
+  - id: phone_stand_60deg
+    request: a phone stand that holds the phone at about 60 degrees, 80 mm wide
+    expect:
+      extent_x_mm: 80.0
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        - {op: wedge, width_mm: 80, depth_mm: 70, height_mm: 45}
+        - {op: rounded_prism, width_mm: 80, depth_mm: 8, height_mm: 14, y_mm: -31, corner_r_mm: 2}
+
+  - id: iphone_from_photo
+    request: create a 3d printable model of this iphone
+    expect:
+      bodies: 1
+    # NEEDS A PHOTO AND A SCALE REFERENCE, and neither is supplied here. Left
+    # in because it is the request JP named, and because the honest answer today
+    # is that a photograph with no reference object carries no millimetres - see
+    # measure/. Once brief 8.3's photo-to-dimension assist exists, this entry
+    # becomes measurable; until then it records that the request is not
+    # answerable rather than pretending it is.
