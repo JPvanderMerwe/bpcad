@@ -16,6 +16,24 @@
 'use strict';
 
 const $ = (id) => document.getElementById(id);
+
+/*
+ * STAGES, NOT A PERCENTAGE.
+ *
+ * The engine cannot say how far through it is - a model call takes as long as
+ * it takes - so a percentage would be invented. These are the real stages it
+ * reports, and the bar steps when one completes and then waits. It idles
+ * visibly rather than creeping towards 99% and stopping, which is the lie
+ * every progress bar tells.
+ */
+const STAGES = [
+  { key: 'thinking',  match: /using|attempt|started/i,      at: 12 },
+  { key: 'composing', match: /primitives|template|no templ/i, at: 34 },
+  { key: 'building',  match: /building geometry/i,          at: 58 },
+  { key: 'checking',  match: /verify|checking|export/i,     at: 74 },
+  { key: 'options',   match: /building options/i,           at: 86 },
+];
+
 const state = {
   part: null,        // the part currently shown
   frames: [],        // preloaded Image objects, index = turntable step
@@ -24,6 +42,9 @@ const state = {
   job: null,
   started: 0,
   timer: null,
+  stage: -1,
+  options: [],
+  capability: {},
 };
 
 /* ── helpers ─────────────────────────────────────────────────────────── */
@@ -46,7 +67,19 @@ function post(path, body) {
   });
 }
 
+function stage(text) {
+  for (let i = STAGES.length - 1; i >= 0; i--) {
+    if (STAGES[i].match.test(text) && i > state.stage) {
+      state.stage = i;
+      $('workStage').textContent = STAGES[i].key;
+      $('trackFill').style.width = STAGES[i].at + '%';
+      return;
+    }
+  }
+}
+
 function log(text, cls) {
+  stage(text);
   const el = $('log');
   const stamp = new Date().toTimeString().slice(0, 8);
   const line = document.createElement('div');
@@ -75,12 +108,27 @@ function verdictClass(v) {
 async function boot() {
   try {
     const h = await api('/api/health');
+    // SAY WHAT THE WAIT WILL BE, BEFORE ANYONE COMMITS TO IT.
+    //
+    // "model ready" is true and useless. On a machine with no GPU a prompt is
+    // two and a half minutes, and someone who is not told that concludes the
+    // app has hung. Someone who IS told decides whether to wait. The dot is
+    // amber rather than red for CPU: it is slow, not broken, and every other
+    // part of the program is unaffected.
+    const cap = h.capability || {};
     const model = h.model || {};
-    const up = model.ok !== false;
-    $('statusDot').className = 'dot ' + (up ? 'up' : 'down');
-    $('statusText').textContent = up
-      ? (model.model || model.name || 'model ready')
-      : (model.message || 'no model — templates still work');
+    state.capability = cap;
+
+    const tier = cap.tier || (model.ok === false ? 'no-model' : 'cpu');
+    $('statusDot').className = 'dot ' + (
+      tier === 'gpu' ? 'up' : tier === 'cpu' ? 'slow' : 'down');
+    $('statusText').textContent =
+      tier === 'gpu' ? (cap.gpu_name ? cap.gpu_name + ' · fast' : 'gpu · fast')
+      : tier === 'cpu' ? 'cpu · ~' + Math.round((cap.prompt_seconds || 155) / 60) + ' min a prompt'
+      : 'no model · specs still work';
+    if (cap.headline) $('status').title = cap.headline;
+    $('capNote').textContent = cap.headline || '';
+    $('capNote').hidden = !cap.headline || tier === 'gpu';
 
     const sel = $('material');
     sel.innerHTML = '';
@@ -112,9 +160,22 @@ async function create() {
   const request = $('prompt').value.trim();
   if (!request) { $('prompt').focus(); return; }
 
+  // Tell them the wait BEFORE the wait, not after.
+  const seconds = (state.capability || {}).prompt_seconds;
+  $('workEta').textContent = seconds
+    ? (seconds > 90 ? 'about ' + Math.round(seconds / 60) + ' minutes on this machine'
+                    : 'about ' + seconds + ' seconds')
+    : '';
+
   setBusy($('createBtn'), true, 'Create');
   $('runPanel').hidden = false;
   $('log').innerHTML = '';
+  $('workReq').textContent = request;
+  $('workStage').textContent = 'thinking';
+  $('trackFill').style.width = '6%';
+  state.stage = -1;
+  resetOptions();
+  $('partPanel').hidden = true;
   $('statusDot').className = 'dot busy';
   $('statusText').textContent = 'working';
   startClock();
@@ -127,11 +188,14 @@ async function create() {
     follow(job, (result) => {
       setBusy($('createBtn'), false, 'Create');
       stopClock();
+      $('trackFill').style.width = '100%';
       if (result && result.ok) {
         log('done — ' + result.name, 'g');
+        $('workStage').textContent = 'done';
         showPart(result);
         loadLibrary();
       } else {
+        $('workStage').textContent = 'failed';
         log((result && result.message) || 'no part produced', 'r');
       }
       $('statusDot').className = 'dot up';
@@ -194,7 +258,8 @@ function follow(jobId, onDone) {
     let event;
     try { event = JSON.parse(message.data); } catch { return; }
 
-    if (event.kind === 'note')        log('  ' + event.text);
+    if (event.kind === 'option')      addOption(event);
+    else if (event.kind === 'note')   log('  ' + event.text);
     else if (event.kind === 'started') log('  started');
     else if (event.kind === 'failed')  { finished = true; onDone(event); }
     else if (event.kind === 'done')    { finished = true; onDone(event); }
@@ -226,6 +291,70 @@ function startClock() {
 }
 function stopClock() { if (state.timer) { clearInterval(state.timer); state.timer = null; } }
 
+/* ── options ─────────────────────────────────────────────────────────────
+ *
+ * Cards appear as each option finishes building rather than all at once at the
+ * end. Watching them land is the difference between "it is working" and "it
+ * has hung", and it costs nothing - the server already emits each one.
+ */
+
+function resetOptions() {
+  state.options = [];
+  $('options').innerHTML = '';
+  $('optionsPanel').hidden = true;
+}
+
+function addOption(option) {
+  state.options.push(option);
+  $('optionsPanel').hidden = false;
+
+  const card = document.createElement('button');
+  card.className = 'card option pending';
+  card.type = 'button';
+
+  const label = document.createElement('div');
+  label.className = 'label';
+  label.textContent = option.label || 'option';
+
+  const img = document.createElement('img');
+  img.className = 'thumb';
+  // EAGER, not lazy. An option card is created because the user asked for it
+  // and the panel is revealed in the same tick; a lazy image appended to a
+  // container that was hidden a moment ago may never begin loading at all, so
+  // onload never fires and the card sits in its loading shimmer for ever.
+  // Four cached thumbnails stayed "pending" indefinitely on exactly this.
+  img.loading = 'eager';
+  img.decoding = 'async';
+  img.alt = option.label || option.name;
+  const settle = () => card.classList.remove('pending');
+  img.onload = settle;
+  img.onerror = settle;
+  img.src = '/api/part/' + encodeURIComponent(option.name) + '/frame/3?w=340';
+  // A cached image can finish before the handler is even reached.
+  if (img.complete) settle();
+
+  const size = document.createElement('div');
+  size.className = 'sz';
+  if (option.envelope_mm) {
+    size.textContent = option.envelope_mm.map((v) => Math.round(v)).join(' × ') + ' mm';
+  }
+  const vol = document.createElement('div');
+  vol.className = 'tp';
+  if (option.volume_cm3 != null) vol.textContent = Math.round(option.volume_cm3) + ' cm³';
+
+  card.append(label, img, size, vol);
+  card.addEventListener('click', () => {
+    document.querySelectorAll('.card.option').forEach((c) => c.classList.remove('chosen'));
+    card.classList.add('chosen');
+    openPart(option.name);
+  });
+  $('options').appendChild(card);
+
+  $('optionsSub').textContent = state.options.length === 1
+    ? 'Pick one. Every one of these builds and passes its checks.'
+    : state.options.length + ' options. Every one builds and passes its checks.';
+}
+
 /* ── showing a part ──────────────────────────────────────────────────── */
 
 function showPart(part) {
@@ -252,8 +381,15 @@ function showPart(part) {
   if (part.watertight === false) bits.push('NOT WATERTIGHT');
   $('partMeta').textContent = bits.join(' · ');
 
-  $('dlStl').href = '/api/part/' + encodeURIComponent(part.name) + '/stl';
+  const base = '/api/part/' + encodeURIComponent(part.name);
+  $('dlStl').href = base + '/stl';
   $('dlStl').setAttribute('download', part.name + '.stl');
+  for (const [id, ext] of [['dlStep', 'step'], ['dl3mf', '3mf']]) {
+    const el = $(id);
+    el.href = base + '/file/' + ext;
+    el.setAttribute('download', part.name + '.' + ext);
+    el.hidden = !(part.files || []).includes(ext);
+  }
 
   const report = part.report_md || '';
   $('reportText').textContent = report;
@@ -429,6 +565,10 @@ async function openPart(name) {
       template: data.template || null,
       material: data.material || null,
       level: data.level ?? null,
+      // The server reports which formats exist. Without passing it through,
+      // the STEP and 3MF buttons stayed hidden on every part opened from the
+      // library or from an option card - the files were there and unreachable.
+      files: data.files || [],
     });
   } catch (err) {
     log('could not open ' + name + ': ' + err.message, 'r');
@@ -438,8 +578,18 @@ async function openPart(name) {
 /* ── wiring ──────────────────────────────────────────────────────────── */
 
 $('createBtn').addEventListener('click', create);
+document.querySelectorAll('.chip.suggest').forEach((chip) => {
+  chip.addEventListener('click', () => {
+    $('prompt').value = chip.dataset.fill;
+    $('prompt').focus();
+  });
+});
+$('toggleLog').addEventListener('click', () => {
+  const el = $('log');
+  el.hidden = !el.hidden;
+  $('toggleLog').textContent = el.hidden ? 'log' : 'hide';
+});
 $('refineBtn').addEventListener('click', refine);
-$('hideRun').addEventListener('click', () => { $('runPanel').hidden = true; });
 $('showReport').addEventListener('click', () => { $('reportBox').open = !$('reportBox').open; });
 $('showSpec').addEventListener('click', () => { $('specBox').open = !$('specBox').open; });
 $('search').addEventListener('input', (e) => renderLibrary(e.target.value.trim().toLowerCase()));
@@ -452,6 +602,26 @@ $('prompt').addEventListener('keydown', (e) => {
   }
 });
 $('refine').addEventListener('keydown', (e) => { if (e.key === 'Enter') refine(); });
+
+/* ── installable ─────────────────────────────────────────────────────────
+ *
+ * Registered last and failing silently. A service worker is a convenience -
+ * it makes the app open instantly and survive a dropped connection - and a
+ * browser that refuses to register one (private window, no HTTPS, iOS being
+ * iOS) must still get a working app rather than a console error and a blank
+ * page.
+ *
+ * It is NOT registered off localhost-only builds where it would cache a shell
+ * that is about to change under it; the server sends no-cache for the shell
+ * precisely so an update lands, and the worker respects that by going to the
+ * network first.
+ */
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/static/sw.js', { scope: '/' })
+      .catch(() => { /* not installable here; the app works regardless */ });
+  });
+}
 
 wireViewer();
 boot();

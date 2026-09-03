@@ -64,7 +64,19 @@ def test_search_matches_what_the_template_makes(entries):
     """
     hits = library.search("container", entries)
     assert hits, "a part built from the enclosure should answer to 'container'"
-    assert all(e.template == "enclosure" for e in hits)
+    assert any(e.template == "enclosure" for e in hits)
+
+    # NOT "all". "container" is deliberately claimed by the rectangular
+    # enclosure AND the round vessel, because it is not a shape word - a
+    # container is as often square as round. Every hit must come from a
+    # template that actually claims the word; more than one may.
+    from bpcad.spec import registry
+
+    for e in hits:
+        assert "container" in registry.get(e.template).makes, (
+            "%r matched 'container' but its template %r does not claim it"
+            % (e.name, e.template)
+        )
 
 
 def test_search_matches_the_material(entries):

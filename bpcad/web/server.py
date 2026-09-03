@@ -53,6 +53,15 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 STATIC_DIR = Path(__file__).parent / "static"
 
+# mimetypes does not know these, and a manifest served as
+# application/octet-stream is ignored by every browser - silently, so the app
+# simply is not installable and nothing says why.
+EXTRA_TYPES = {
+    ".webmanifest": "application/manifest+json",
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+}
+
 # How many angles the turntable has. 24 is 15 degrees apart, which reads as
 # continuous when you drag it and is cheap enough to render on demand.
 TURNTABLE_STEPS = 24
@@ -183,6 +192,11 @@ def _part_payload(part) -> dict:
         "assumptions": [str(a) for a in getattr(report, "assumptions", [])],
         "report_md": report.markdown() if hasattr(report, "markdown") else "",
         "spec": _spec_dict(spec),
+        "files": sorted({
+            f.suffix.lstrip(".").lower()
+            for f in (Path(part.part_dir) / "out").glob("*")
+            if f.suffix.lstrip(".").lower() in ("stl", "step", "3mf")
+        }),
     }
 
 
@@ -236,10 +250,48 @@ def _generate_work(request: str, material: str, image_path: str | None):
                     "message": result.message or "the model could not produce a "
                                                  "part that passes verification",
                     "attempts": result.attempt_count}
+
         payload = _part_payload(result.part)
         payload["ok"] = True
         payload["elapsed_s"] = round(result.elapsed_s, 1)
         payload["attempts"] = result.attempt_count
+
+        # OPTIONS, FROM ONE MODEL CALL. The variants come from walking the
+        # template's own axes in Python, so four of them cost seconds rather
+        # than four more trips through a model that takes minutes and would
+        # mostly repeat itself anyway. They are EMITTED as they build, so the
+        # grid fills in rather than sitting empty until the last one lands.
+        job.emit("note", text="building options")
+        options = [{"name": payload["name"], "label": "as asked",
+                    "verdict": payload["verdict"],
+                    "volume_cm3": payload.get("volume_cm3"),
+                    "envelope_mm": payload.get("size_mm")}]
+        job.emit("option", **options[0])
+        try:
+            from bpcad.agent.variations import build_variants
+
+            def relay(kind, data):
+                if kind == "variant_built":
+                    job.emit("option", **data)
+                elif kind == "variant_dropped":
+                    job.emit("note", text="dropped %s - %s"
+                             % (data.get("label"), data.get("why", "")[:80]))
+
+            for variant in build_variants(result.spec, api.config(), count=4,
+                                          out_root="parts", on_event=relay):
+                if variant.name == payload["name"]:
+                    continue
+                options.append({
+                    "name": variant.name, "label": variant.label,
+                    "verdict": variant.verdict,
+                    "volume_cm3": variant.volume_cm3,
+                    "envelope_mm": list(variant.envelope_mm),
+                })
+        except Exception as exc:
+            # Options are a bonus. Losing them must not lose the part.
+            job.emit("note", text="could not build options: %s" % str(exc)[:120])
+
+        payload["options"] = options
         return payload
 
     return work
@@ -304,8 +356,52 @@ def _find_part_dir(name: str) -> Path:
     return _resolve_part(name)[0]
 
 
-def _render_turntable_frame(name: str, step: int, width: int, height: int) -> bytes:
-    key = (name, step, width, height)
+def _assembled_mesh(name: str):
+    """
+    The part AS IT IS, not as it prints.
+
+    The STL on disk is the PRINT layout - a birdhouse is a box with its roof
+    lying flat on the bed beside it, because that is how it prints without
+    support. Showing that in the viewer is why the answer to "make me a
+    birdhouse" looked like an open box with a slab next to it. It was a
+    birdhouse the whole time, in two pieces, seen from the wrong side of the
+    process.
+
+    Templates keep the two orientations as separate functions on purpose, so
+    the assembled one is there to be asked for. It costs a rebuild, which is
+    seconds and happens once because the rendered frames are cached.
+
+    An imported mesh has no spec and no assembled form; it is what it is, and
+    the STL is returned.
+    """
+    from bpcad import api
+
+    part_dir, stl = _resolve_part(name)
+    spec_path = Path(part_dir) / "spec.yaml"
+    if spec_path.is_file():
+        try:
+            loaded = api.load_spec(spec_path)
+            spec = loaded[0] if isinstance(loaded, tuple) else loaded
+            built = api.build(spec=spec, out_dir=None, render=False)
+            from bpcad.verify.fit import mesh_of_solid
+
+            return mesh_of_solid(built.build.solid)
+        except Exception:
+            pass                        # fall back to what is on disk
+
+    import trimesh
+
+    if stl is None or not Path(stl).is_file():
+        raise HttpError(404, "part %r has no STL yet" % name)
+    mesh = trimesh.load(stl)
+    if isinstance(mesh, trimesh.Scene):
+        mesh = trimesh.util.concatenate(list(mesh.geometry.values()))
+    return mesh
+
+
+def _render_turntable_frame(name: str, step: int, width: int, height: int,
+                            layout: str = "assembled") -> bytes:
+    key = (name, step, width, height, layout)
     with _RENDER_LOCK:
         hit = _RENDER_CACHE.get(key)
     if hit is not None:
@@ -320,13 +416,15 @@ def _render_turntable_frame(name: str, step: int, width: int, height: int) -> by
     from bpcad.gui import theme
     from bpcad.render.raster import render
 
-    _part_dir, stl = _resolve_part(name)
-    if stl is None or not Path(stl).is_file():
-        raise HttpError(404, "part %r has no STL yet" % name)
-
-    mesh = trimesh.load(stl)
-    if isinstance(mesh, trimesh.Scene):
-        mesh = trimesh.util.concatenate(list(mesh.geometry.values()))
+    if layout == "print":
+        _part_dir, stl = _resolve_part(name)
+        if stl is None or not Path(stl).is_file():
+            raise HttpError(404, "part %r has no STL yet" % name)
+        mesh = trimesh.load(stl)
+        if isinstance(mesh, trimesh.Scene):
+            mesh = trimesh.util.concatenate(list(mesh.geometry.values()))
+    else:
+        mesh = _assembled_mesh(name)
 
     azim = 360.0 * (step % TURNTABLE_STEPS) / TURNTABLE_STEPS
     img = render(
@@ -384,9 +482,18 @@ def _health() -> dict:
         status = api.model_status()
     except Exception as exc:
         status = {"ok": False, "message": str(exc)}
+    from bpcad import capability
+
+    try:
+        cap = capability.detect().to_json()
+    except Exception as exc:
+        cap = {"tier": "unknown", "headline": "could not read this machine's "
+                                              "capability: %s" % str(exc)[:100]}
+
     cfg = api.config()
     return {
         "model": status,
+        "capability": cap,
         "printer": cfg.data.get("printer", {}),
         "bed": cfg.data.get("bed", {}),
         "materials": list(cfg.material_names),
@@ -417,6 +524,12 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
+        # A service worker may only control paths at or below its own
+        # location, so one served from /static/ cannot control "/" unless it
+        # says so. Without this the worker registers, reports success, and
+        # controls nothing.
+        if getattr(self, "_sw", False):
+            self.send_header("Service-Worker-Allowed", "/")
         if ctype in self.IMMUTABLE:
             self.send_header("Cache-Control", "public, max-age=604800, immutable")
         else:
@@ -496,13 +609,20 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             return self._send_stl(m.group(1))
 
+        m = re.fullmatch(r"/api/part/([^/]+)/file/([a-z0-9]{1,6})", path)
+        if m:
+            return self._send_file(m.group(1), m.group(2))
+
         m = re.fullmatch(r"/api/part/([^/]+)/frame/(\d+)", path)
         if m:
             name, step = m.group(1), int(m.group(2))
             self._check_name(name)
             size = int((query.get("w") or ["640"])[0])
             size = max(160, min(1200, size))
-            data = _render_turntable_frame(name, step, size, int(size * 0.78))
+            layout = (query.get("layout") or ["assembled"])[0]
+            layout = "print" if layout == "print" else "assembled"
+            data = _render_turntable_frame(name, step, size,
+                                           int(size * 0.78), layout)
             return self._send(200, data, "image/png")
 
         m = re.fullmatch(r"/api/job/([0-9a-f]+)/events", path)
@@ -554,6 +674,7 @@ class Handler(BaseHTTPRequestHandler):
             raise HttpError(400, "%r is not a valid part name" % name)
 
     def _static(self, rel: str):
+        self._sw = rel.endswith("sw.js")
         if ".." in rel or rel.startswith("/"):
             raise HttpError(400, "bad path")
         target = (STATIC_DIR / rel).resolve()
@@ -561,7 +682,9 @@ class Handler(BaseHTTPRequestHandler):
             raise HttpError(400, "bad path")
         if not target.is_file():
             raise HttpError(404, "no file %r" % rel)
-        ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
+        ctype = (EXTRA_TYPES.get(target.suffix.lower())
+                 or mimetypes.guess_type(str(target))[0]
+                 or "application/octet-stream")
         self._send(200, target.read_bytes(), ctype)
 
     def _one_part(self, name: str) -> dict:
@@ -605,6 +728,11 @@ class Handler(BaseHTTPRequestHandler):
         # to say nothing. Inventing a PASS because the file exists is exactly
         # the failure this program is built to avoid.
         payload["has_stl"] = stl is not None and Path(stl).is_file()
+        payload["files"] = sorted({
+            f.suffix.lstrip(".").lower()
+            for f in (part_dir / "out").glob("*")
+            if f.suffix.lstrip(".").lower() in self.DOWNLOADABLE
+        })
         return payload
 
     def _send_stl(self, name: str):
@@ -614,6 +742,29 @@ class Handler(BaseHTTPRequestHandler):
             raise HttpError(404, "part %r has no STL" % name)
         self._send(200, Path(stl).read_bytes(), "model/stl",
                    {"Content-Disposition": 'attachment; filename="%s.stl"' % name})
+
+    # What a browser may download, and what to call it on the wire. An
+    # allow-list rather than "whatever is in out/": this route takes an
+    # extension from the URL, and the one thing it must never do is hand back
+    # spec.yaml, model.py or anything else that happens to be sitting there.
+    DOWNLOADABLE = {
+        "stl": "model/stl",
+        "step": "model/step",
+        "3mf": "model/3mf",
+        "png": "image/png",
+    }
+
+    def _send_file(self, name: str, ext: str):
+        self._check_name(name)
+        ctype = self.DOWNLOADABLE.get(ext)
+        if ctype is None:
+            raise HttpError(404, "%r is not a downloadable format" % ext)
+        part_dir, _stl = _resolve_part(name)
+        found = sorted((part_dir / "out").glob("*.%s" % ext))
+        if not found:
+            raise HttpError(404, "part %r has no %s file" % (name, ext.upper()))
+        self._send(200, found[0].read_bytes(), ctype,
+                   {"Content-Disposition": 'attachment; filename="%s.%s"' % (name, ext)})
 
     def _sse(self, job_id: str):
         job = JOBS.get(job_id)

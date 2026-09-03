@@ -16,6 +16,10 @@ dependencies = [
     "numpy",
     "pillow",
     "scikit-image",
+    # scipy arrives with scikit-image anyway, but bpcad/build/cells.py imports
+    # scipy.spatial.Voronoi directly. A dependency you use by name is one you
+    # declare, or it disappears the day the transitive one is dropped.
+    "scipy",
     "trimesh",
     "matplotlib",
     "pydantic>=2",
@@ -38,7 +42,7 @@ dev = ["pytest"]
 bpcad = "bpcad.cli:app"
 
 [project.gui-scripts]
-bpcad-gui = "bpcad.gui.app:main"
+bpcad-gui = "bpcad.gui.shell:main"
 
 [tool.setuptools.packages.find]
 include = ["bpcad*"]

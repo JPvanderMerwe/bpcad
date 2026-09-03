@@ -2,14 +2,33 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<!-- viewport-fit=cover so the notch on a phone does not eat the header -->
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#09090b">
 <title>bpcad — Bit Primitive</title>
 <link rel="stylesheet" href="/static/app.css">
+
+<!-- Installable on Android and iOS. "Add to Home Screen" then gives a
+     full-screen app with its own icon and no browser chrome - the same UI the
+     desktop shell shows, because it is the same files. -->
+<link rel="manifest" href="/static/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
+<!-- iOS ignores the manifest's display mode and needs its own tags. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="bpcad">
+<meta name="mobile-web-app-capable" content="yes">
 </head>
 <body>
+<!-- The ground. Three stacked layers: an isometric lattice, a slow drift, and
+     a vignette that keeps the middle of the screen darker than the edges so a
+     render always sits on the quietest part of the page. -->
+<div class="ground" aria-hidden="true">
+  <div class="grid-iso"></div>
+  <div class="grid-fine"></div>
+  <div class="vignette"></div>
+</div>
 <div class="scanlines" aria-hidden="true"></div>
 
 <header class="bar">
@@ -26,42 +45,67 @@
 
 <main>
   <!-- ── ask ──────────────────────────────────────────────────────────── -->
-  <section class="panel" id="askPanel">
+  <section class="panel hero" id="askPanel">
     <h1 class="lede">What do you want to make?</h1>
     <p class="sub">
-      Plain language, with the dimensions you know. Everything you leave out is
-      derived. You get a dimensioned, editable part — not a mesh — so you can
-      change it afterwards by asking.
+      Plain language, with the dimensions you know. You get options — real
+      dimensioned parts, not meshes — and you can change any of them by asking.
     </p>
 
     <div class="promptwrap">
-      <textarea id="prompt" rows="3" spellcheck="false"
-        placeholder="a wall hook for a coat, screwed through two holes"></textarea>
+      <textarea id="prompt" rows="2" spellcheck="false"
+        placeholder="a birdhouse for small garden birds"></textarea>
+      <button class="btn primary go" id="createBtn">
+        <span class="label">Create</span>
+        <span class="kbd" id="kbdHint">↵</span>
+      </button>
     </div>
 
-    <div class="row">
-      <label class="field">
+    <div class="row wrap chips">
+      <label class="chip">
         <span class="tag">material</span>
         <select id="material"></select>
       </label>
-      <button class="btn primary" id="createBtn">
-        <span class="label">Create</span>
-      </button>
+      <button class="chip suggest" data-fill="a birdhouse for small garden birds">birdhouse</button>
+      <button class="chip suggest" data-fill="a round bowl 180 mm across and 70 mm deep">bowl</button>
+      <button class="chip suggest" data-fill="a shelf bracket for a 200 mm shelf">bracket</button>
+      <button class="chip suggest" data-fill="a plant pot 120 mm across with drainage holes">plant pot</button>
     </div>
     <p class="hint" id="printerHint"></p>
+    <p class="hint cap" id="capNote" hidden></p>
   </section>
 
-  <!-- ── running ──────────────────────────────────────────────────────── -->
-  <section class="panel term" id="runPanel" hidden>
-    <div class="termhead">
-      <span class="tag">working</span>
+  <!-- ── working ──────────────────────────────────────────────────────── -->
+  <section class="panel work" id="runPanel" hidden>
+    <div class="workhead">
+      <div class="lathe" aria-hidden="true">
+        <span class="ring r1"></span><span class="ring r2"></span>
+        <span class="ring r3"></span><span class="core"></span>
+      </div>
+      <div class="workwhat">
+        <div class="workstage" id="workStage">thinking</div>
+        <div class="workreq" id="workReq"></div>
+        <div class="worketa" id="workEta"></div>
+      </div>
       <span class="elapsed" id="elapsed">0s</span>
-      <button class="btn ghost small" id="hideRun">hide</button>
+      <button class="btn ghost small" id="toggleLog">log</button>
     </div>
-    <pre class="log" id="log"></pre>
+    <div class="track"><div class="track-fill" id="trackFill"></div></div>
+    <pre class="log" id="log" hidden></pre>
   </section>
 
-  <!-- ── result ───────────────────────────────────────────────────────── -->
+  <!-- ── options ──────────────────────────────────────────────────────── -->
+  <section class="panel" id="optionsPanel" hidden>
+    <div class="parthead">
+      <div>
+        <h2>Options</h2>
+        <p class="sub" id="optionsSub">Pick one. Every one of these builds and passes its checks.</p>
+      </div>
+    </div>
+    <div class="grid options" id="options"></div>
+  </section>
+
+  <!-- ── the chosen part ──────────────────────────────────────────────── -->
   <section class="panel" id="partPanel" hidden>
     <div class="parthead">
       <div>
@@ -74,12 +118,16 @@
     <div class="viewer" id="viewer">
       <img id="frame" alt="the part" draggable="false">
       <div class="spinhint" id="spinhint">drag to spin</div>
+      <a class="btn primary export" id="dlStl" download>
+        <span class="label">Download STL</span>
+      </a>
     </div>
 
     <div class="row wrap">
-      <a class="btn" id="dlStl" download>Download STL</a>
       <button class="btn ghost" id="showReport">Report</button>
       <button class="btn ghost" id="showSpec">Spec</button>
+      <a class="btn ghost" id="dlStep" download hidden>STEP</a>
+      <a class="btn ghost" id="dl3mf" download hidden>3MF</a>
     </div>
 
     <div class="refine">

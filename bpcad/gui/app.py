@@ -520,8 +520,17 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
 
-def main(argv: list[str] | None = None) -> int:
-    """Entry point for `bpcad-gui` and `python -m bpcad.gui`."""
+# THE CLASSIC QT APP, reached by `bpcad-gui --classic`.
+#
+# `bpcad-gui` now opens the WEB UI in a native window - see gui/shell.py. Two
+# front ends diverged immediately and cost a whole session of interface work
+# that landed somewhere nobody was looking, and a Qt app cannot go on a phone
+# at any price, which is where this has to end up.
+#
+# This one survives for the one thing it still does better: a VTK viewport with
+# a real trackball camera, where the web viewer is a turntable on one axis.
+def classic_main(argv: list[str] | None = None) -> int:
+    """The classic Qt app itself. Reached by `bpcad-gui --classic`."""
     app = QApplication(argv if argv is not None else sys.argv)
     app.setApplicationName("bpcad")
     app.setOrganizationName("Bit Primitive")
@@ -536,6 +545,29 @@ def main(argv: list[str] | None = None) -> int:
     window.show()
     window.part_view.viewer.start()
     return app.exec()
+
+
+def main(argv: list[str] | None = None) -> int:
+    """
+    Kept pointing at the CURRENT UI, whatever the installed shim says.
+
+    A console script shim is generated at install time and records the import
+    path it was built with. An editable install updates the modules and NOT the
+    shim, so pointing `bpcad-gui` at the new shell in pyproject.toml changes
+    nothing at all until somebody reinstalls - and the failure it produces is
+    launching the old interface and concluding that nothing has changed. Which
+    is exactly what happened once already.
+
+    So the old entry point forwards. A stale shim, a fresh one, or
+    `python -m bpcad.gui` all reach the same place.
+    """
+    argv = list(sys.argv if argv is None else argv)
+    if "--classic" in argv:
+        return classic_main([a for a in argv if a != "--classic"])
+
+    from bpcad.gui.shell import main as shell_main
+
+    return shell_main(argv)
 
 
 if __name__ == "__main__":

@@ -289,3 +289,210 @@ def test_a_job_that_raises_reports_a_readable_message_not_a_traceback(base_url):
 
 def test_asking_for_a_job_that_does_not_exist_is_a_404(base_url):
     assert status_of(base_url + "/api/job/deadbeef0000") == 404
+
+
+# ---------------------------------------------------------------------------
+# one UI, and it has to be installable on a phone
+# ---------------------------------------------------------------------------
+
+
+def test_the_desktop_entry_point_reaches_the_web_ui():
+    """
+    THE BUG THAT WASTED A SESSION, PINNED.
+
+    A console script shim records the import path it was generated with. An
+    editable install updates the modules and NOT the shim, so repointing
+    `bpcad-gui` in pyproject.toml changes nothing until somebody reinstalls -
+    and the symptom is launching the old interface and concluding the work was
+    never done. Both paths must land on the shell.
+    """
+    # READ THE SOURCE, DO NOT IMPORT IT. bpcad.gui.app pulls in PySide6 at
+    # module scope, and importing Qt inside a pytest process that is already
+    # running an HTTP server hangs indefinitely - the test suite stopped dead
+    # at this point with no output. The fact under test is textual anyway.
+    from pathlib import Path
+
+    src = Path("bpcad/gui/app.py").read_text()
+    assert "def classic_main(" in src, "--classic has nothing to reach"
+    forward = src[src.index("def main("):]
+    assert "shell_main" in forward, (
+        "bpcad.gui.app.main no longer forwards to the shell, so a stale "
+        "console script shim will launch the old Qt app"
+    )
+
+
+def test_the_shell_serves_the_same_files_the_phone_gets():
+    """One UI means one set of files, not a desktop port of them."""
+    from pathlib import Path
+
+    from bpcad.web import server as web_server
+
+    # Same reason as above: gui.shell is read, not imported.
+    src = Path("bpcad/gui/shell.py").read_text()
+    assert "from bpcad.web.server import Handler" in src, (
+        "the desktop shell no longer serves the web app's own handler, so the "
+        "two front ends can diverge again"
+    )
+    assert web_server.STATIC_DIR.is_dir()
+    for name in ("index.html", "app.css", "app.js"):
+        assert (web_server.STATIC_DIR / name).is_file()
+
+
+def test_the_manifest_is_served_as_a_manifest(base_url):
+    """
+    Served as application/octet-stream a manifest is ignored by every browser,
+    silently, and the app simply is not installable with nothing to say why.
+    """
+    with get(base_url + "/static/manifest.webmanifest") as response:
+        assert response.headers.get("Content-Type") == "application/manifest+json"
+        manifest = json.loads(response.read())
+    assert manifest["display"] == "standalone"
+    assert manifest["start_url"] == "/"
+    sizes = {icon["sizes"] for icon in manifest["icons"]}
+    assert {"192x192", "512x512"} <= sizes, "Android needs 192 and 512"
+    assert any(i.get("purpose") == "maskable" for i in manifest["icons"]), (
+        "without a maskable icon Android crops the mark inside a white circle"
+    )
+
+
+def test_every_icon_the_manifest_promises_exists(base_url):
+    manifest = get_json(base_url + "/static/manifest.webmanifest")
+    for icon in manifest["icons"]:
+        assert status_of(base_url + icon["src"]) == 200, "missing %s" % icon["src"]
+    assert status_of(base_url + "/static/icons/apple-touch-icon.png") == 200
+
+
+def test_the_service_worker_may_control_the_whole_app(base_url):
+    """
+    A worker served from /static/ can only control /static/ unless the response
+    says otherwise. Without the header it registers, reports success, and
+    controls nothing.
+    """
+    with get(base_url + "/static/sw.js") as response:
+        assert response.headers.get("Service-Worker-Allowed") == "/"
+        assert response.headers.get("Content-Type") == "text/javascript"
+        body = response.read().decode()
+    assert "/api/" in body, "the worker does not mention the API at all"
+
+
+def test_the_service_worker_never_caches_the_api(base_url):
+    """
+    A cached /api/parts is a library missing what you made this morning, and a
+    cached STL is somebody printing yesterday's geometry. The whole claim of
+    this program is that the numbers shown are the numbers measured.
+    """
+    with get(base_url + "/static/sw.js") as response:
+        body = response.read().decode()
+
+    # Check the GUARD, not the prose. The first "/api/" in the file is in the
+    # explanatory comment at the top, so searching for the first occurrence and
+    # looking nearby for "return" was reading documentation and calling it a
+    # test - it failed while the actual guard was right there and correct.
+    assert "if (url.pathname.startsWith('/api/')) return;" in body, (
+        "the service worker does not bail out of /api/ before its caching "
+        "logic, so a part list or an STL can be served stale"
+    )
+    fetch_body = body[body.index("addEventListener('fetch'"):]
+    assert fetch_body.index("startsWith('/api/')") < fetch_body.index("respondWith"), (
+        "the /api/ guard comes AFTER respondWith, so it does not guard anything"
+    )
+
+
+def test_the_page_declares_itself_installable(base_url):
+    with get(base_url + "/") as response:
+        html = response.read().decode()
+    for tag in ('rel="manifest"',
+                'apple-mobile-web-app-capable',
+                'apple-touch-icon'):
+        assert tag in html, "missing %s - iOS will not install it" % tag
+
+
+# ---------------------------------------------------------------------------
+# saying what the machine can do, honestly
+# ---------------------------------------------------------------------------
+
+
+def test_health_says_what_this_machine_can_do(base_url):
+    data = get_json(base_url + "/api/health")
+    cap = data.get("capability")
+    assert cap, "health does not report capability at all"
+    assert cap["tier"] in ("gpu", "cpu", "no-model", "unknown")
+    assert cap["headline"], "no headline for a person to read"
+
+
+def test_no_gpu_is_reported_as_slow_and_never_as_broken():
+    """
+    A machine with no GPU is not unsupported. Every template, every fitter,
+    every import and every export works identically on it - only the prompt
+    step is slow. Telling somebody their working machine is broken is worse
+    than telling them nothing.
+    """
+    from bpcad.capability import Capability
+
+    cap = Capability(gpu=False, model_available=True, model_name="qwen2.5-coder:7b")
+    headline = cap.headline().lower()
+    assert "cpu" in headline
+    assert "minute" in headline, "the wait is not stated, so it reads as a hang"
+    for word in ("unsupported", "error", "failed", "cannot", "required"):
+        assert word not in headline, "%r makes a working machine sound broken" % word
+
+
+def test_the_wait_is_stated_before_it_is_endured():
+    from bpcad.capability import Capability
+
+    cpu = Capability(gpu=False, model_available=True, model_name="m")
+    gpu = Capability(gpu=True, model_on_gpu=True, model_available=True, model_name="m")
+    assert cpu.prompt_seconds > gpu.prompt_seconds * 3, (
+        "if CPU and GPU are quoted the same, the number is decorative"
+    )
+    assert str(round(cpu.prompt_seconds / 60)) in cpu.headline()
+
+
+def test_no_model_still_offers_the_rest_of_the_program():
+    """
+    `spec.yaml` is the durable artifact and none of it needs a model. The
+    message has to say so, or somebody with no Ollama concludes the app is
+    useless to them.
+    """
+    from bpcad.capability import Capability
+
+    cap = Capability(model_available=False)
+    assert cap.tier == "no-model"
+    text = cap.headline().lower()
+    assert "rebuild" in text or "works" in text
+
+
+def test_requiring_a_gpu_explains_what_still_works():
+    """
+    A refusal that only says "GPU required" leaves somebody thinking the whole
+    program needs one. It does not - almost none of it does.
+    """
+    import pytest as _pytest
+
+    from bpcad.capability import Capability, require_gpu
+
+    with _pytest.raises(RuntimeError) as exc:
+        require_gpu("Generating a mesh", Capability(gpu=False))
+    message = str(exc.value)
+    assert "Everything else" in message
+    assert "export" in message
+
+    # And it must not refuse on a machine that HAS one.
+    require_gpu("Generating a mesh", Capability(gpu=True))
+
+
+def test_nothing_in_the_program_currently_requires_a_gpu():
+    """
+    A slow answer is an answer. If require_gpu ever gets called on a path that
+    merely runs slowly, a working program disappears for everyone without a
+    graphics card.
+    """
+    import subprocess
+
+    out = subprocess.run(
+        ["grep", "-rn", "require_gpu", "bpcad/"],
+        capture_output=True, text=True,
+    )
+    callers = [line for line in out.stdout.splitlines()
+               if "capability.py" not in line]
+    assert not callers, "require_gpu is called from: %s" % callers
