@@ -510,6 +510,12 @@ def _library_payload() -> list[dict]:
             "size_mm": [round(float(v), 1) for v in getattr(entry, "envelope_mm", [])]
             if getattr(entry, "envelope_mm", None) else None,
             "volume_cm3": getattr(entry, "volume_cm3", None),
+            # PIECES. Two bodies turn, one is fused solid - which is the fact
+            # the `Moving` filter and the `moves` badge are both made of. Null
+            # rather than 1 when it was never recorded: a part built before the
+            # baseline carried a body count has no answer, and "1 piece" for
+            # it would be a guess.
+            "bodies": getattr(entry, "body_count", None),
             "material": getattr(entry, "material", None),
             "level": getattr(entry, "level", None),
             "when": str(getattr(entry, "when", "") or ""),

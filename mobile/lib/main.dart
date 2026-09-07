@@ -1,30 +1,41 @@
-// bpcad on a phone.
+// bpcad on a phone. Design handoff, task C2.
 //
-// FIRST SLICE, AND WHAT IT DELIBERATELY IS NOT. This connects to a running
-// bpcad, says honestly whether it can see one, lists what has been made, and
-// shows a part with the numbers measured off it. Generating is wired to the
-// real endpoint with real progress. It is not yet the whole app: there is no
-// refine, no upload, no variant screen.
+// The app shell and the library. Boot leads in once, then a tab bar with the
+// composer on a centre button - the design's own arrangement, and it puts the
+// one thing you came to do under a thumb.
 //
-// The house style is the web app's, on purpose - same ground, same two
-// accents, same rule that the part is the biggest thing on screen and the
-// dimensions are the best-treated text. A phone app that looked like a
-// different product would be a second product.
+// The house style is the web app's, to the byte, because both read the same
+// design/tokens.json through tools/tokens.py. A phone app that looked like a
+// different product would be a second product, and the handoff calls a colour
+// that differs between clients a bug rather than an inconsistency.
+//
+// WHAT IS NOT HERE, AND WHY IT IS NOT A PLACEHOLDER.
+//
+// The design has an Account tab with a credit balance, a usage bar and a plan,
+// and a Plans screen with three tiers and prices. There is no account system,
+// no credit ledger and no billing, and the handoff itself lists store IAP
+// rules as an open blocker that must not be built against. So the second tab
+// says what bpcad is and what this machine is doing, which is true, instead of
+// showing "12 credits" - a number that would be a fabrication sitting in the
+// middle of a product whose entire promise is that every figure on screen was
+// measured.
 
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'boot_screen.dart';
+import 'composer_screen.dart';
 import 'glass.dart';
+import 'result_screen.dart';
 import 'theme.dart';
 import 'tokens.dart';
-import 'part_screen.dart';
 
 void main() => runApp(const BpcadApp());
 
 /// Over a USB cable with `adb reverse tcp:8765 tcp:8765`, the phone's own
 /// localhost is the laptop. That is the testing path and it exposes nothing to
 /// the network. A hosted address is a decision not yet taken, so this is a
-/// constant in one place rather than a assumption spread through the app.
+/// constant in one place rather than an assumption spread through the app.
 const String kDefaultServer = 'http://localhost:8765';
 
 class BpcadApp extends StatelessWidget {
@@ -35,25 +46,179 @@ class BpcadApp extends StatelessWidget {
         title: 'bpcad',
         debugShowCheckedModeBanner: false,
         theme: bpcadTheme(),
-        home: const LibraryScreen(),
+        home: const Shell(),
       );
 }
 
+class Shell extends StatefulWidget {
+  const Shell({super.key});
+
+  @override
+  State<Shell> createState() => _ShellState();
+}
+
+class _ShellState extends State<Shell> {
+  final BpcadApi _api = BpcadApi(kDefaultServer);
+
+  /// Boot runs once. Brief 6.6 allows exactly one boot moment and it must not
+  /// repeat on a later screen - which means it cannot live in the tab stack.
+  bool _booted = false;
+  Health? _health;
+  int _tab = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_booted) {
+      return BootScreen(
+        api: _api,
+        onStart: (health) => setState(() {
+          _health = health;
+          _booted = true;
+        }),
+      );
+    }
+
+    return Scaffold(
+      body: _tab == 0
+          ? LibraryScreen(api: _api, health: _health)
+          : MachineScreen(api: _api, health: _health),
+      bottomNavigationBar: _TabBar(
+        index: _tab,
+        onTab: (index) => setState(() => _tab = index),
+        onCompose: () async {
+          await Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => ComposerScreen(api: _api, health: _health),
+          ));
+          // A build that finished while the composer was open has to show up
+          // without a pull-to-refresh: the library is the only place a part
+          // can be found again.
+          if (mounted) setState(() {});
+        },
+      ),
+    );
+  }
+}
+
+/// The tab bar, with the composer on a centre button.
+///
+/// Glass at the `float` depth - it sits over content, and the design lists the
+/// tab bar there by name. The centre button is the one amber element on the
+/// screen, which is what the design gives a commit action.
+class _TabBar extends StatelessWidget {
+  const _TabBar({
+    required this.index,
+    required this.onTab,
+    required this.onCompose,
+  });
+
+  final int index;
+  final ValueChanged<int> onTab;
+  final VoidCallback onCompose;
+
+  @override
+  Widget build(BuildContext context) {
+    return GlassSurface(
+      depth: GlassDepth.float,
+      borderRadius: BorderRadius.zero,
+      border: false,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          height: 62,
+          decoration: const BoxDecoration(
+              border: Border(top: BorderSide(color: BpcadColors.edge))),
+          child: Row(
+            children: [
+              Expanded(
+                  child: _tab('Library', Icons.grid_view_outlined, index == 0,
+                      () => onTab(0))),
+              // 56 across, and a real tap target - the brief pins 44 as the
+              // floor and this is the button the whole app is for.
+              SizedBox(
+                width: 84,
+                child: Center(
+                  child: InkWell(
+                    onTap: onCompose,
+                    borderRadius: BorderRadius.circular(BpRadius.control),
+                    child: Container(
+                      width: 56,
+                      height: 44,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: BpCore.phosphor,
+                        borderRadius:
+                            BorderRadius.circular(BpRadius.control),
+                      ),
+                      child: const Icon(Icons.add,
+                          size: 22, color: BpCore.caseColor),
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                  child: _tab('Machine', Icons.memory_outlined, index == 1,
+                      () => onTab(1))),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _tab(String label, IconData glyph, bool on, VoidCallback onTap) =>
+      InkWell(
+        onTap: onTap,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(glyph,
+                size: 18,
+                color: on ? BpCore.phosphor : BpcadColors.inkFaint),
+            const SizedBox(height: 3),
+            // The word as well as the icon. Colour never carries meaning
+            // alone - brief 6.7.
+            Text(label,
+                style: TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: 9.5,
+                    color: on ? BpCore.phosphor : BpcadColors.inkFaint)),
+          ],
+        ),
+      );
+}
+
+/// Screen 03: the library.
 class LibraryScreen extends StatefulWidget {
-  const LibraryScreen({super.key});
+  const LibraryScreen({super.key, required this.api, this.health});
+
+  final BpcadApi api;
+  final Health? health;
 
   @override
   State<LibraryScreen> createState() => _LibraryScreenState();
 }
 
-class _LibraryScreenState extends State<LibraryScreen> {
-  final BpcadApi _api = BpcadApi(kDefaultServer);
-  final TextEditingController _prompt = TextEditingController();
+/// The filter chips. `All` first, then the three the design names.
+///
+/// EVERY ONE IS DECIDED FROM DATA THE LIBRARY ALREADY CARRIES - the spec's
+/// level, its template, the body count. A chip that filtered on something the
+/// server does not report would quietly return nothing and look like an empty
+/// library.
+enum _Filter {
+  all('All'),
+  parametric('Parametric'),
+  composed('Composed'),
+  moving('Moving');
 
-  Health? _health;
+  const _Filter(this.label);
+  final String label;
+}
+
+class _LibraryScreenState extends State<LibraryScreen> {
   List<PartSummary> _parts = const [];
   String? _problem;
   bool _loading = true;
+  _Filter _filter = _Filter.all;
 
   /// Filtering happens on the phone, not the server. The whole library is a
   /// few kilobytes of JSON and the phone already has it, so typing narrows
@@ -61,19 +226,24 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// waits on a round trip per keystroke feels broken even when it is not.
   String _query = '';
 
-  List<PartSummary> get _visible =>
-      _parts.where((p) => p.matches(_query)).toList();
+  List<PartSummary> get _visible => _parts.where((part) {
+        if (!part.matches(_query)) return false;
+        switch (_filter) {
+          case _Filter.all:
+            return true;
+          case _Filter.parametric:
+            return part.template != null && part.template!.isNotEmpty;
+          case _Filter.composed:
+            return part.template == null || part.template!.isEmpty;
+          case _Filter.moving:
+            return (part.bodies ?? 1) > 1;
+        }
+      }).toList();
 
   @override
   void initState() {
     super.initState();
     _refresh();
-  }
-
-  @override
-  void dispose() {
-    _prompt.dispose();
-    super.dispose();
   }
 
   Future<void> _refresh() async {
@@ -82,17 +252,16 @@ class _LibraryScreenState extends State<LibraryScreen> {
       _problem = null;
     });
     try {
-      final health = await _api.health();
-      final parts = await _api.parts();
+      final parts = await widget.api.parts();
       if (!mounted) return;
       setState(() {
-        _health = health;
         _parts = parts;
         _loading = false;
       });
     } catch (error) {
       if (!mounted) return;
-      // A phone that cannot see the laptop is the ordinary case, not a crash.
+      // A phone that cannot see the computer is the ordinary case, not a
+      // crash.
       setState(() {
         _problem = error is BpcadUnreachable ? error.why : error.toString();
         _loading = false;
@@ -100,435 +269,556 @@ class _LibraryScreenState extends State<LibraryScreen> {
     }
   }
 
+  void _open(PartSummary part) {
+    Navigator.of(context)
+        .push(MaterialPageRoute(
+          builder: (_) => ResultScreen(api: widget.api, name: part.name),
+        ))
+        .then((_) {
+      if (mounted) _refresh();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _refresh,
-          color: BpcadColors.live,
-          backgroundColor: BpcadColors.bezel,
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(child: _header()),
-              if (_problem != null)
-                SliverToBoxAdapter(child: _cannotReach(_problem!)),
-              if (_loading)
-                const SliverToBoxAdapter(
-                  child: Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(
+    return SafeArea(
+      bottom: false,
+      child: RefreshIndicator(
+        onRefresh: _refresh,
+        color: BpCore.phosphor,
+        backgroundColor: BpcadColors.bezel,
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(child: _header()),
+            if (_problem != null)
+              SliverToBoxAdapter(child: _unreachable(_problem!)),
+            if (_loading && _parts.isEmpty)
+              const SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(BpSpace.hall),
+                  child: Center(
+                    child: SizedBox(
+                      width: 18,
+                      height: 18,
                       child: CircularProgressIndicator(
-                          color: BpcadColors.live, strokeWidth: 2),
+                          strokeWidth: 1.5, color: BpcadColors.inkFaint),
                     ),
                   ),
                 ),
-              if (!_loading && _problem == null) ...[
-                SliverToBoxAdapter(child: _askBox()),
-                SliverToBoxAdapter(child: _searchBox()),
-                _partGrid(),
-              ],
-            ],
-          ),
+              )
+            else if (_visible.isEmpty)
+              SliverToBoxAdapter(child: _empty()),
+            SliverPadding(
+              padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
+              sliver: SliverGrid(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: BpSpace.base,
+                  crossAxisSpacing: BpSpace.base,
+                  childAspectRatio: 0.78,
+                ),
+                delegate: SliverChildBuilderDelegate(
+                  (context, index) => _Card(
+                    part: _visible[index],
+                    api: widget.api,
+                    renderVersion: widget.health?.renderVersion ?? 1,
+                    onTap: () => _open(_visible[index]),
+                  ),
+                  childCount: _visible.length,
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(child: _invitation()),
+            const SliverToBoxAdapter(child: SizedBox(height: BpSpace.room)),
+          ],
         ),
       ),
     );
   }
 
   Widget _header() => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-        child: Row(
-          children: [
-            Container(
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(6),
-                gradient: const LinearGradient(
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                  colors: [BpcadColors.live, Color(0xFF2C7F8C)],
-                ),
-              ),
-            ),
-            const SizedBox(width: 9),
-            const Text('bpcad',
-                style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: -0.2)),
-            const Spacer(),
-            if (_health != null) _machineLamp(_health!),
-          ],
-        ),
-      );
-
-  Widget _machineLamp(Health health) => Row(
-        children: [
-          Container(
-            width: 7,
-            height: 7,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: health.modelAvailable
-                  ? BpcadColors.act
-                  : BpcadColors.fail,
-            ),
-          ),
-          const SizedBox(width: 7),
-          Text(
-            health.modelAvailable ? 'model ready' : 'no model',
-            style: const TextStyle(fontSize: 12, color: BpcadColors.inkDim),
-          ),
-        ],
-      );
-
-  /// The honest empty state. It names the address it tried, because the fix is
-  /// almost always the cable or the port and the user cannot guess which.
-  Widget _cannotReach(String why) => Padding(
-        padding: const EdgeInsets.all(16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: BpcadColors.bezel,
-            border: Border.all(color: BpcadColors.edge),
-            borderRadius: BorderRadius.circular(BpRadius.card),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('No bpcad to talk to',
-                  style: TextStyle(
-                      fontSize: 17, fontWeight: FontWeight.w600)),
-              const SizedBox(height: 8),
-              Text(
-                'Tried $kDefaultServer and got: $why',
-                style: const TextStyle(
-                    fontSize: 13, color: BpcadColors.inkDim, height: 1.45),
-              ),
-              const SizedBox(height: 10),
-              const Text(
-                'The geometry engine runs on a computer, not on the phone. '
-                'Over USB, `adb reverse tcp:8765 tcp:8765` points this app at '
-                'it; on wifi, use the computer’s address with '
-                '`bpcad web --lan`.',
-                style: TextStyle(
-                    fontSize: 12.5, color: BpcadColors.inkFaint, height: 1.5),
-              ),
-              const SizedBox(height: 14),
-              FilledButton(onPressed: _refresh, child: const Text('Try again')),
-            ],
-          ),
-        ),
-      );
-
-  Widget _askBox() => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+        padding: const EdgeInsets.fromLTRB(
+            BpSpace.base, BpSpace.base, BpSpace.base, BpSpace.snug),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+            Row(children: [
+              const Text('Your parts',
+                  style: TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.title,
+                      fontWeight: FontWeight.w600,
+                      color: BpcadColors.ink)),
+              const Spacer(),
+              // Where the design puts a credits pill. The honest equivalent
+              // is the count, which is a fact.
+              Text('${_parts.length}',
+                  style: const TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.label,
+                      color: BpcadColors.inkDim,
+                      fontFeatures: [FontFeature.tabularFigures()])),
+            ]),
+            const SizedBox(height: BpSpace.base),
+            GlassSurface(
+              depth: GlassDepth.well,
+              blur: false,
+              padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
+              child: Row(children: [
+                const Icon(Icons.search, size: 16, color: BpcadColors.inkFaint),
+                const SizedBox(width: BpSpace.snug),
                 Expanded(
                   child: TextField(
-                    controller: _prompt,
-                    minLines: 2,
-                    maxLines: 4,
-                    style: const TextStyle(fontSize: 15),
+                    onChanged: (value) => setState(() => _query = value),
+                    style: const TextStyle(
+                        fontFamily: BpType.mono,
+                        fontSize: BpType.body,
+                        color: BpcadColors.ink),
                     decoration: const InputDecoration(
-                      hintText: 'Bracket to hold an 8 mm rod to a wall',
+                      filled: false,
+                      isDense: true,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding:
+                          EdgeInsets.symmetric(vertical: BpSpace.base),
+                      hintText: 'Search parts and versions',
+                      hintStyle: TextStyle(
+                          fontFamily: BpType.mono,
+                          fontSize: BpType.body,
+                          color: BpcadColors.inkFaint),
                     ),
                   ),
                 ),
-                const SizedBox(width: 10),
-                // The ONE amber thing on the screen. Amber is the commit
-                // action in this product and spending it anywhere else is how
-                // an accent stops meaning anything.
-                FilledButton(
-                  onPressed: _generate,
-                  child: const Text('Generate'),
-                ),
-              ],
+              ]),
             ),
-            if (_health != null && _health!.headline.isNotEmpty) ...[
-              const SizedBox(height: 10),
-              Text(_health!.headline,
-                  style: const TextStyle(
-                      fontSize: 12.5, color: BpcadColors.act, height: 1.45)),
-            ],
+            const SizedBox(height: BpSpace.snug),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final filter in _Filter.values) ...[
+                    _chip(filter),
+                    const SizedBox(width: 6),
+                  ],
+                ],
+              ),
+            ),
           ],
         ),
       );
 
-  Widget _searchBox() {
-    final shown = _visible.length;
-    final total = _parts.length;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 18, 16, 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          TextField(
-            onChanged: (value) => setState(() => _query = value),
-            style: const TextStyle(fontSize: 15),
-            decoration: InputDecoration(
-              hintText: 'Search parts, prompts, materials',
-              prefixIcon: const Icon(Icons.search,
-                  size: 20, color: BpcadColors.inkFaint),
-              suffixIcon: _query.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.close, size: 18),
-                      color: BpcadColors.inkFaint,
-                      onPressed: () => setState(() => _query = ''),
-                    ),
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            _query.isEmpty
-                ? 'Your parts · $total'
-                : '$shown of $total match “$_query”',
-            style: const TextStyle(
-                fontSize: 13, fontWeight: FontWeight.w600),
-          ),
-        ],
+  Widget _chip(_Filter filter) {
+    final on = _filter == filter;
+    return InkWell(
+      onTap: () => setState(() => _filter = filter),
+      borderRadius: BorderRadius.circular(BpRadius.control),
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 30),
+        padding: const EdgeInsets.symmetric(horizontal: 11),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: on ? GlassTint.active.fill : Colors.transparent,
+          border: Border.all(
+              color: on ? BpCore.phosphor : BpcadColors.edge),
+          borderRadius: BorderRadius.circular(BpRadius.control),
+        ),
+        child: Text(filter.label,
+            style: TextStyle(
+                fontFamily: BpType.mono,
+                fontSize: BpType.label,
+                color: on ? BpCore.phosphor : BpcadColors.inkDim)),
       ),
     );
   }
 
-  Widget _partGrid() {
-    final visible = _visible;
-    if (visible.isEmpty) {
-      return SliverToBoxAdapter(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-          child: Text(
-            _parts.isEmpty
-                ? 'Nothing made yet.'
-                : 'Nothing matches “$_query”.',
+  Widget _empty() => Padding(
+        padding: const EdgeInsets.all(BpSpace.loose),
+        child: Text(
+            _query.isNotEmpty || _filter != _Filter.all
+                ? 'Nothing matches that.'
+                : 'Nothing here yet. Tap the amber button and describe a part.',
             style: const TextStyle(
-                color: BpcadColors.inkFaint, fontSize: 13),
+                fontFamily: BpType.prose,
+                fontSize: BpType.body,
+                height: 1.55,
+                color: BpcadColors.inkFaint)),
+      );
+
+  Widget _unreachable(String why) => Padding(
+        padding: const EdgeInsets.fromLTRB(
+            BpSpace.base, 0, BpSpace.base, BpSpace.base),
+        child: GlassSurface(
+          tint: GlassTint.warn,
+          depth: GlassDepth.card,
+          padding: const EdgeInsets.all(BpSpace.base),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Cannot see the computer running bpcad',
+                  style: TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.label,
+                      color: BpCore.screen)),
+              const SizedBox(height: BpSpace.tight),
+              Text(why,
+                  style: const TextStyle(
+                      fontFamily: BpType.prose,
+                      fontSize: BpType.label,
+                      height: 1.5,
+                      color: BpcadColors.inkDim)),
+            ],
           ),
         ),
       );
-    }
-    return SliverPadding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 28),
-      sliver: SliverGrid.builder(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 2,
-          mainAxisSpacing: 10,
-          crossAxisSpacing: 10,
-          childAspectRatio: 0.82,
+
+  /// The photo-fit invitation. Dashed border in the reference pen, because
+  /// that is what a photographed object becomes: a measured body, not a
+  /// printed one.
+  Widget _invitation() => Padding(
+        padding: const EdgeInsets.all(BpSpace.base),
+        child: InkWell(
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(
+            builder: (_) => ComposerScreen(
+              api: widget.api,
+              health: widget.health,
+              seed: 'A cradle that fits ',
+            ),
+          )),
+          borderRadius: BorderRadius.circular(BpRadius.card),
+          child: CustomPaint(
+            painter: const _DashedBorder(colour: BpPen.ref),
+            child: Padding(
+              padding: const EdgeInsets.all(BpSpace.base),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Fit a part to something on your bench',
+                      style: TextStyle(
+                          fontFamily: BpType.mono,
+                          fontSize: BpType.label,
+                          color: BpPen.ref)),
+                  const SizedBox(height: BpSpace.tight),
+                  const Text(
+                      'Photograph the object, give it one real measurement, '
+                      'and we build a cradle or clamp around it.',
+                      style: TextStyle(
+                          fontFamily: BpType.prose,
+                          fontSize: BpType.label,
+                          height: 1.5,
+                          color: BpcadColors.inkDim)),
+                ],
+              ),
+            ),
+          ),
         ),
-        itemCount: visible.length,
-        itemBuilder: (context, index) => _partCard(visible[index]),
-      ),
-    );
+      );
+}
+
+/// A library card. Glass at the `card` depth, with the blur off.
+///
+/// THE BLUR IS OFF ON PURPOSE. This is a grid item in a scrolling list, and a
+/// BackdropFilter per card samples everything behind it on every frame of
+/// every scroll. The handoff's own note says cap the blur to the sheet, the
+/// tab bar and the floating pills for exactly this reason.
+class _Card extends StatelessWidget {
+  const _Card({
+    required this.part,
+    required this.api,
+    required this.renderVersion,
+    required this.onTap,
+  });
+
+  final PartSummary part;
+  final BpcadApi api;
+  final int renderVersion;
+  final VoidCallback onTap;
+
+  /// The status badge, bordered in its pen colour with the word spelled out.
+  /// Colour never carries status alone - brief 6.7.
+  (String, Color)? get _badge {
+    if (!part.built) return ('draft', BpcadColors.inkFaint);
+    if ((part.bodies ?? 1) > 1) return ('moves', BpPen.pass);
+    if (part.sizeMm == null) return ('no scale', BpCore.phosphor);
+    return ('ok', BpPen.pass);
   }
 
-  Widget _partCard(PartSummary part) {
-    final renderVersion = _health?.renderVersion ?? 1;
+  @override
+  Widget build(BuildContext context) {
+    final badge = _badge;
     return InkWell(
+      onTap: onTap,
       borderRadius: BorderRadius.circular(BpRadius.card),
-      onTap: () => Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => PartScreen(
-            api: _api, name: part.name, renderVersion: renderVersion),
-      )),
-      // A library card is glass at the `card` depth - it sits over the ground
-      // rather than over content, and the design lists it there by name.
-      //
-      // WITH THE BLUR OFF. This is a grid item in a scrolling list, and a
-      // BackdropFilter per card samples everything behind it every frame of
-      // every scroll. The handoff's own note says cap the blur to the sheet,
-      // the tab bar and the floating pills for exactly this reason. The card
-      // keeps the right fill and hairline; it just stops sampling.
       child: GlassSurface(
         depth: GlassDepth.card,
         blur: false,
-        padding: const EdgeInsets.all(BpSpace.snug),
+        padding: const EdgeInsets.all(5),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Expanded(
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(7),
-                child: Container(
-                  color: BpcadColors.bed,
-                  width: double.infinity,
-                  // A DRAFT HAS NO MESH, so it has no render, and asking for
-                  // one is a guaranteed 404 that shows as a broken card. The
-                  // library payload says `built` and the app used to ignore
-                  // it.
-                  child: !part.built
-                      ? const Center(
-                          child: Padding(
-                            padding: EdgeInsets.all(8),
-                            child: Text(
-                              'draft\nnot built',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                  fontSize: 11.5,
-                                  height: 1.4,
-                                  color: BpcadColors.inkFaint),
-                            ),
-                          ),
-                        )
-                      : Image.network(
-                    _api
-                        .frame(part.name, 3,
-                            width: 420, renderVersion: renderVersion)
-                        .toString(),
-                    fit: BoxFit.contain,
-                    // A render is made on demand and a big mesh takes
-                    // seconds. Saying nothing looks like a broken image.
-                    loadingBuilder: (context, child, progress) =>
-                        progress == null
-                            ? child
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(BpRadius.control),
+                      // The thumbnail band sits on `case` with its own finer
+                      // graticule, so a render with a transparent background
+                      // has the build plate behind it rather than the card.
+                      child: CustomPaint(
+                        painter: const _FineGrid(),
+                        child: part.built
+                            ? Image.network(
+                                api
+                                    .frame(part.name, 3,
+                                        width: 320,
+                                        renderVersion: renderVersion)
+                                    .toString(),
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, __, ___) =>
+                                    const SizedBox.shrink(),
+                              )
                             : const Center(
-                                child: SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 1.5,
-                                      color: BpcadColors.inkFaint),
-                                ),
+                                child: Text('draft\nnot built',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                        fontFamily: BpType.mono,
+                                        fontSize: 9.5,
+                                        height: 1.5,
+                                        color: BpcadColors.inkFaint)),
                               ),
-                          errorBuilder: (context, error, stack) => const Center(
-                            child: Text('no render',
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: BpcadColors.inkFaint)),
-                          ),
-                        ),
-                ),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    left: 4,
+                    top: 4,
+                    child: Text(
+                        part.template?.isNotEmpty == true
+                            ? 'parametric'
+                            : 'composed',
+                        style: const TextStyle(
+                            fontFamily: BpType.mono,
+                            fontSize: 9,
+                            color: BpcadColors.inkFaint)),
+                  ),
+                  if (badge != null)
+                    Positioned(
+                      right: 4,
+                      bottom: 4,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 5, vertical: 2),
+                        decoration:
+                            BoxDecoration(border: Border.all(color: badge.$2)),
+                        child: Text(badge.$1,
+                            style: TextStyle(
+                                fontFamily: BpType.mono,
+                                fontSize: 9,
+                                color: badge.$2)),
+                      ),
+                    ),
+                ],
               ),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 5),
             Text(part.name,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 12.5)),
-            const SizedBox(height: 2),
-            // Dimensions are mono and tabular, as everywhere else in this
-            // product: a 1 must not be mistakable for a 7 at a glance.
-            Text(part.envelope, style: BpcadText.dimension),
+                style: const TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: BpType.label,
+                    color: BpcadColors.ink)),
+            Text(part.envelope,
+                style: const TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: 9.5,
+                    color: BpPen.ref,
+                    fontFeatures: [FontFeature.tabularFigures()])),
           ],
         ),
       ),
     );
   }
+}
 
-  Future<void> _generate() async {
-    final request = _prompt.text.trim();
-    if (request.isEmpty) return;
-    final messenger = ScaffoldMessenger.of(context);
-    try {
-      final job = await _api.generate(request);
-      if (!mounted) return;
-      await Navigator.of(context).push(MaterialPageRoute(
-        builder: (_) => GeneratingScreen(api: _api, jobId: job, request: request),
-      ));
-      if (mounted) _refresh();
-    } catch (error) {
-      messenger.showSnackBar(SnackBar(content: Text('$error')));
+/// The thumbnail's own graticule. 13px - half the app ground's pitch, per the
+/// design, so a small render still reads as sitting on a plate.
+class _FineGrid extends CustomPainter {
+  const _FineGrid();
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.drawRect(Offset.zero & size, Paint()..color = BpCore.caseColor);
+    final line = Paint()
+      ..color = BpCore.grid
+      ..strokeWidth = 1;
+    for (double x = 0; x < size.width; x += 13) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), line);
+    }
+    for (double y = 0; y < size.height; y += 13) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
     }
   }
-}
-
-/// Progress for a run that takes minutes. Brief 11.7's rule, on a phone:
-/// state the wait plainly, because somebody who is not told concludes it hung.
-class GeneratingScreen extends StatefulWidget {
-  const GeneratingScreen(
-      {super.key, required this.api, required this.jobId, required this.request});
-
-  final BpcadApi api;
-  final String jobId;
-  final String request;
 
   @override
-  State<GeneratingScreen> createState() => _GeneratingScreenState();
+  bool shouldRepaint(_FineGrid oldDelegate) => false;
 }
 
-class _GeneratingScreenState extends State<GeneratingScreen> {
-  final List<String> _log = [];
-  bool _done = false;
-  late final Stopwatch _clock = Stopwatch()..start();
+class _DashedBorder extends CustomPainter {
+  const _DashedBorder({required this.colour});
+
+  final Color colour;
 
   @override
-  void initState() {
-    super.initState();
-    widget.api.events(widget.jobId).listen(
-      (event) {
-        if (!mounted) return;
-        setState(() {
-          if (event.text.isNotEmpty) _log.insert(0, event.text);
-          if (event.done) _done = true;
-        });
-      },
-      onError: (error) {
-        if (!mounted) return;
-        setState(() => _log.insert(0, 'lost the connection: $error'));
-      },
-      onDone: () {
-        if (mounted) setState(() => _done = true);
-      },
-    );
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = colour.withValues(alpha: 0.5)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1;
+    const dash = 5.0, gap = 4.0, radius = BpRadius.card;
+
+    final rect = RRect.fromRectAndRadius(
+        Offset.zero & size, const Radius.circular(radius));
+    final path = Path()..addRRect(rect);
+    for (final metric in path.computeMetrics()) {
+      double at = 0;
+      while (at < metric.length) {
+        final end = (at + dash).clamp(0.0, metric.length);
+        canvas.drawPath(metric.extractPath(at, end), paint);
+        at = end + gap;
+      }
+    }
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(title: Text(_done ? 'Done' : 'Working')),
-        body: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.all(16),
+  bool shouldRepaint(_DashedBorder oldDelegate) =>
+      oldDelegate.colour != colour;
+}
+
+/// The second tab. What the design calls Account, told honestly.
+///
+/// There is no account, no credit ledger and no billing, and the handoff lists
+/// store IAP rules as an open blocker that must not be built against. What
+/// this machine IS doing is a real thing worth a screen: which computer is
+/// answering, what it can do, how long a part takes on it, and the printer
+/// profile every part is checked against.
+class MachineScreen extends StatelessWidget {
+  const MachineScreen({super.key, required this.api, this.health});
+
+  final BpcadApi api;
+  final Health? health;
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      bottom: false,
+      child: ListView(
+        padding: const EdgeInsets.all(BpSpace.base),
+        children: [
+          const Text('This machine',
+              style: TextStyle(
+                  fontFamily: BpType.mono,
+                  fontSize: BpType.title,
+                  fontWeight: FontWeight.w600,
+                  color: BpcadColors.ink)),
+          const SizedBox(height: BpSpace.base),
+          GlassSurface(
+            depth: GlassDepth.card,
+            padding: const EdgeInsets.all(BpSpace.base),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(widget.request,
-                    style: const TextStyle(fontSize: 15, height: 1.4)),
-                const SizedBox(height: 14),
-                if (!_done)
-                  const LinearProgressIndicator(
-                      color: BpcadColors.live,
-                      backgroundColor: BpcadColors.edge,
-                      minHeight: 2),
-                const SizedBox(height: 14),
-                Text(
-                  _done
-                      ? 'Finished in ${_clock.elapsed.inSeconds}s'
-                      : 'A prompt takes minutes on a CPU. '
-                          '${_clock.elapsed.inSeconds}s so far.',
-                  style: const TextStyle(
-                      fontSize: 13, color: BpcadColors.inkDim),
-                ),
-                const SizedBox(height: 16),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: _log.length,
-                    itemBuilder: (context, index) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 3),
-                      child: Text(_log[index],
-                          style: const TextStyle(
-                              fontFamily: 'monospace',
-                              fontSize: 12,
-                              color: BpcadColors.inkDim)),
-                    ),
-                  ),
-                ),
-                if (_done)
-                  SizedBox(
-                    width: double.infinity,
-                    child: FilledButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      child: const Text('Back to the library'),
-                    ),
-                  ),
+                _row('server', api.baseUrl),
+                _row('model',
+                    health == null
+                        ? 'not answering'
+                        : health!.modelAvailable
+                            ? health!.tier
+                            : 'none'),
+                if (health != null && health!.promptSeconds > 0)
+                  _row('a part takes',
+                      health!.promptSeconds > 90
+                          ? '~${(health!.promptSeconds / 60).round()} min'
+                          : '~${health!.promptSeconds} s'),
+                _row('printer', health?.printer ?? '—'),
+                if (health?.bedMm != null)
+                  _row('bed',
+                      '${health!.bedMm!.map((v) => v.toStringAsFixed(0)).join(' × ')} mm'),
+                if (health != null && health!.materials.isNotEmpty)
+                  _row('materials', health!.materials.join(', ')),
               ],
             ),
           ),
+          if (health?.headline.isNotEmpty == true) ...[
+            const SizedBox(height: BpSpace.base),
+            GlassSurface(
+              tint: GlassTint.warn,
+              depth: GlassDepth.card,
+              padding: const EdgeInsets.all(BpSpace.base),
+              // THE SERVER'S OWN SENTENCE, not a paraphrase. It measured how
+              // long a part takes on that hardware and the phone did not.
+              child: Text(health!.headline,
+                  style: const TextStyle(
+                      fontFamily: BpType.prose,
+                      fontSize: BpType.label,
+                      height: 1.55,
+                      color: BpcadColors.inkDim)),
+            ),
+          ],
+          const SizedBox(height: BpSpace.base),
+          GlassSurface(
+            depth: GlassDepth.panel,
+            padding: const EdgeInsets.all(BpSpace.base),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: const [
+                Text('Accounts, credits and plans',
+                    style: TextStyle(
+                        fontFamily: BpType.mono,
+                        fontSize: BpType.label,
+                        color: BpcadColors.ink)),
+                SizedBox(height: BpSpace.tight),
+                Text(
+                    'Not built. bpcad runs on your own computer and every part '
+                    'you make is on its disk — there is nothing to meter yet, '
+                    'and a balance shown here would be a number nobody '
+                    'measured.',
+                    style: TextStyle(
+                        fontFamily: BpType.prose,
+                        fontSize: BpType.label,
+                        height: 1.55,
+                        color: BpcadColors.inkDim)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(String key, String value) => Padding(
+        padding: const EdgeInsets.only(bottom: BpSpace.snug),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 96,
+              child: Text(key,
+                  style: const TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.label,
+                      color: BpcadColors.inkDim)),
+            ),
+            Expanded(
+              child: Text(value,
+                  style: const TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.label,
+                      color: BpPen.ref,
+                      fontFeatures: [FontFeature.tabularFigures()])),
+            ),
+          ],
         ),
       );
 }

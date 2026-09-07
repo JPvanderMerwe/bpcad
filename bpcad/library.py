@@ -54,6 +54,19 @@ class LibraryEntry:
     images: dict[str, Path] = field(default_factory=dict)
     volume_cm3: float = 0.0
     envelope_mm: tuple[float, float, float] | None = None
+
+    # HOW MANY SEPARATE SOLIDS, from the stored regression.
+    #
+    # For anything with a moving part this is the fact that decides whether it
+    # works: two bodies turn, one is fused solid. It was already being read out
+    # of regression.json two lines below the envelope and thrown away, so the
+    # library could not tell a working hinge from a hinge-shaped brick - and
+    # neither could the phone's `Moving` filter or its `moves` badge.
+    #
+    # None means "not recorded", which is different from 1. A part built
+    # before the regression baseline carried a body count has no answer, and
+    # saying "1 piece" for it would be a guess.
+    body_count: int | None = None
     versions: int = 0
     modified: float = 0.0
 
@@ -183,6 +196,8 @@ def read_entry(directory: Path) -> LibraryEntry | None:
             box = r.get("bbox_mm")
             if box and len(box) == 3:
                 entry.envelope_mm = tuple(float(v) for v in box)
+            if r.get("body_count") is not None:
+                entry.body_count = int(r["body_count"])
         except Exception:
             pass
 

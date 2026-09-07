@@ -8,24 +8,49 @@
 
 import 'package:bpcad_app/api.dart';
 import 'package:bpcad_app/main.dart';
+import 'package:bpcad_app/tokens.dart';
 import 'package:flutter/material.dart';
-import 'package:bpcad_app/part_screen.dart';
+import 'package:bpcad_app/result_screen.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('it starts with no server and says what it tried',
+  testWidgets('the boot self-test names the address it could not reach',
       (WidgetTester tester) async {
+    // THE SELF-TEST IS NOT A SCRIPT, and this is the test that keeps it that
+    // way. The design shows `self-test .... ok` and a profile and a link, and
+    // the obvious build prints those four strings - which would be a
+    // decoration saying "ok" while nothing works, on a phone whose cable is
+    // out, which is the single most likely way this screen is ever seen.
+    //
+    // So with no server: it still says bpcad, it says plainly that nothing
+    // answered, and it NAMES THE ADDRESS. The fix is nearly always the cable
+    // or the port and the user cannot guess which.
     await tester.pumpWidget(const BpcadApp());
-    // The health call fails against nothing; give it a moment to come back.
     await tester.pump(const Duration(seconds: 1));
-    await tester.pumpAndSettle(const Duration(seconds: 2));
+    // Not pumpAndSettle: the boot sweep loops for ever by design, and
+    // settling waits for animations to stop.
+    await tester.pump(const Duration(seconds: 2));
 
     expect(find.text('bpcad'), findsOneWidget);
-    // A phone that cannot see the laptop is the ordinary case, and the screen
-    // has to name the address it tried - the fix is nearly always the cable or
-    // the port, and the user cannot guess which.
-    expect(find.textContaining('No bpcad to talk to'), findsOneWidget);
+    expect(find.textContaining('not answering'), findsOneWidget);
     expect(find.textContaining(kDefaultServer), findsOneWidget);
+
+    // And it lets you in anyway: a bpcad with no server still opens the parts
+    // already on the phone, and a dead button would say otherwise.
+    expect(find.text('Carry on anyway'), findsOneWidget);
+  });
+
+  testWidgets('the self-test reports a failure as a failure',
+      (WidgetTester tester) async {
+    // The counterpart to the above. Whatever the screen prints for `link`, it
+    // must not be the pass pen when nothing answered - a green "ok" beside a
+    // dead server is the exact lie this screen exists to avoid.
+    await tester.pumpWidget(const BpcadApp());
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(seconds: 2));
+
+    final noAnswer = tester.widget<Text>(find.text('no answer'));
+    expect(noAnswer.style?.color, BpPen.fail);
   });
 
   test('a part with no build says so instead of showing zeros', () {
@@ -76,21 +101,24 @@ void main() {
     expect(api.viewer('rod clamp').toString(), contains('part=rod%20clamp'));
   });
 
-  testWidgets('the part screen builds without touching MediaQuery too early',
+  testWidgets('the result screen builds without touching MediaQuery too early',
       (WidgetTester tester) async {
     // THE REGRESSION. precacheImage reads MediaQuery off the context, and
     // calling it from initState threw on every single tap of a library card:
     // "dependOnInheritedWidgetOfExactType<MediaQuery>() was called before
-    // _PartScreenState.initState() completed" - a full red screen instead of
-    // the part.
+    // initState() completed" - a full red screen instead of the part.
+    //
+    // Now pinned on ResultScreen, which is the screen that ships and carries
+    // the same didChangeDependencies fix. The old PartScreen it was written
+    // against is gone: a test guarding a bug on a deleted file guards
+    // nothing, and this bug is one a redesign could easily reintroduce.
     //
     // No server is needed to catch it. The failure happened while the widget
     // was being created, before any image request went out.
     await tester.pumpWidget(MaterialApp(
-      home: PartScreen(
+      home: ResultScreen(
         api: BpcadApi('http://localhost:8765'),
         name: 'hinge_pip',
-        renderVersion: 2,
       ),
     ));
     await tester.pump(const Duration(milliseconds: 100));
