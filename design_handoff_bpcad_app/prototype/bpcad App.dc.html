@@ -1,0 +1,1140 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"}}</script>
+<script type="module" src="part-viewport.js?v=2"></script>
+<style>
+html,body{margin:0;background:#0B0F0D;color:#DCE3DC;-webkit-font-smoothing:antialiased}
+*{box-sizing:border-box}
+a{color:#FFB000;text-decoration:none}
+a:hover{color:#FFC947}
+input,textarea,button,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid #FFB000;outline-offset:2px}
+::selection{background:rgba(255,176,0,.28)}
+input[type=range]{-webkit-appearance:none;appearance:none;height:20px;background:transparent}
+input[type=range]::-webkit-slider-runnable-track{height:2px;background:#2A322D}
+input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;margin-top:-5px;background:#FFB000;border-radius:2px}
+input[type=range]::-moz-range-track{height:2px;background:#2A322D}
+input[type=range]::-moz-range-thumb{width:12px;height:12px;background:#FFB000;border:0;border-radius:2px}
+@keyframes bpSweep{0%{transform:translateY(-6px);opacity:0}12%{opacity:1}88%{opacity:1}100%{transform:translateY(300px);opacity:0}}
+@keyframes bpDraw{0%{stroke-dashoffset:900}70%{stroke-dashoffset:0}100%{stroke-dashoffset:0}}
+@keyframes bpBlink{0%,49%{opacity:1}50%,100%{opacity:0}}
+@keyframes bpSheet{from{transform:translateY(18px);opacity:0}to{transform:translateY(0);opacity:1}}
+@keyframes bpFade{from{opacity:0}to{opacity:1}}
+@keyframes bpTick{0%{opacity:.25}50%{opacity:1}100%{opacity:.25}}
+@keyframes bpScan{from{transform:translateY(-100%)}to{transform:translateY(400%)}}
+@media (prefers-reduced-motion: reduce){*{animation-duration:.001s !important;animation-iteration-count:1 !important}}
+</style>
+</helmet>
+
+<div style="min-height:100vh;background:#0B0F0D;background-image:linear-gradient(#141a17 1px,transparent 1px),linear-gradient(90deg,#141a17 1px,transparent 1px);background-size:48px 48px;padding:22px 22px 64px">
+
+  <header style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;max-width:1560px;margin:0 auto 22px">
+    <img src="assets/app-icon.png" alt="bpcad" width="38" height="38" style="width:38px;height:38px;border-radius:8px;border:1px solid #2A322D;display:block">
+    <div style="display:flex;flex-direction:column;gap:2px">
+      <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:21px;font-weight:600;letter-spacing:-.01em;color:#DCE3DC">bpcad</div>
+      <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.04em">app design — retro technical CAD — v3 brief</div>
+    </div>
+    <div style="flex:1"></div>
+    <div style="display:flex;gap:2px;padding:3px;border:1px solid rgba(220,227,220,.12);border-radius:9px;background:rgba(30,38,34,0.5);backdrop-filter:blur(18px) saturate(150%);box-shadow:inset 0 1px 0 rgba(220,227,220,.08)">
+      <button onClick="{{ toMobile }}" style="{{ tabMobileStyle }}">Mobile</button>
+      <button onClick="{{ toWeb }}" style="{{ tabWebStyle }}">Web workspace</button>
+    </div>
+  </header>
+
+  <sc-if value="{{ isMobile }}" hint-placeholder-val="{{ true }}">
+  <div style="display:flex;flex-wrap:wrap;gap:34px;justify-content:center;align-items:flex-start;max-width:1560px;margin:0 auto">
+
+    <nav style="width:236px;flex:none;display:flex;flex-direction:column;gap:2px;padding-top:6px">
+      <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em;padding:0 0 10px 2px">flow index</div>
+      <sc-for list="{{ rail }}" as="item" hint-placeholder-count="10">
+        <button onClick="{{ item.go }}" style="{{ item.style }}">
+          <span style="font-variant-numeric:tabular-nums;color:#7C8880;width:18px;display:inline-block">{{ item.num }}</span>
+          <span>{{ item.label }}</span>
+        </button>
+      </sc-for>
+      <div style="margin-top:20px;padding:12px;border:1px solid rgba(220,227,220,.12);border-radius:10px;background:rgba(30,38,34,0.4);backdrop-filter:blur(16px) saturate(150%);box-shadow:inset 0 1px 0 rgba(220,227,220,.08);display:flex;flex-direction:column;gap:9px">
+        <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em">viewport</div>
+        <button onClick="{{ toggleDims }}" style="{{ dimsBtn }}">Dimensions</button>
+        <button onClick="{{ toggleMotion }}" style="{{ motionBtn }}">Joint motion</button>
+        <button onClick="{{ toggleScan }}" style="{{ scanBtn }}">Phosphor bloom</button>
+      </div>
+      <p style="font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.55;color:#7C8880;margin:16px 2px 0;text-wrap:pretty">The phone is live. Drag inside the viewport to orbit, scroll to zoom, and use the command line at the bottom of the workspace — try <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;color:#DCE3DC">wall 3</span> or <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;color:#DCE3DC">clearance ?</span>.</p>
+    </nav>
+
+    <div style="flex:none;position:relative;width:412px;height:866px;padding:11px;border-radius:44px;background:rgba(30,38,34,0.55);backdrop-filter:blur(24px) saturate(150%);border:1px solid rgba(220,227,220,.14);box-shadow:0 40px 90px rgba(0,0,0,.6), inset 0 1px 0 rgba(220,227,220,.10)">
+      <div style="position:relative;width:390px;height:844px;border-radius:34px;overflow:hidden;background:#0B0F0D;background-image:radial-gradient(120% 60% at 78% 4%, rgba(255,176,0,.16), transparent 62%),radial-gradient(90% 44% at 10% 96%, rgba(53,198,232,.10), transparent 66%);display:flex;flex-direction:column">
+
+        <div style="position:absolute;top:0;left:0;right:0;height:44px;z-index:40;display:flex;align-items:flex-end;justify-content:space-between;padding:0 22px 8px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px;color:#DCE3DC;pointer-events:none">
+          <span style="font-variant-numeric:tabular-nums">9:41</span>
+          <span style="display:flex;gap:5px;align-items:center;color:#7C8880"><span>LTE</span><span style="width:20px;height:9px;border:1px solid #7C8880;border-radius:2px;display:inline-block;position:relative"><span style="position:absolute;inset:1.5px;right:6px;background:#5BE37D;display:block"></span></span></span>
+        </div>
+
+        <!-- BOOT -->
+        <sc-if value="{{ atBoot }}" hint-placeholder-val="{{ true }}">
+          <div style="flex:1;position:relative;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:0 30px;overflow:hidden;background:#0B0F0D">
+            <div style="position:absolute;inset:0;background-image:linear-gradient(#141a17 1px,transparent 1px),linear-gradient(90deg,#141a17 1px,transparent 1px);background-size:26px 26px;opacity:.9"></div>
+            <div style="position:absolute;left:0;right:0;top:180px;height:1px;background:linear-gradient(90deg,transparent,#FFB000,transparent);animation:bpSweep 2.4s cubic-bezier(.5,0,.4,1) infinite"></div>
+            <img src="assets/app-icon.png" alt="" width="72" height="72" style="width:72px;height:72px;border-radius:14px;position:relative;animation:bpFade .6s ease both">
+            <div style="position:relative;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:27px;font-weight:600;margin-top:22px;letter-spacing:-.01em">bpcad</div>
+            <div style="position:relative;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#7C8880;margin-top:6px;line-height:1.9">
+              <div>self-test .... <span style="color:#5BE37D">ok</span></div>
+              <div>kernel ....... <span style="color:#5BE37D">cadquery</span></div>
+              <div>profile ...... <span style="color:#FFB000">sparkx i7</span></div>
+              <div style="animation:bpTick 1.4s infinite">link ......... api.bpcad</div>
+            </div>
+            <button onClick="{{ goOnboard }}" style="position:relative;margin-top:38px;width:100%;height:48px;background:#FFB000;color:#0B0F0D;border:0;border-radius:10px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13.5px;font-weight:600;cursor:pointer" style-hover="background:#FFC13A">Start</button>
+            <div style="position:absolute;bottom:26px;left:30px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#4A554E">bit primitive — 0.9.4</div>
+          </div>
+        </sc-if>
+
+        <!-- ONBOARDING: printer profile -->
+        <sc-if value="{{ atOnboard }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;display:flex;flex-direction:column;padding:56px 22px 22px;overflow:auto">
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#FFB000;letter-spacing:.08em">step 2 of 2</div>
+            <h1 style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:21px;font-weight:600;margin:8px 0 6px;letter-spacing:-.01em">Your printer</h1>
+            <p style="font-family:Inter,system-ui,sans-serif;font-size:13.5px;line-height:1.55;color:#7C8880;margin:0 0 22px;text-wrap:pretty">Set this once. Every part gets checked against it — bed fit, wall thickness, joint clearance — and we never ask again.</p>
+
+            <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:18px">
+              <label style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#7C8880">Printer</label>
+              <div style="display:flex;gap:8px;align-items:center;padding:12px;border:1px solid rgba(255,176,0,.7);border-radius:8px;background:rgba(30,38,34,0.44);backdrop-filter:blur(18px) saturate(150%)">
+                <span style="width:8px;height:8px;background:#FFB000;display:block"></span>
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13.5px">SPARKX i7</span>
+                <span style="flex:1"></span>
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;font-variant-numeric:tabular-nums">256 × 256 × 256</span>
+              </div>
+              <button style="text-align:left;padding:11px 12px;border:1px solid #2A322D;border-radius:3px;background:transparent;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13.5px;color:#7C8880;cursor:pointer" style-hover="border-color:#4A554E;color:#DCE3DC">Another printer…</button>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <label style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#7C8880">Nozzle</label>
+                <div style="display:flex;border:1px solid rgba(220,227,220,.12);border-radius:8px;overflow:hidden;background:rgba(30,38,34,0.4);backdrop-filter:blur(14px) saturate(150%)">
+                  <span style="flex:1;text-align:center;padding:10px 0;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#7C8880">0.4</span>
+                  <span style="flex:1;text-align:center;padding:10px 0;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;background:#FFB000;color:#0B0F0D;font-weight:600">0.8</span>
+                  <span style="flex:1;text-align:center;padding:10px 0;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#7C8880">1.0</span>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:7px">
+                <label style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#7C8880">Layer</label>
+                <div style="padding:10px 12px;border:1px solid rgba(220,227,220,.12);border-radius:8px;background:rgba(30,38,34,0.4);backdrop-filter:blur(14px) saturate(150%);font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;font-variant-numeric:tabular-nums">0.20 mm</div>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:7px;margin-bottom:18px">
+              <label style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#7C8880">Material</label>
+              <div style="display:flex;gap:7px;flex-wrap:wrap">
+                <span style="padding:8px 12px;border:1px solid #FFB000;color:#FFB000;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px">PLA</span>
+                <span style="padding:8px 12px;border:1px solid #2A322D;color:#7C8880;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px">PETG</span>
+                <span style="padding:8px 12px;border:1px solid #2A322D;color:#7C8880;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px">ABS</span>
+                <span style="padding:8px 12px;border:1px solid #2A322D;color:#7C8880;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px">TPU</span>
+              </div>
+            </div>
+
+            <div style="padding:14px;border:1px solid rgba(255,176,0,.7);border-radius:12px;background:rgba(255,176,0,.10);backdrop-filter:blur(18px) saturate(150%);box-shadow:inset 0 1px 0 rgba(220,227,220,.08);display:flex;flex-direction:column;gap:9px">
+              <div style="display:flex;align-items:center;gap:8px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#FFB000">
+                <span style="width:12px;height:12px;border:1px solid #FFB000;display:grid;place-items:center;font-size:9px;line-height:1">!</span>
+                <span>Joint clearance not calibrated</span>
+              </div>
+              <p style="font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.55;color:#DCE3DC;margin:0">Until you print the calibration strip we use a conservative 0.35 mm gap. Moving parts will work, but looser than they need to be.</p>
+              <button onClick="{{ goHome }}" style="align-self:flex-start;padding:9px 14px;background:transparent;border:1px solid #FFB000;color:#FFB000;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;cursor:pointer" style-hover="background:rgba(255,176,0,.14)">Get the calibration strip</button>
+            </div>
+
+            <div style="flex:1;min-height:22px"></div>
+            <button onClick="{{ goHome }}" style="width:100%;height:48px;background:#FFB000;color:#0B0F0D;border:0;border-radius:10px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13.5px;font-weight:600;cursor:pointer" style-hover="background:#FFC13A">Save profile</button>
+            <button onClick="{{ goHome }}" style="width:100%;height:40px;margin-top:8px;background:transparent;border:0;color:#7C8880;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;cursor:pointer" style-hover="color:#DCE3DC">Skip for now</button>
+          </div>
+        </sc-if>
+
+        <!-- HOME / LIBRARY -->
+        <sc-if value="{{ atHome }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;display:flex;flex-direction:column;overflow:auto;padding:52px 0 96px">
+            <div style="display:flex;align-items:center;gap:10px;padding:0 20px 14px">
+              <h1 style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:21px;font-weight:600;margin:0;letter-spacing:-.01em">Your parts</h1>
+              <span style="flex:1"></span>
+              <button onClick="{{ goProfile }}" style="display:flex;align-items:center;gap:6px;padding:6px 10px;border:1px solid rgba(220,227,220,.12);background:rgba(30,38,34,0.46);backdrop-filter:blur(16px) saturate(150%);border-radius:7px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;cursor:pointer" style-hover="border-color:#FFB000">
+                <span style="width:7px;height:7px;background:#FFB000;display:block"></span>
+                <span style="font-variant-numeric:tabular-nums">{{ credits }}</span>
+              </button>
+            </div>
+            <div style="padding:0 20px 16px">
+              <div style="display:flex;align-items:center;gap:9px;padding:11px 12px;border:1px solid rgba(220,227,220,.12);border-radius:8px;background:rgba(30,38,34,0.4);backdrop-filter:blur(16px) saturate(150%)">
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;color:#7C8880;font-size:13.5px">/</span>
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;color:#7C8880;font-size:13.5px">Search parts and versions</span>
+              </div>
+            </div>
+            <div style="display:flex;gap:7px;padding:0 20px 18px;overflow:auto">
+              <span style="flex:none;padding:7px 11px;border:1px solid #FFB000;color:#FFB000;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px">All</span>
+              <span style="flex:none;padding:7px 11px;border:1px solid #2A322D;color:#7C8880;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px">Parametric</span>
+              <span style="flex:none;padding:7px 11px;border:1px solid #2A322D;color:#7C8880;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px">From photo</span>
+              <span style="flex:none;padding:7px 11px;border:1px solid #2A322D;color:#7C8880;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px">Moving</span>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:0 20px">
+              <sc-for list="{{ parts }}" as="p" hint-placeholder-count="6">
+                <button onClick="{{ p.open }}" style="display:flex;flex-direction:column;gap:0;padding:0;text-align:left;background:rgba(30,38,34,0.42);backdrop-filter:blur(14px) saturate(150%);border:1px solid rgba(220,227,220,.10);border-radius:10px;overflow:hidden;cursor:pointer;box-shadow:inset 0 1px 0 rgba(220,227,220,.07)" style-hover="border-color:#4A554E">
+                  <span style="{{ p.thumbStyle }}">
+                    <span style="{{ p.glyphStyle }}"></span>
+                    <span style="position:absolute;top:7px;left:8px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;color:#7C8880;letter-spacing:.06em">{{ p.kind }}</span>
+                    <span style="{{ p.badgeStyle }}">{{ p.badge }}</span>
+                  </span>
+                  <span style="display:flex;flex-direction:column;gap:3px;padding:10px 11px 12px">
+                    <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#DCE3DC">{{ p.name }}</span>
+                    <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;font-variant-numeric:tabular-nums">{{ p.meta }}</span>
+                  </span>
+                </button>
+              </sc-for>
+            </div>
+            <div style="padding:20px 20px 0">
+              <div style="padding:16px;border:1px dashed rgba(53,198,232,.40);border-radius:12px;background:rgba(30,38,34,0.34);backdrop-filter:blur(14px) saturate(150%);display:flex;flex-direction:column;gap:8px">
+                <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#35C6E8">Fit a part to something on your bench</div>
+                <p style="font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.55;color:#7C8880;margin:0">Photograph the object, give it one real measurement, and we build a cradle or clamp around it.</p>
+                <button onClick="{{ goCreate }}" style="align-self:flex-start;padding:8px 12px;background:transparent;border:1px solid #35C6E8;color:#35C6E8;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;cursor:pointer" style-hover="background:rgba(53,198,232,.12)">Start from a photo</button>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- CREATE / COMPOSER -->
+        <sc-if value="{{ atCreate }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;display:flex;flex-direction:column;overflow:auto;padding:52px 0 20px">
+            <div style="display:flex;align-items:center;gap:12px;padding:0 20px 16px">
+              <button onClick="{{ goHome }}" style="background:transparent;border:0;color:#7C8880;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13.5px;cursor:pointer;padding:0" style-hover="color:#DCE3DC">←</button>
+              <h1 style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:17px;font-weight:600;margin:0">New part</h1>
+            </div>
+
+            <div style="margin:0 20px;border:1px solid rgba(255,176,0,.65);border-radius:12px;background:rgba(30,38,34,0.44);backdrop-filter:blur(20px) saturate(150%);display:flex;flex-direction:column;box-shadow:0 10px 30px rgba(0,0,0,.35), inset 0 1px 0 rgba(220,227,220,.08)">
+              <textarea value="{{ prompt }}" onChange="{{ setPrompt }}" rows="4" style="background:transparent;border:0;resize:none;padding:14px;font-family:Inter,system-ui,sans-serif;font-size:15px;line-height:1.5;color:#DCE3DC;outline:none"></textarea>
+              <div style="display:flex;gap:8px;padding:0 12px 12px;overflow:auto">
+                <span style="flex:none;width:56px;height:56px;border:1px solid #35C6E8;border-radius:3px;background:#0B0F0D;display:grid;place-items:center;position:relative">
+                  <span style="width:30px;height:14px;border:1px solid #35C6E8;border-radius:7px;display:block"></span>
+                  <span style="position:absolute;bottom:3px;right:4px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:8.5px;color:#35C6E8">1</span>
+                </span>
+                <button style="flex:none;width:56px;height:56px;border:1px solid #2A322D;border-radius:3px;background:transparent;color:#7C8880;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px" style-hover="border-color:#FFB000;color:#FFB000">
+                  <span style="width:16px;height:12px;border:1px solid currentColor;border-radius:2px;display:block"></span>
+                  <span>camera</span>
+                </button>
+                <button style="flex:none;width:56px;height:56px;border:1px solid #2A322D;border-radius:3px;background:transparent;color:#7C8880;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10px;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px" style-hover="border-color:#FFB000;color:#FFB000">
+                  <span style="font-size:15px;line-height:1">+</span>
+                  <span>files</span>
+                </button>
+              </div>
+            </div>
+
+            <div style="margin:14px 20px 0;padding:12px;border:1px solid rgba(53,198,232,.35);border-radius:12px;background:rgba(53,198,232,.10);backdrop-filter:blur(18px) saturate(150%);box-shadow:inset 0 1px 0 rgba(220,227,220,.08);display:flex;gap:10px;align-items:flex-start">
+              <span style="width:14px;height:14px;flex:none;margin-top:2px;border:1px solid #35C6E8;color:#35C6E8;display:grid;place-items:center;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9px">B</span>
+              <div style="display:flex;flex-direction:column;gap:4px">
+                <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#DCE3DC">Reading this as a functional part</div>
+                <div style="font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.5;color:#7C8880">Parametric solid, dimension-accurate, editable. The photo becomes a reference body — it is measured, not printed.</div>
+              </div>
+            </div>
+
+            <div style="padding:18px 20px 0">
+              <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em;margin-bottom:9px">we picked these up</div>
+              <div style="display:flex;flex-wrap:wrap;gap:7px">
+                <sc-for list="{{ picked }}" as="c" hint-placeholder-count="4">
+                  <span style="padding:7px 10px;border:1px solid #5BE37D;color:#5BE37D;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;font-variant-numeric:tabular-nums">{{ c }}</span>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="padding:18px 20px 0">
+              <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em;margin-bottom:9px">we assumed — tap to change</div>
+              <div style="display:flex;flex-direction:column">
+                <sc-for list="{{ assumptions }}" as="a" hint-placeholder-count="3">
+                  <button style="display:flex;align-items:center;gap:10px;padding:11px 0;background:transparent;border:0;border-bottom:1px solid #1c2320;text-align:left;cursor:pointer" style-hover="border-color:#4A554E">
+                    <span style="width:8px;height:8px;background:#FFB000;flex:none;display:block"></span>
+                    <span style="flex:1;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#DCE3DC">{{ a.label }}</span>
+                    <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#FFB000;font-variant-numeric:tabular-nums">{{ a.value }}</span>
+                  </button>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="flex:1;min-height:20px"></div>
+            <div style="padding:16px 20px 0;display:flex;flex-direction:column;gap:8px">
+              <button onClick="{{ goGen }}" style="width:100%;height:52px;background:#FFB000;color:#0B0F0D;border:0;border-radius:10px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13.5px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:10px" style-hover="background:#FFC13A">
+                <span>Generate part</span>
+                <span style="opacity:.6;font-variant-numeric:tabular-nums">1 credit</span>
+              </button>
+              <div style="text-align:center;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#4A554E">no account needed for your first part</div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- GENERATING -->
+        <sc-if value="{{ atGen }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;display:flex;flex-direction:column;padding:52px 20px 22px;position:relative;overflow:hidden">
+            <div style="position:absolute;inset:0;background-image:linear-gradient(#141a17 1px,transparent 1px),linear-gradient(90deg,#141a17 1px,transparent 1px);background-size:26px 26px"></div>
+            <div style="position:relative;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#FFB000;letter-spacing:.08em">building</div>
+            <h1 style="position:relative;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:17px;font-weight:600;margin:8px 0 0;line-height:1.35">Hinged clamp for 32 mm pipe</h1>
+
+            <div style="position:relative;flex:1;display:grid;place-items:center;min-height:230px">
+              <svg viewBox="0 0 200 160" width="230" height="184" fill="none" stroke-linecap="round">
+                <g stroke="#4A554E" stroke-width="1">
+                  <path d="M10 130 H190"></path>
+                  <path d="M100 20 V150"></path>
+                </g>
+                <g stroke="#DCE3DC" stroke-width="1.6" stroke-dasharray="900" style="animation:bpDraw 2.6s ease-in-out infinite">
+                  <path d="M52 130 L52 74 A48 48 0 0 1 148 74 L148 130"></path>
+                  <path d="M52 130 L36 130 L36 142 L164 142 L164 130 L148 130"></path>
+                  <circle cx="100" cy="74" r="32"></circle>
+                </g>
+                <g stroke="#FFB000" stroke-width="1.2" stroke-dasharray="900" style="animation:bpDraw 2.6s .5s ease-in-out infinite">
+                  <circle cx="52" cy="118" r="5"></circle>
+                  <circle cx="148" cy="118" r="5"></circle>
+                </g>
+              </svg>
+              <div style="position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(255,176,0,.7),transparent);animation:bpScan 2.6s linear infinite"></div>
+            </div>
+
+            <div style="position:relative;display:flex;flex-direction:column;gap:0;margin-bottom:16px">
+              <sc-for list="{{ stages }}" as="s" hint-placeholder-count="5">
+                <div style="display:flex;align-items:center;gap:10px;padding:8px 0">
+                  <span style="{{ s.dot }}"></span>
+                  <span style="{{ s.labelStyle }}">{{ s.label }}</span>
+                  <span style="flex:1"></span>
+                  <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#4A554E;font-variant-numeric:tabular-nums">{{ s.note }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="position:relative;height:2px;background:#2A322D;margin-bottom:10px">
+              <div style="{{ progressStyle }}"></div>
+            </div>
+            <div style="position:relative;display:flex;justify-content:space-between;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;font-variant-numeric:tabular-nums">
+              <span>{{ progressLabel }}</span>
+              <span>{{ elapsedLabel }}</span>
+            </div>
+            <p style="position:relative;font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.55;color:#7C8880;margin:14px 0 0">You can leave — we push a notification when it lands.</p>
+            <button onClick="{{ goCreate }}" style="position:relative;margin-top:14px;height:44px;background:transparent;border:1px solid #2A322D;color:#7C8880;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;cursor:pointer" style-hover="border-color:#E8489B;color:#E8489B">Cancel</button>
+          </div>
+        </sc-if>
+
+        <!-- RESULT / VIEWPORT -->
+        <sc-if value="{{ atResult }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;display:flex;flex-direction:column;position:relative;overflow:hidden">
+
+            <div style="position:absolute;top:44px;left:0;right:0;z-index:30;display:flex;align-items:center;gap:8px;padding:8px 14px">
+              <button onClick="{{ goHome }}" style="width:32px;height:32px;background:rgba(30,38,34,0.5);backdrop-filter:blur(18px) saturate(150%);border:1px solid rgba(220,227,220,.14);color:#DCE3DC;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;cursor:pointer" style-hover="border-color:#FFB000">←</button>
+              <div style="display:flex;flex-direction:column;gap:1px;padding:3px 8px;background:rgba(30,38,34,0.5);backdrop-filter:blur(18px) saturate(150%);border:1px solid rgba(220,227,220,.14);border-radius:3px">
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11.5px;color:#DCE3DC">Hinged pipe clamp</span>
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;color:#7C8880">parametric · v4</span>
+              </div>
+              <span style="flex:1"></span>
+              <button onClick="{{ toggleDims }}" style="{{ pillDims }}">dims</button>
+              <button onClick="{{ toggleMotion }}" style="{{ pillMotion }}">motion</button>
+            </div>
+
+            <div style="position:absolute;inset:0;z-index:1">
+              <x-import component-from-global-scope="part-viewport" model="{{ viewModel }}" motion="{{ motionAttr }}" dims="{{ dimsAttr }}" scanline="{{ scanAttr }}" viewinset="{{ viewInset }}" hint-size="100%,100%" style="position:absolute;inset:0"></x-import>
+            </div>
+
+            <div style="position:absolute;left:14px;bottom:{{ legendBottom }};z-index:20;display:flex;flex-direction:column;gap:5px;padding:8px 9px;background:rgba(30,38,34,0.46);backdrop-filter:blur(18px) saturate(150%);border:1px solid rgba(220,227,220,.12);border-radius:3px">
+              <sc-for list="{{ pens }}" as="pen" hint-placeholder-count="4">
+                <span style="display:flex;align-items:center;gap:7px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;color:#7C8880">
+                  <span style="{{ pen.swatch }}"></span>
+                  <span>{{ pen.label }}</span>
+                </span>
+              </sc-for>
+            </div>
+
+            <div style="{{ sheetStyle }}">
+              <div onClick="{{ toggleSheet }}" style="display:flex;justify-content:center;padding:8px 0 4px;cursor:pointer">
+                <span style="width:38px;height:3px;background:#2A322D;border-radius:2px;display:block"></span>
+              </div>
+
+              <sc-if value="{{ sheetPeek }}" hint-placeholder-val="{{ true }}">
+                <div style="padding:4px 18px 16px;display:flex;flex-direction:column;gap:12px">
+                  <div style="display:flex;gap:8px;flex-wrap:wrap">
+                    <span style="display:flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid #5BE37D;color:#5BE37D;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px"><span style="width:9px;height:9px;border:1px solid #5BE37D;display:block"></span>7 checks pass</span>
+                    <span style="display:flex;align-items:center;gap:6px;padding:6px 9px;border:1px solid #FFB000;color:#FFB000;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px"><span style="width:9px;height:9px;border:1px solid #FFB000;display:grid;place-items:center;font-size:7px;line-height:1">!</span>1 warning</span>
+                  </div>
+                  <div style="display:flex;gap:18px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;font-variant-numeric:tabular-nums">
+                    <span style="color:#7C8880">bbox</span><span>{{ bboxLabel }}</span>
+                    <span style="color:#7C8880">mass</span><span>18.4 g</span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+                    <button onClick="{{ openParams }}" style="height:44px;background:transparent;border:1px solid #2A322D;color:#DCE3DC;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;cursor:pointer" style-hover="border-color:#FFB000;color:#FFB000">Edit</button>
+                    <button onClick="{{ openChecks }}" style="height:44px;background:transparent;border:1px solid #2A322D;color:#DCE3DC;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;cursor:pointer" style-hover="border-color:#FFB000;color:#FFB000">Checks</button>
+                    <button onClick="{{ openExport }}" style="height:44px;background:#FFB000;border:0;color:#0B0F0D;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;font-weight:600;cursor:pointer" style-hover="background:#FFC13A">Export</button>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ sheetParams }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:4px 18px 18px;display:flex;flex-direction:column;gap:2px;overflow:auto;animation:bpSheet .22s ease both">
+                  <div style="display:flex;align-items:center;gap:10px;padding-bottom:10px">
+                    <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:14px;font-weight:600">Parameters</span>
+                    <span style="flex:1"></span>
+                    <span style="{{ rerunStyle }}">{{ rerunLabel }}</span>
+                  </div>
+                  <sc-for list="{{ paramRows }}" as="r" hint-placeholder-count="4">
+                    <div style="display:flex;flex-direction:column;gap:5px;padding:9px 0;border-bottom:1px solid #1c2320">
+                      <div style="display:flex;align-items:baseline;gap:8px">
+                        <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#DCE3DC">{{ r.label }}</span>
+                        <span style="flex:1"></span>
+                        <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:15px;color:#FFB000;font-variant-numeric:tabular-nums;font-weight:500">{{ r.display }}</span>
+                        <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880">{{ r.unit }}</span>
+                      </div>
+                      <input type="range" min="{{ r.min }}" max="{{ r.max }}" step="{{ r.step }}" value="{{ r.value }}" onChange="{{ r.onInput }}" style="width:100%">
+                      <div style="display:flex;justify-content:space-between;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;color:#4A554E;font-variant-numeric:tabular-nums">
+                        <span>{{ r.min }}</span>
+                        <span>{{ r.hint }}</span>
+                        <span>{{ r.max }}</span>
+                      </div>
+                    </div>
+                  </sc-for>
+                  <div style="display:flex;gap:8px;padding-top:14px">
+                    <button onClick="{{ closeSheet }}" style="flex:1;height:44px;background:#FFB000;border:0;color:#0B0F0D;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;font-weight:600;cursor:pointer">Rebuild</button>
+                    <button onClick="{{ closeSheet }}" style="flex:none;padding:0 16px;height:44px;background:transparent;border:1px solid #2A322D;color:#7C8880;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;cursor:pointer">v3</button>
+                  </div>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ sheetChecks }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:4px 18px 18px;display:flex;flex-direction:column;overflow:auto;animation:bpSheet .22s ease both">
+                  <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:14px;font-weight:600;padding-bottom:12px">Checks</div>
+                  <sc-for list="{{ checks }}" as="c" hint-placeholder-count="5">
+                    <div style="display:flex;gap:10px;padding:11px 0;border-bottom:1px solid #1c2320">
+                      <span style="{{ c.mark }}">{{ c.glyph }}</span>
+                      <div style="display:flex;flex-direction:column;gap:3px;flex:1">
+                        <div style="display:flex;gap:8px;align-items:baseline">
+                          <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#DCE3DC">{{ c.name }}</span>
+                          <span style="flex:1"></span>
+                          <span style="{{ c.tagStyle }}">{{ c.tag }}</span>
+                        </div>
+                        <div style="font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.5;color:#7C8880;text-wrap:pretty">{{ c.detail }}</div>
+                      </div>
+                    </div>
+                  </sc-for>
+                  <button onClick="{{ openParams }}" style="margin-top:14px;height:44px;background:transparent;border:1px solid #FFB000;color:#FFB000;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;cursor:pointer">Fix the warning</button>
+                </div>
+              </sc-if>
+
+              <sc-if value="{{ sheetExport }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:4px 18px 18px;display:flex;flex-direction:column;overflow:auto;animation:bpSheet .22s ease both">
+                  <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:14px;font-weight:600;padding-bottom:4px">Export</div>
+                  <p style="font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.5;color:#7C8880;margin:0 0 12px">Validated against SPARKX i7 · PLA · 0.8 mm nozzle.</p>
+                  <sc-for list="{{ exports }}" as="e" hint-placeholder-count="4">
+                    <button style="display:flex;align-items:center;gap:12px;padding:13px 0;background:transparent;border:0;border-bottom:1px solid #1c2320;text-align:left;cursor:pointer" style-hover="border-color:#4A554E">
+                      <span style="{{ e.tagStyle }}">{{ e.ext }}</span>
+                      <span style="display:flex;flex-direction:column;gap:2px;flex:1">
+                        <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#DCE3DC">{{ e.name }}</span>
+                        <span style="font-family:Inter,system-ui,sans-serif;font-size:11.5px;color:#7C8880">{{ e.note }}</span>
+                      </span>
+                      <span style="{{ e.rightStyle }}">{{ e.right }}</span>
+                    </button>
+                  </sc-for>
+                  <div style="display:flex;gap:8px;padding-top:14px">
+                    <button style="flex:1;height:44px;background:#FFB000;border:0;color:#0B0F0D;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;font-weight:600;cursor:pointer">Download STL</button>
+                    <button style="flex:none;width:44px;height:44px;background:transparent;border:1px solid #2A322D;color:#DCE3DC;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:14px;cursor:pointer" style-hover="border-color:#FFB000">↗</button>
+                  </div>
+                  <button onClick="{{ goPlans }}" style="margin-top:10px;height:40px;background:transparent;border:0;color:#7C8880;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11.5px;cursor:pointer" style-hover="color:#FFB000">STEP export is on Workshop — see plans</button>
+                </div>
+              </sc-if>
+
+              <div style="display:flex;align-items:center;gap:8px;padding:10px 12px;border-top:1px solid rgba(220,227,220,.10);background:rgba(11,15,13,.45)">
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px;color:#FFB000">></span>
+                <input value="{{ cmd }}" onChange="{{ setCmd }}" onKeyDown="{{ cmdKey }}" placeholder="hole m4 x4" style="flex:1;min-width:0;background:transparent;border:0;outline:none;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#DCE3DC">
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;font-variant-numeric:tabular-nums;white-space:nowrap">{{ readout }}</span>
+              </div>
+              <sc-if value="{{ hasEcho }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:8px 12px 10px;border-top:1px solid rgba(220,227,220,.07);background:rgba(11,15,13,.35);display:flex;flex-direction:column;gap:4px">
+                  <sc-for list="{{ echoes }}" as="l" hint-placeholder-count="2">
+                    <div style="{{ l.style }}">{{ l.text }}</div>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- PROFILE -->
+        <sc-if value="{{ atProfile }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;display:flex;flex-direction:column;overflow:auto;padding:52px 20px 96px">
+            <div style="display:flex;align-items:center;gap:12px;margin-bottom:18px">
+              <div style="width:44px;height:44px;border:1px solid rgba(220,227,220,.12);background:rgba(30,38,34,0.46);backdrop-filter:blur(16px) saturate(150%);border-radius:10px;display:grid;place-items:center;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:15px;color:#FFB000;border-radius:3px">JP</div>
+              <div style="display:flex;flex-direction:column;gap:2px">
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:15px">JP van der Merwe</span>
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px;color:#7C8880">Maker plan</span>
+              </div>
+            </div>
+
+            <div style="padding:16px;border:1px solid rgba(220,227,220,.12);background:rgba(30,38,34,0.44);backdrop-filter:blur(18px) saturate(150%);border-radius:10px;display:flex;flex-direction:column;gap:12px;margin-bottom:18px">
+              <div style="display:flex;align-items:baseline;gap:8px">
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:27px;color:#FFB000;font-variant-numeric:tabular-nums;font-weight:600">{{ credits }}</span>
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#7C8880">credits left</span>
+                <span style="flex:1"></span>
+                <button onClick="{{ goPlans }}" style="padding:8px 12px;background:#FFB000;border:0;color:#0B0F0D;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;font-weight:600;cursor:pointer">Top up</button>
+              </div>
+              <div style="height:2px;background:#2A322D"><div style="width:38%;height:100%;background:#FFB000"></div></div>
+              <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;font-variant-numeric:tabular-nums">18 of 30 used this month · resets 1 Oct</div>
+            </div>
+
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em;margin-bottom:8px">printer profile</div>
+            <div style="display:flex;flex-direction:column;margin-bottom:18px">
+              <sc-for list="{{ profileRows }}" as="r" hint-placeholder-count="5">
+                <div style="display:flex;align-items:center;gap:10px;padding:11px 0;border-bottom:1px solid #1c2320">
+                  <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#7C8880;flex:1">{{ r.k }}</span>
+                  <span style="{{ r.vStyle }}">{{ r.v }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em;margin-bottom:8px">settings</div>
+            <div style="display:flex;flex-direction:column">
+              <button onClick="{{ toggleScan }}" style="display:flex;align-items:center;gap:10px;padding:13px 0;background:transparent;border:0;border-bottom:1px solid #1c2320;cursor:pointer;text-align:left">
+                <span style="flex:1;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#DCE3DC">Phosphor bloom in viewport</span>
+                <span style="{{ switchScan }}"><span style="{{ knobScan }}"></span></span>
+              </button>
+              <div style="display:flex;align-items:center;gap:10px;padding:13px 0;border-bottom:1px solid #1c2320">
+                <span style="flex:1;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#DCE3DC">Notify when a build finishes</span>
+                <span style="width:38px;height:20px;border:1px solid #FFB000;border-radius:3px;background:rgba(255,176,0,.18);display:flex;justify-content:flex-end;padding:2px"><span style="width:14px;height:14px;background:#FFB000;display:block"></span></span>
+              </div>
+              <div style="display:flex;align-items:center;gap:10px;padding:13px 0;border-bottom:1px solid #1c2320">
+                <span style="flex:1;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12.5px;color:#DCE3DC">Units</span>
+                <span style="display:flex;border:1px solid rgba(220,227,220,.12);border-radius:8px;overflow:hidden;background:rgba(30,38,34,0.4);backdrop-filter:blur(14px) saturate(150%);font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px">
+                  <span style="padding:5px 10px;background:#FFB000;color:#0B0F0D;font-weight:600">mm</span>
+                  <span style="padding:5px 10px;color:#7C8880">in</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- PLANS -->
+        <sc-if value="{{ atPlans }}" hint-placeholder-val="{{ false }}">
+          <div style="flex:1;display:flex;flex-direction:column;overflow:auto;padding:52px 20px 24px">
+            <button onClick="{{ goProfile }}" style="align-self:flex-start;background:transparent;border:0;color:#7C8880;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13.5px;cursor:pointer;padding:0 0 14px">←</button>
+            <h1 style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:21px;font-weight:600;margin:0 0 6px">Plans</h1>
+            <p style="font-family:Inter,system-ui,sans-serif;font-size:13.5px;line-height:1.55;color:#7C8880;margin:0 0 20px;text-wrap:pretty">Buy credits on the web and they show up here — the apps read the same account.</p>
+            <div style="display:flex;flex-direction:column;gap:12px">
+              <sc-for list="{{ plans }}" as="pl" hint-placeholder-count="3">
+                <div style="{{ pl.cardStyle }}">
+                  <div style="display:flex;align-items:baseline;gap:8px">
+                    <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:14px;font-weight:600;color:#DCE3DC">{{ pl.name }}</span>
+                    <span style="flex:1"></span>
+                    <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:17px;color:#FFB000;font-variant-numeric:tabular-nums">{{ pl.price }}</span>
+                  </div>
+                  <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;margin-top:4px">{{ pl.credits }}</div>
+                  <div style="display:flex;flex-direction:column;gap:6px;margin-top:12px">
+                    <sc-for list="{{ pl.features }}" as="f" hint-placeholder-count="3">
+                      <span style="display:flex;gap:8px;align-items:flex-start;font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.5;color:#DCE3DC">
+                        <span style="width:6px;height:6px;background:#5BE37D;flex:none;margin-top:5px;display:block"></span>
+                        <span>{{ f }}</span>
+                      </span>
+                    </sc-for>
+                  </div>
+                  <button style="{{ pl.btnStyle }}">{{ pl.cta }}</button>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+        </sc-if>
+
+        <!-- TAB BAR -->
+        <sc-if value="{{ showTabs }}" hint-placeholder-val="{{ false }}">
+          <div style="position:absolute;bottom:0;left:0;right:0;z-index:35;display:flex;align-items:center;gap:4px;padding:10px 20px 26px;background:rgba(30,38,34,0.6);backdrop-filter:blur(26px) saturate(150%);border-top:1px solid rgba(220,227,220,.12)">
+            <button onClick="{{ goHome }}" style="{{ tabLib }}">
+              <span style="width:14px;height:14px;border:1px solid currentColor;display:block"></span>
+              <span>Library</span>
+            </button>
+            <button onClick="{{ goCreate }}" style="flex:none;width:56px;height:56px;margin:-18px 4px 0;background:#FFB000;border:0;border-radius:4px;color:#0B0F0D;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:24px;font-weight:600;cursor:pointer;box-shadow:0 8px 22px rgba(255,176,0,.28)" style-hover="background:#FFC13A">+</button>
+            <button onClick="{{ goProfile }}" style="{{ tabProf }}">
+              <span style="width:14px;height:14px;border:1px solid currentColor;border-radius:50%;display:block"></span>
+              <span>Account</span>
+            </button>
+          </div>
+        </sc-if>
+
+      </div>
+      <div style="position:absolute;top:11px;left:50%;transform:translateX(-50%);width:104px;height:26px;background:#0B0F0D;border-bottom-left-radius:14px;border-bottom-right-radius:14px;z-index:60"></div>
+    </div>
+
+    <aside style="width:300px;flex:none;display:flex;flex-direction:column;gap:16px;padding-top:6px">
+      <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em;padding-left:2px">design notes</div>
+      <sc-for list="{{ notes }}" as="n" hint-placeholder-count="4">
+        <div style="display:flex;flex-direction:column;gap:6px;padding:13px;border:1px solid rgba(220,227,220,.10);border-radius:10px;background:rgba(30,38,34,0.4);backdrop-filter:blur(16px) saturate(150%)">
+          <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#FFB000">{{ n.title }}</div>
+          <p style="font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.6;color:#7C8880;margin:0;text-wrap:pretty">{{ n.body }}</p>
+        </div>
+      </sc-for>
+    </aside>
+  </div>
+  </sc-if>
+
+  <!-- ================= WEB WORKSPACE ================= -->
+  <sc-if value="{{ isWeb }}" hint-placeholder-val="{{ false }}">
+  <div style="max-width:1560px;margin:0 auto">
+    <div style="border:1px solid #2A322D;border-radius:8px;overflow:hidden;background:#0B0F0D;box-shadow:0 30px 80px rgba(0,0,0,.5)">
+      <div style="display:flex;align-items:center;gap:10px;padding:9px 14px;background:rgba(30,38,34,0.5);backdrop-filter:blur(20px) saturate(150%);border-bottom:1px solid rgba(220,227,220,.12)">
+        <span style="display:flex;gap:6px">
+          <span style="width:9px;height:9px;border-radius:50%;background:#2A322D;display:block"></span>
+          <span style="width:9px;height:9px;border-radius:50%;background:#2A322D;display:block"></span>
+          <span style="width:9px;height:9px;border-radius:50%;background:#2A322D;display:block"></span>
+        </span>
+        <span style="flex:1;max-width:420px;margin-left:8px;padding:5px 10px;background:rgba(11,15,13,.45);border:1px solid rgba(220,227,220,.12);border-radius:7px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px;color:#7C8880">bpcad.app/part/hinged-pipe-clamp/v4</span>
+        <span style="flex:1"></span>
+        <span style="display:flex;align-items:center;gap:7px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11px;color:#7C8880">
+          <span style="width:7px;height:7px;background:#FFB000;display:block"></span>
+          <span style="font-variant-numeric:tabular-nums">{{ credits }} credits</span>
+        </span>
+      </div>
+
+      <div style="display:grid;grid-template-columns:minmax(0,270px) minmax(0,1fr) minmax(0,290px);min-height:660px">
+
+        <div style="border-right:1px solid #2A322D;display:flex;flex-direction:column;padding:16px;gap:18px;background:rgba(30,38,34,0.34);backdrop-filter:blur(20px) saturate(150%)">
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em">prompt</div>
+            <div style="border:1px solid rgba(255,176,0,.65);border-radius:8px;background:rgba(30,38,34,0.42);backdrop-filter:blur(16px) saturate(150%);padding:11px;font-family:Inter,system-ui,sans-serif;font-size:13.5px;line-height:1.5;color:#DCE3DC">{{ prompt }}</div>
+            <div style="display:flex;gap:7px">
+              <span style="width:44px;height:44px;border:1px solid #35C6E8;border-radius:3px;display:grid;place-items:center"><span style="width:24px;height:11px;border:1px solid #35C6E8;border-radius:6px;display:block"></span></span>
+              <span style="width:44px;height:44px;border:1px dashed #2A322D;border-radius:3px;display:grid;place-items:center;font-family:'IBM Plex Mono',ui-monospace,monospace;color:#4A554E">+</span>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em">assumptions</div>
+            <sc-for list="{{ assumptions }}" as="a" hint-placeholder-count="3">
+              <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #1c2320">
+                <span style="width:7px;height:7px;background:#FFB000;flex:none;display:block"></span>
+                <span style="flex:1;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#DCE3DC">{{ a.label }}</span>
+                <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#FFB000;font-variant-numeric:tabular-nums">{{ a.value }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em">versions</div>
+            <sc-for list="{{ versions }}" as="v" hint-placeholder-count="4">
+              <button style="{{ v.style }}">
+                <span style="font-variant-numeric:tabular-nums">{{ v.id }}</span>
+                <span style="flex:1;text-align:left;color:#7C8880">{{ v.note }}</span>
+                <span style="{{ v.dot }}"></span>
+              </button>
+            </sc-for>
+          </div>
+
+          <div style="flex:1"></div>
+          <div style="display:flex;flex-direction:column;gap:6px;padding:11px;border:1px solid rgba(220,227,220,.12);border-radius:10px;background:rgba(30,38,34,0.36);backdrop-filter:blur(14px) saturate(150%)">
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em">scrollback</div>
+            <sc-for list="{{ echoes }}" as="l" hint-placeholder-count="2">
+              <div style="{{ l.style }}">{{ l.text }}</div>
+            </sc-for>
+          </div>
+        </div>
+
+        <div style="position:relative;min-height:420px;background:#0B0F0D;background-image:radial-gradient(70% 50% at 50% 0%, rgba(255,176,0,.10), transparent 65%),radial-gradient(60% 40% at 0% 100%, rgba(53,198,232,.07), transparent 70%)">
+          <x-import component-from-global-scope="part-viewport" model="{{ viewModel }}" motion="{{ motionAttr }}" dims="{{ dimsAttr }}" scanline="{{ scanAttr }}" hint-size="100%,100%" style="position:absolute;inset:0"></x-import>
+          <div style="position:absolute;top:12px;left:14px;right:14px;z-index:5;display:flex;flex-wrap:wrap;gap:7px;justify-content:space-between">
+            <div style="display:flex;gap:7px;flex-wrap:wrap">
+              <button onClick="{{ setBracket }}" style="{{ modelBracket }}">bracket</button>
+              <button onClick="{{ setHinge }}" style="{{ modelHinge }}">hinge</button>
+              <button onClick="{{ setFit }}" style="{{ modelFit }}">photo fit</button>
+            </div>
+            <div style="display:flex;gap:7px;flex-wrap:wrap">
+              <button onClick="{{ toggleDims }}" style="{{ pillDims }}">dims</button>
+              <button onClick="{{ toggleMotion }}" style="{{ pillMotion }}">motion</button>
+              <button onClick="{{ toggleScan }}" style="{{ pillScan }}">bloom</button>
+            </div>
+          </div>
+          <div style="position:absolute;left:14px;bottom:14px;z-index:5;display:flex;flex-direction:column;gap:5px;padding:8px 9px;background:rgba(30,38,34,0.46);backdrop-filter:blur(18px) saturate(150%);border:1px solid rgba(220,227,220,.12);border-radius:3px">
+            <sc-for list="{{ pens }}" as="pen" hint-placeholder-count="4">
+              <span style="display:flex;align-items:center;gap:7px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;color:#7C8880">
+                <span style="{{ pen.swatch }}"></span>
+                <span>{{ pen.label }}</span>
+              </span>
+            </sc-for>
+          </div>
+          <div style="position:absolute;right:14px;bottom:14px;z-index:5;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:9.5px;color:#4A554E;letter-spacing:.06em">drag orbit · scroll zoom</div>
+        </div>
+
+        <div style="border-left:1px solid #2A322D;display:flex;flex-direction:column;padding:16px;gap:18px;background:rgba(30,38,34,0.34);backdrop-filter:blur(20px) saturate(150%);overflow:auto">
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em">parameters</div>
+            <sc-for list="{{ paramRows }}" as="r" hint-placeholder-count="4">
+              <div style="display:flex;flex-direction:column;gap:4px;padding:8px 0;border-bottom:1px solid #1c2320">
+                <div style="display:flex;align-items:baseline;gap:8px">
+                  <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#DCE3DC;flex:1">{{ r.label }}</span>
+                  <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13.5px;color:#FFB000;font-variant-numeric:tabular-nums">{{ r.display }}</span>
+                  <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10px;color:#7C8880">{{ r.unit }}</span>
+                </div>
+                <input type="range" min="{{ r.min }}" max="{{ r.max }}" step="{{ r.step }}" value="{{ r.value }}" onChange="{{ r.onInput }}" style="width:100%">
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em">dimension report</div>
+            <sc-for list="{{ dimReport }}" as="d" hint-placeholder-count="4">
+              <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid #1c2320;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px">
+                <span style="flex:1;color:#7C8880">{{ d.k }}</span>
+                <span style="color:#DCE3DC;font-variant-numeric:tabular-nums">{{ d.v }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:6px">
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em">checks</div>
+            <sc-for list="{{ checks }}" as="c" hint-placeholder-count="5">
+              <div style="display:flex;gap:8px;align-items:center;padding:7px 0;border-bottom:1px solid #1c2320">
+                <span style="{{ c.mark }}">{{ c.glyph }}</span>
+                <span style="flex:1;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#DCE3DC">{{ c.name }}</span>
+                <span style="{{ c.tagStyle }}">{{ c.tag }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:10.5px;color:#7C8880;letter-spacing:.08em">export</div>
+            <button style="height:42px;background:#FFB000;border:0;color:#0B0F0D;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;font-weight:600;cursor:pointer" style-hover="background:#FFC13A">Download STL</button>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <button style="height:38px;background:transparent;border:1px solid #2A322D;color:#DCE3DC;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11.5px;cursor:pointer" style-hover="border-color:#FFB000;color:#FFB000">STEP</button>
+              <button style="height:38px;background:transparent;border:1px solid #2A322D;color:#DCE3DC;border-radius:3px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:11.5px;cursor:pointer" style-hover="border-color:#FFB000;color:#FFB000">.py script</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:center;gap:10px;padding:12px 16px;border-top:1px solid rgba(220,227,220,.12);background:rgba(30,38,34,0.55);backdrop-filter:blur(24px) saturate(150%)">
+        <span style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13.5px;color:#FFB000">></span>
+        <input value="{{ cmd }}" onChange="{{ setCmd }}" onKeyDown="{{ cmdKey }}" placeholder="hole m4 x4   ·   wall 3   ·   fillet 2   ·   clearance ?" style="flex:1;min-width:0;background:transparent;border:0;outline:none;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:13px;color:#DCE3DC">
+        <span style="width:1px;height:15px;background:#FFB000;animation:bpBlink 1.1s step-end infinite;display:block"></span>
+        <span style="flex:1"></span>
+        <span style="display:flex;gap:14px;font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#7C8880;font-variant-numeric:tabular-nums;white-space:nowrap">{{ readout }}</span>
+      </div>
+    </div>
+
+    <div style="display:flex;flex-wrap:wrap;gap:16px;margin-top:20px">
+      <sc-for list="{{ notes }}" as="n" hint-placeholder-count="4">
+        <div style="flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:6px;padding:14px;border:1px solid rgba(220,227,220,.10);border-radius:10px;background:rgba(30,38,34,0.4);backdrop-filter:blur(16px) saturate(150%)">
+          <div style="font-family:'IBM Plex Mono',ui-monospace,monospace;font-size:12px;color:#FFB000">{{ n.title }}</div>
+          <p style="font-family:Inter,system-ui,sans-serif;font-size:12px;line-height:1.6;color:#7C8880;margin:0;text-wrap:pretty">{{ n.body }}</p>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1560,&quot;height&quot;:1000},&quot;accent&quot;:{&quot;editor&quot;:&quot;color&quot;,&quot;default&quot;:&quot;#FFB000&quot;,&quot;options&quot;:[&quot;#FFB000&quot;,&quot;#5BE37D&quot;,&quot;#35C6E8&quot;,&quot;#E8489B&quot;],&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;bloom&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:false,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;unit&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;mm&quot;,&quot;in&quot;],&quot;default&quot;:&quot;mm&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Theme&quot;},&quot;prompt&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;A hinged clamp for a 32 mm pipe, wall 3 mm, four M4 tabs, prints in place&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Content&quot;}}">
+const MONO = "'IBM Plex Mono',ui-monospace,monospace";
+const PEN = { solid: '#DCE3DC', dim: '#4A554E', ref: '#35C6E8', pass: '#5BE37D', warn: '#FFB000', fail: '#E8489B' };
+
+class Component extends DCLogic {
+  state = {
+    platform: 'mobile',
+    screen: 'boot',
+    sheet: 'peek',
+    model: 'hinge',
+    dims: true,
+    motion: true,
+    scan: false,
+    progress: 0,
+    elapsed: 0,
+    dirty: false,
+    cmd: '',
+    echoes: [
+      { text: '> a hinged clamp for a 32 mm pipe, wall 3, m4 tabs', kind: 'in' },
+      { text: 'built v4 · 4 params · motion ok 0–124°', kind: 'ok' },
+    ],
+    params: { bore: 32, wall: 3, clear: 0.28, tab: 4 },
+  };
+
+  componentWillUnmount() { clearInterval(this._gen); }
+
+  accent() { return this.props.accent ?? '#FFB000'; }
+
+  /* ---------- nav ---------- */
+  go(screen, extra) {
+    clearInterval(this._gen);
+    this.setState({ screen, ...(extra || {}) });
+  }
+
+  startGen() {
+    clearInterval(this._gen);
+    this.setState({ screen: 'gen', progress: 0, elapsed: 0 });
+    this._gen = setInterval(() => {
+      this.setState((s) => {
+        const p = s.progress + 2.2;
+        if (p >= 100) {
+          clearInterval(this._gen);
+          return { progress: 100, elapsed: s.elapsed + 0.09, screen: 'result', sheet: 'peek', model: 'hinge' };
+        }
+        return { progress: p, elapsed: s.elapsed + 0.09 };
+      });
+    }, 90);
+  }
+
+  /* ---------- command line ---------- */
+  runCmd() {
+    const raw = (this.state.cmd || '').trim();
+    if (!raw) return;
+    const out = [{ text: '> ' + raw, kind: 'in' }];
+    const p = { ...this.state.params };
+    let m;
+    if ((m = raw.match(/^wall\s+([\d.]+)/i))) {
+      p.wall = Math.min(8, Math.max(1, parseFloat(m[1])));
+      out.push({ text: 'wall thickness → ' + p.wall.toFixed(1) + ' mm · rebuilt', kind: 'ok' });
+    } else if ((m = raw.match(/^bore\s+([\d.]+)/i))) {
+      p.bore = Math.min(80, Math.max(10, parseFloat(m[1])));
+      out.push({ text: 'bore → ' + p.bore.toFixed(1) + ' mm · rebuilt', kind: 'ok' });
+    } else if ((m = raw.match(/^hole\s+m(\d+)(?:\s*x\s*(\d+))?/i))) {
+      out.push({ text: 'added ' + (m[2] || '1') + ' × M' + m[1] + ' clearance holes (⌀' + (parseInt(m[1], 10) * 1.1 + 0.2).toFixed(1) + ')', kind: 'ok' });
+    } else if ((m = raw.match(/^fillet\s+([\d.]+)/i))) {
+      out.push({ text: 'fillet ' + parseFloat(m[1]).toFixed(1) + ' mm on 12 edges', kind: 'ok' });
+    } else if (/^clearance\s*\?/i.test(raw)) {
+      out.push({ text: 'clearance 0.28 mm — from your calibration strip, PLA @ 0.20', kind: 'ok' });
+    } else if (/^motion/i.test(raw)) {
+      out.push({ text: 'sweeping joint 0–124° in 24 steps · no interpenetration', kind: 'ok' });
+    } else if (/^help|^\?$/i.test(raw)) {
+      out.push({ text: 'wall N · bore N · hole mN xN · fillet N · clearance ? · motion', kind: 'ok' });
+    } else {
+      out.push({ text: 'read as a new prompt — generating a fresh version', kind: 'warn' });
+    }
+    this.setState((s) => ({
+      params: p, cmd: '', dirty: true,
+      echoes: [...s.echoes, ...out].slice(-4),
+    }));
+  }
+
+  /* ---------- style helpers ---------- */
+  seg(active) {
+    return 'padding:8px 14px;border:0;border-radius:7px;cursor:pointer;font-family:' + MONO +
+      ';font-size:12px;background:' + (active ? this.accent() : 'transparent') +
+      ';color:' + (active ? '#0B0F0D' : '#7C8880') + ';font-weight:' + (active ? '600' : '400');
+  }
+  railItem(active) {
+    return 'display:flex;align-items:center;gap:8px;text-align:left;padding:8px 10px;border:0;border-left:2px solid ' +
+      (active ? this.accent() : 'rgba(220,227,220,.14)') + ';border-radius:0 8px 8px 0;backdrop-filter:blur(14px) saturate(150%);background:' +
+      (active ? 'rgba(255,176,0,.12)' : 'rgba(30,38,34,.30)') +
+      ';color:' + (active ? '#DCE3DC' : '#7C8880') + ';font-family:' + MONO + ';font-size:12px;cursor:pointer';
+  }
+  pill(active) {
+    return 'padding:6px 10px;border:1px solid ' + (active ? this.accent() : 'rgba(220,227,220,.16)') +
+      ';backdrop-filter:blur(16px) saturate(150%);background:' + (active ? 'rgba(255,176,0,.18)' : 'rgba(30,38,34,.5)') +
+      ';color:' + (active ? this.accent() : '#DCE3DC') + ';border-radius:7px;font-family:' + MONO +
+      ';font-size:10.5px;cursor:pointer;box-shadow:inset 0 1px 0 rgba(220,227,220,.08)';
+  }
+  chunky(active) {
+    return 'text-align:left;padding:9px 11px;border:1px solid ' + (active ? this.accent() : '#2A322D') +
+      ';background:transparent;color:' + (active ? this.accent() : '#7C8880') +
+      ';border-radius:3px;font-family:' + MONO + ';font-size:11.5px;cursor:pointer';
+  }
+  tab(active) {
+    return 'flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;padding:6px 0;background:transparent;border:0;cursor:pointer;font-family:' +
+      MONO + ';font-size:10px;color:' + (active ? this.accent() : '#7C8880');
+  }
+  mark(kind) {
+    const c = PEN[kind];
+    return 'width:16px;height:16px;flex:none;margin-top:1px;border:1px solid ' + c + ';color:' + c +
+      ';display:grid;place-items:center;font-family:' + MONO + ';font-size:9px;line-height:1';
+  }
+  tag(kind) {
+    return 'font-family:' + MONO + ';font-size:9.5px;letter-spacing:.06em;color:' + PEN[kind] +
+      ';border:1px solid ' + PEN[kind] + '55;padding:2px 5px;border-radius:2px';
+  }
+
+  renderVals() {
+    const s = this.state;
+    const a = this.accent();
+    const P = s.params;
+    const unit = this.props.unit ?? 'mm';
+    const toU = (v) => (unit === 'in' ? (v / 25.4).toFixed(3) : v.toFixed(1));
+
+    const nav = (screen, extra) => () => this.go(screen, extra);
+
+    const rail = [
+      ['01', 'Boot & self-test', 'boot'],
+      ['02', 'Printer profile', 'onboard'],
+      ['03', 'Library', 'home'],
+      ['04', 'Composer', 'create'],
+      ['05', 'Building', 'gen'],
+      ['06', 'Result & viewport', 'result', 'peek'],
+      ['07', 'Parameters', 'result', 'params'],
+      ['08', 'Checks', 'result', 'checks'],
+      ['09', 'Export & share', 'result', 'export'],
+      ['10', 'Account & credits', 'profile'],
+      ['11', 'Plans', 'plans'],
+    ].map(([num, label, screen, sheet]) => ({
+      num, label,
+      go: sheet ? nav(screen, { sheet }) : nav(screen),
+      style: this.railItem(s.screen === screen && (!sheet || s.sheet === sheet)),
+    }));
+
+    const parts = [
+      { name: 'Hinged pipe clamp', meta: 'v4 · 32 mm · moving', kind: 'parametric', badge: 'moves', pen: 'pass', glyph: 'ring' },
+      { name: 'Bench bracket', meta: 'v2 · 64 × 44 × 45', kind: 'parametric', badge: 'ok', pen: 'pass', glyph: 'angle' },
+      { name: 'Rain gauge dial', meta: 'v1 · unscaled', kind: 'from photo', badge: 'no scale', pen: 'warn', glyph: 'disc' },
+      { name: 'M4 knob', meta: 'v3 · 22 mm', kind: 'parametric', badge: 'ok', pen: 'pass', glyph: 'disc' },
+      { name: 'Sensor cradle', meta: 'v5 · fit +0.30', kind: 'photo fit', badge: 'ref', pen: 'ref', glyph: 'angle' },
+      { name: 'Gear pair 12:36', meta: 'v1 · meshing ok', kind: 'parametric', badge: 'moves', pen: 'pass', glyph: 'ring' },
+    ].map((p, i) => {
+      const glyphs = {
+        ring: 'width:52px;height:52px;border:1.5px solid #DCE3DC;border-radius:50%;box-shadow:inset 0 0 0 8px #0B0F0D, inset 0 0 0 9.5px #DCE3DC;display:block',
+        angle: 'width:54px;height:44px;border-left:1.5px solid #DCE3DC;border-bottom:1.5px solid #DCE3DC;box-shadow:inset 6px -6px 0 -5px #DCE3DC;display:block',
+        disc: 'width:50px;height:50px;border:1.5px solid #DCE3DC;border-radius:50%;box-shadow:inset 0 0 0 1.5px #0B0F0D, inset 0 0 0 3px #DCE3DC;display:block',
+      };
+      return {
+        ...p,
+        open: nav('result', { sheet: 'peek', model: i === 4 ? 'fit' : i === 1 ? 'bracket' : 'hinge' }),
+        thumbStyle: 'position:relative;display:grid;place-items:center;height:104px;background:#0B0F0D;background-image:linear-gradient(#141a17 1px,transparent 1px),linear-gradient(90deg,#141a17 1px,transparent 1px);background-size:13px 13px;border-bottom:1px solid #2A322D',
+        glyphStyle: glyphs[p.glyph] + (p.pen === 'ref' ? ';border-color:#35C6E8' : ''),
+        badgeStyle: 'position:absolute;bottom:7px;right:8px;font-family:' + MONO + ';font-size:9px;color:' + PEN[p.pen] +
+          ';border:1px solid ' + PEN[p.pen] + '66;padding:2px 4px;border-radius:2px',
+      };
+    });
+
+    const stg = [
+      ['Parsed the description', 'units, fasteners', 8],
+      ['Resolved standards', 'M4, 32 mm tube', 22],
+      ['Built the solid', 'cadquery', 44],
+      ['Swept the joint', '24 steps', 70],
+      ['Ran your printer checks', 'sparkx i7', 90],
+    ];
+    const stages = stg.map(([label, note, at]) => {
+      const done = s.progress > at + 14;
+      const live = !done && s.progress >= at;
+      const c = done ? PEN.pass : live ? a : '#4A554E';
+      return {
+        label, note,
+        dot: 'width:9px;height:9px;flex:none;display:block;background:' + (done || live ? c : 'transparent') +
+          ';border:1px solid ' + c + (live ? ';animation:bpTick 1s infinite' : ''),
+        labelStyle: 'font-family:' + MONO + ';font-size:12.5px;color:' + (done || live ? '#DCE3DC' : '#4A554E'),
+      };
+    });
+
+    const paramDefs = [
+      { key: 'bore', label: 'Bore', unit, min: 10, max: 80, step: 0.5, hint: 'tube outer ⌀' },
+      { key: 'wall', label: 'Wall', unit, min: 1, max: 8, step: 0.1, hint: 'min 0.8 nozzle' },
+      { key: 'clear', label: 'Joint clearance', unit, min: 0.1, max: 0.6, step: 0.01, hint: 'calibrated' },
+      { key: 'tab', label: 'Tab thickness', unit, min: 2, max: 10, step: 0.5, hint: 'M4 tabs' },
+    ];
+    const paramRows = paramDefs.map((d) => ({
+      ...d,
+      value: P[d.key],
+      display: d.key === 'clear' ? P[d.key].toFixed(2) : toU(P[d.key]),
+      onInput: (e) => {
+        const v = parseFloat(e.target.value);
+        this.setState((st) => ({ params: { ...st.params, [d.key]: v }, dirty: true }));
+      },
+    }));
+
+    const checks = [
+      { name: 'Watertight', tag: 'pass', kind: 'pass', glyph: '✓', detail: 'Closed manifold, 0 holes, 0 self-intersections.' },
+      { name: 'Motion sweep', tag: 'pass', kind: 'pass', glyph: '✓', detail: 'Swept 0–124° in 24 steps. Clearance held at ' + P.clear.toFixed(2) + ' mm at every step.' },
+      { name: 'Self-supporting joint', tag: 'pass', kind: 'pass', glyph: '✓', detail: 'No overhang inside the barrel exceeds 45°, so no support material lands in the hinge.' },
+      { name: 'Bed fit', tag: 'pass', kind: 'pass', glyph: '✓', detail: '78 × 46 × 21 mm inside your 256 mm bed.' },
+      {
+        name: 'Wall thickness', tag: P.wall < 2.4 ? 'fail' : P.wall < 3 ? 'warn' : 'pass',
+        kind: P.wall < 2.4 ? 'fail' : P.wall < 3 ? 'warn' : 'pass',
+        glyph: P.wall < 3 ? '!' : '✓',
+        detail: P.wall < 3
+          ? 'Wall is ' + P.wall.toFixed(1) + ' mm at the tab root — under three passes of your 0.8 mm nozzle. Raise wall to 3.0 or thicken the tab.'
+          : 'Thinnest section ' + P.wall.toFixed(1) + ' mm — at least three passes everywhere.',
+      },
+    ].map((c) => ({ ...c, mark: this.mark(c.kind), tagStyle: this.tag(c.kind) }));
+
+    const exports = [
+      { ext: 'STL', name: 'hinged-pipe-clamp-v4.stl', note: 'Repaired, oriented to a flat base', right: '412 KB', kind: 'solid' },
+      { ext: '3MF', name: 'hinged-pipe-clamp-v4.3mf', note: 'With your printer profile embedded', right: '388 KB', kind: 'solid' },
+      { ext: 'STEP', name: 'hinged-pipe-clamp-v4.step', note: 'Real solid geometry for CAD', right: 'Workshop', kind: 'warn' },
+      { ext: '.py', name: 'hinged-pipe-clamp-v4.py', note: 'CadQuery script — web only', right: 'Open', kind: 'solid' },
+    ].map((e) => ({
+      ...e,
+      tagStyle: 'width:44px;flex:none;text-align:center;padding:6px 0;border:1px solid ' + (e.kind === 'warn' ? a : '#2A322D') +
+        ';color:' + (e.kind === 'warn' ? a : '#DCE3DC') + ';border-radius:2px;font-family:' + MONO + ';font-size:10px',
+      rightStyle: 'font-family:' + MONO + ';font-size:10.5px;color:' + (e.kind === 'warn' ? a : '#7C8880') + ';font-variant-numeric:tabular-nums',
+    }));
+
+    const versions = [
+      { id: 'v4', note: 'clearance from strip', active: true, kind: 'pass' },
+      { id: 'v3', note: 'wall 2.4 — thin', active: false, kind: 'warn' },
+      { id: 'v2', note: 'no tabs', active: false, kind: 'pass' },
+      { id: 'v1', note: 'first build', active: false, kind: 'pass' },
+    ].map((v) => ({
+      ...v,
+      style: 'display:flex;align-items:center;gap:8px;padding:8px 9px;border:1px solid ' + (v.active ? a : '#2A322D') +
+        ';background:' + (v.active ? 'rgba(255,176,0,.08)' : 'transparent') + ';border-radius:3px;font-family:' + MONO +
+        ';font-size:11.5px;color:' + (v.active ? '#DCE3DC' : '#7C8880') + ';cursor:pointer',
+      dot: 'width:7px;height:7px;flex:none;display:block;background:' + PEN[v.kind],
+    }));
+
+    const echoes = s.echoes.map((l) => ({
+      text: l.text,
+      style: 'font-family:' + MONO + ';font-size:10.5px;line-height:1.5;color:' +
+        (l.kind === 'in' ? '#DCE3DC' : l.kind === 'warn' ? a : '#5BE37D'),
+    }));
+
+    const plans = [
+      { name: 'First part', price: 'free', credits: '1 part, no account', features: ['One generated part', 'STL download', 'All printer checks'], cta: 'You are here', primary: false },
+      { name: 'Maker', price: 'R149', credits: '30 credits / month', features: ['Parametric and photo pipelines', 'Moving-part joints and motion checks', 'Version history'], cta: 'Current plan', primary: true },
+      { name: 'Workshop', price: 'R399', credits: '120 credits / month', features: ['STEP export', 'CadQuery script access', 'Part family generators', 'Reference-body fitting'], cta: 'Upgrade', primary: false },
+    ].map((pl) => ({
+      ...pl,
+      cardStyle: 'padding:16px;border:1px solid ' + (pl.primary ? a : 'rgba(220,227,220,.12)') +
+        ';border-radius:12px;backdrop-filter:blur(18px) saturate(150%);box-shadow:inset 0 1px 0 rgba(220,227,220,.08);background:' +
+        (pl.primary ? 'rgba(255,176,0,.10)' : 'rgba(30,38,34,.44)'),
+      btnStyle: 'width:100%;height:42px;margin-top:14px;border-radius:3px;font-family:' + MONO + ';font-size:12px;cursor:pointer;' +
+        (pl.cta === 'Upgrade'
+          ? 'background:' + a + ';border:0;color:#0B0F0D;font-weight:600'
+          : 'background:transparent;border:1px solid #2A322D;color:#7C8880'),
+    }));
+
+    const pens = [
+      { label: 'printable part', pen: 'solid' },
+      { label: 'reference body — not printed', pen: 'ref' },
+      { label: 'check passed', pen: 'pass' },
+      { label: 'tolerance risk', pen: 'warn' },
+    ].map((p) => ({
+      label: p.label,
+      swatch: 'width:10px;height:2px;flex:none;display:block;background:' + PEN[p.pen],
+    }));
+
+    const sheetPx = { peek: 252, params: 396, checks: 400, export: 380 }[s.sheet] || 252;
+    const sheetH = s.sheet === 'peek' ? 'auto' : sheetPx + 'px';
+
+    return {
+      isMobile: s.platform === 'mobile',
+      isWeb: s.platform === 'web',
+      toMobile: () => this.setState({ platform: 'mobile' }),
+      toWeb: () => this.setState({ platform: 'web' }),
+      tabMobileStyle: this.seg(s.platform === 'mobile'),
+      tabWebStyle: this.seg(s.platform === 'web'),
+
+      rail, parts, stages, paramRows, checks, exports, versions, echoes, plans, pens,
+
+      atBoot: s.screen === 'boot',
+      atOnboard: s.screen === 'onboard',
+      atHome: s.screen === 'home',
+      atCreate: s.screen === 'create',
+      atGen: s.screen === 'gen',
+      atResult: s.screen === 'result',
+      atProfile: s.screen === 'profile',
+      atPlans: s.screen === 'plans',
+      showTabs: s.screen === 'home' || s.screen === 'profile',
+
+      goBoot: nav('boot'), goOnboard: nav('onboard'), goHome: nav('home'),
+      goCreate: nav('create'), goResult: nav('result', { sheet: 'peek' }),
+      goProfile: nav('profile'), goPlans: nav('plans'),
+      goGen: () => this.startGen(),
+
+      openParams: () => this.setState({ screen: 'result', sheet: 'params' }),
+      openChecks: () => this.setState({ screen: 'result', sheet: 'checks' }),
+      openExport: () => this.setState({ screen: 'result', sheet: 'export' }),
+      closeSheet: () => this.setState({ sheet: 'peek', dirty: false }),
+      toggleSheet: () => this.setState((st) => ({ sheet: st.sheet === 'peek' ? 'params' : 'peek' })),
+      sheetPeek: s.sheet === 'peek',
+      sheetParams: s.sheet === 'params',
+      sheetChecks: s.sheet === 'checks',
+      sheetExport: s.sheet === 'export',
+      sheetStyle: 'position:absolute;left:0;right:0;bottom:0;z-index:25;max-height:' + sheetH +
+        ';display:flex;flex-direction:column;background:rgba(30,38,34,0.62);backdrop-filter:blur(26px) saturate(150%);border-top:1px solid rgba(220,227,220,.14);border-top-left-radius:16px;border-top-right-radius:16px;padding-bottom:14px;box-shadow:0 -20px 50px rgba(0,0,0,.55), inset 0 1px 0 rgba(220,227,220,.10)',
+      legendBottom: (sheetPx + 12) + 'px',
+      viewInset: String(sheetPx + 60),
+
+      viewModel: s.model,
+      motionAttr: s.motion ? 'on' : 'off',
+      dimsAttr: s.dims ? 'on' : 'off',
+      scanAttr: (this.props.bloom ?? s.scan) ? 'on' : 'off',
+      toggleDims: () => this.setState((st) => ({ dims: !st.dims })),
+      toggleMotion: () => this.setState((st) => ({ motion: !st.motion })),
+      toggleScan: () => this.setState((st) => ({ scan: !st.scan })),
+      pillDims: this.pill(s.dims),
+      pillMotion: this.pill(s.motion),
+      pillScan: this.pill(s.scan),
+      dimsBtn: this.chunky(s.dims),
+      motionBtn: this.chunky(s.motion),
+      scanBtn: this.chunky(s.scan),
+      switchScan: 'width:38px;height:20px;border:1px solid ' + (s.scan ? a : '#2A322D') + ';border-radius:3px;background:' +
+        (s.scan ? 'rgba(255,176,0,.18)' : 'transparent') + ';display:flex;justify-content:' + (s.scan ? 'flex-end' : 'flex-start') + ';padding:2px',
+      knobScan: 'width:14px;height:14px;display:block;background:' + (s.scan ? a : '#4A554E'),
+
+      setBracket: () => this.setState({ model: 'bracket' }),
+      setHinge: () => this.setState({ model: 'hinge' }),
+      setFit: () => this.setState({ model: 'fit' }),
+      modelBracket: this.pill(s.model === 'bracket'),
+      modelHinge: this.pill(s.model === 'hinge'),
+      modelFit: this.pill(s.model === 'fit'),
+
+      progressStyle: 'height:100%;width:' + s.progress.toFixed(0) + '%;background:' + a + ';transition:width .12s linear',
+      progressLabel: Math.min(100, Math.round(s.progress)) + '% · 1 credit',
+      elapsedLabel: s.elapsed.toFixed(1) + ' s',
+
+      credits: 12,
+      prompt: this.props.prompt ?? 'A hinged clamp for a 32 mm pipe, wall 3 mm, four M4 tabs, prints in place',
+      setPrompt: () => {},
+      picked: ['32 mm tube ⌀', 'M4 × 4', 'wall 3.0', 'print in place'],
+      assumptions: [
+        { label: 'Clamp height', value: '46.0' },
+        { label: 'Hinge barrels', value: '3' },
+        { label: 'Tab spacing', value: '26.0' },
+      ],
+      dimReport: [
+        { k: 'bounding box', v: '78.0 × 46.0 × 21.0' },
+        { k: 'bore', v: P.bore.toFixed(1) },
+        { k: 'wall', v: P.wall.toFixed(1) },
+        { k: 'joint clearance', v: P.clear.toFixed(2) },
+        { k: 'mass, PLA', v: '18.4 g' },
+        { k: 'range of motion', v: '0–124°' },
+      ],
+      profileRows: [
+        { k: 'printer', v: 'SPARKX i7', kind: 'solid' },
+        { k: 'bed', v: '256 × 256 × 256', kind: 'solid' },
+        { k: 'nozzle', v: '0.80 mm', kind: 'solid' },
+        { k: 'layer', v: '0.20 mm', kind: 'solid' },
+        { k: 'material', v: 'PLA', kind: 'solid' },
+        { k: 'calibrated clearance', v: '0.28 mm', kind: 'pass' },
+      ].map((r) => ({
+        ...r,
+        vStyle: 'font-family:' + MONO + ';font-size:12.5px;font-variant-numeric:tabular-nums;color:' + PEN[r.kind],
+      })),
+      bboxLabel: '78.0 × 46.0 × 21.0',
+
+      cmd: s.cmd,
+      setCmd: (e) => this.setState({ cmd: e.target.value }),
+      cmdKey: (e) => { if (e.key === 'Enter') this.runCmd(); },
+      readout: 'X ' + P.bore.toFixed(1) + '   Y 46.0   Z 21.0   ' + unit,
+      hasEcho: s.echoes.length > 0,
+
+      rerunLabel: s.dirty ? 'rebuilding…' : 'up to date',
+      rerunStyle: 'font-family:' + MONO + ';font-size:10.5px;color:' + (s.dirty ? a : PEN.pass) +
+        (s.dirty ? ';animation:bpTick 1s infinite' : ''),
+
+      tabLib: this.tab(s.screen === 'home'),
+      tabProf: this.tab(s.screen === 'profile'),
+
+      notes: [
+        {
+          title: 'The viewport is the product',
+          body: 'On mobile the 3D view never drops below half the screen. Controls live in a sheet that snaps peek → parameters → checks, so a build can be judged and downloaded one-handed.',
+        },
+        {
+          title: 'A command line that earns its place',
+          body: 'Docked above the keyboard on mobile and along the status line on web. It echoes in the same words the sliders use, so typing teaches the panel and the panel teaches typing. Try wall 3.',
+        },
+        {
+          title: 'Amber is the accent, not the theme',
+          body: 'One phosphor accent on near-black case, with the plotter pen set kept inside the canvas. Every pen carries a label or a mark, so status never rides on colour alone.',
+        },
+        {
+          title: 'Nothing is silently assumed',
+          body: 'Parsed values show as green chips, anything inferred shows as an amber assumption you can change, and a failed check states the fix in millimetres rather than apologising.',
+        },
+      ],
+    };
+  }
+}
+</script>
+</body>
+</html>

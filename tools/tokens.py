@@ -62,9 +62,10 @@ def to_css(tokens: dict[str, Any]) -> str:
         " * %s" % BANNER,
         " * %s" % REGENERATE,
         " *",
-        " * Product brief 6.1: the core palette is six values and the pen set is",
-        " * used ONLY inside the 3D canvas and for annotation. A pen colour on",
-        " * chrome is a bug, and so is a hex literal anywhere else in the CSS.",
+        " * Product brief 6.1: the core palette is six values, plus `grid` for the",
+        " * graticule, and the pen set is used ONLY inside the 3D canvas and for",
+        " * annotation. A pen colour on chrome is a bug, and so is a hex literal",
+        " * anywhere else in the CSS - including a glass alpha.",
         " */",
         "",
         ":root {",
@@ -105,6 +106,9 @@ def to_css(tokens: dict[str, Any]) -> str:
         lines.append("  --bp-radius-%s: %gpx;" % (name, size))
 
     lines.append("")
+    lines.extend(_css_glass(tokens["glass"]))
+
+    lines.append("")
     lines.append("  /* pinned metrics */")
     for name, size in _clean(tokens["metric"]).items():
         lines.append("  --bp-%s: %gpx;" % (name.replace("_", "-"), size))
@@ -112,6 +116,70 @@ def to_css(tokens: dict[str, Any]) -> str:
     lines.append("}")
     lines.append("")
     return "\n".join(lines)
+
+
+def _rgb(triplet: list[int]) -> str:
+    """
+    SPACE-SEPARATED, and that is not a style choice.
+
+    These triplets are composed as `rgb(var(--bp-glass-tint) / <alpha>)` so a
+    single tint can be reused at five alphas. That slash form is CSS Color 4,
+    which requires space-separated channels: with commas the declaration
+    becomes `rgb(30, 38, 34 / 0.56)`, which is invalid and computes to
+    transparent - so every glass surface rendered as nothing at all, with no
+    error anywhere and the blur still visibly working behind it.
+    """
+    return " ".join(str(c) for c in triplet)
+
+
+def _css_glass(glass: dict[str, Any]) -> list[str]:
+    """
+    The glass layer, as raw values for ONE primitive to compose.
+
+    Deliberately not emitted as five ready-made `background` declarations. The
+    handoff's rule is that every screen composes a single glass primitive and
+    nothing sets backdrop-filter inline, so what belongs here is the tint, the
+    alphas and the blurs - and app.css builds the surfaces from them. Exported
+    as a colour per step, the tint could not be retuned in one place, which is
+    the whole reason it is a token.
+    """
+    lines = ["  /* glass: the raw values, composed by the .glass primitive in app.css */"]
+    lines.append("  --bp-glass-tint: %s;" % _rgb(glass["tint"]["rgb"]))
+    lines.append("  --bp-glass-hairline: %s;" % _rgb(glass["hairline"]["rgb"]))
+    lines.append("  --bp-glass-hairline-alpha: %g;" % glass["hairline"]["alpha"])
+    lines.append("  --bp-glass-highlight: %s;" % _rgb(glass["highlight"]["rgb"]))
+    lines.append("  --bp-glass-highlight-alpha: %g;" % glass["highlight"]["alpha"])
+    lines.append("  --bp-glass-saturate: %g%%;" % glass["saturate"])
+
+    lines.append("")
+    lines.append("  /* the five depths - a surface over content is denser than one over the ground */")
+    for name, step in _clean(glass["surface"]).items():
+        lines.append("  --bp-glass-%s-alpha: %g;   /* %s */"
+                     % (name, step["alpha"], step["use"]))
+        lines.append("  --bp-glass-%s-blur: %gpx;" % (name, step["blur"]))
+        lines.append("  --bp-glass-%s-radius: var(--bp-radius-%s);"
+                     % (name, step["radius"]))
+
+    lines.append("")
+    lines.append("  /* tinted glass: same blur, keeps its hue, border takes the tint */")
+    for name, tint in _clean(glass["tinted"]).items():
+        lines.append("  --bp-glass-%s: %s;" % (name, _rgb(tint["rgb"])))
+        lines.append("  --bp-glass-%s-alpha: %g;" % (name, tint["alpha"]))
+        lines.append("  --bp-glass-%s-border-alpha: %g;"
+                     % (name, tint["border_alpha"]))
+
+    # The ambient wash is one value because it is one background-image: a blur
+    # with nothing behind it to pick up renders as flat grey.
+    washes = ",\n    ".join(
+        "radial-gradient(%s at %s, rgba(%s, %g), transparent %s)"
+        % (layer["size"], layer["at"], _rgb(layer["rgb"]),
+           layer["alpha"], layer["stop"])
+        for layer in glass["ambient"]["layers"]
+    )
+    lines.append("")
+    lines.append("  /* ambient light BEHIND the glass. Without it every panel reads flat. */")
+    lines.append("  --bp-ambient:\n    %s;" % washes)
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -167,11 +235,14 @@ def to_dart(tokens: dict[str, Any]) -> str:
         "// %s" % BANNER,
         "// %s" % REGENERATE,
         "//",
-        "// Product brief 6.1: the core palette is six values and the pen set is",
-        "// used ONLY inside the 3D canvas and for annotation. A pen colour on",
-        "// chrome is a bug, and so is a Color literal anywhere else in the app.",
+        "// Product brief 6.1: the core palette is six values, plus `grid` for the",
+        "// graticule, and the pen set is used ONLY inside the 3D canvas and for",
+        "// annotation. A pen colour on chrome is a bug, and so is a Color literal",
+        "// anywhere else in the app - including a glass alpha.",
         "",
-        "import 'dart:ui';",
+        # painting rather than dart:ui: Color comes from either, but the
+        # ambient washes are positioned with Alignment, which is Flutter's.
+        "import 'package:flutter/painting.dart';",
         "",
         "/// The machine's own colours.",
         "class BpCore {",
@@ -238,6 +309,8 @@ def to_dart(tokens: dict[str, Any]) -> str:
     lines.append("}")
     lines.append("")
 
+    lines += _dart_glass(tokens["glass"])
+
     lines += ["/// Constants the brief pins, so neither client invents one.",
               "class BpMetric {", "  BpMetric._();", ""]
     for name, size in _clean(tokens["metric"]).items():
@@ -245,6 +318,153 @@ def to_dart(tokens: dict[str, Any]) -> str:
     lines.append("}")
     lines.append("")
     return "\n".join(lines)
+
+
+def _dart_glass(glass: dict[str, Any]) -> list[str]:
+    """
+    The glass layer for Flutter.
+
+    `tint(alpha)` is a function rather than five constants for the same reason
+    the CSS exports a triplet: a theme change has to move all of it at once.
+    The five depths are then just alpha and blur pairs that GlassSurface
+    composes - no widget builds its own BackdropFilter.
+    """
+    tint = glass["tint"]["rgb"]
+    hairline = glass["hairline"]["rgb"]
+    highlight = glass["highlight"]["rgb"]
+
+    lines = [
+        "/// The glass layer. Design handoff section 6, an accepted amendment to",
+        "/// product brief 6.6.",
+        "///",
+        "/// Every raised surface is glass; the ground, the 3D canvas and INK are",
+        "/// not. Text, numbers, callouts, sliders and check marks are full",
+        "/// opacity always - glass is the surface under a value, never the value.",
+        "///",
+        "/// Compose these through GlassSurface. A widget that builds its own",
+        "/// BackdropFilter is the bug this class exists to prevent.",
+        "class BpGlass {",
+        "  BpGlass._();",
+        "",
+        "  /// The fill every glass surface is built from, at its step's alpha.",
+        "  /// A function, not five constants: a theme change moves all of it.",
+        "  static Color tint(double alpha) =>",
+        "      const Color.fromARGB(255, %d, %d, %d).withValues(alpha: alpha);"
+        % tuple(tint),
+        "",
+        "  /// The 1px border on neutral glass.",
+        "  static Color hairline([double alpha = %g]) =>"
+        % glass["hairline"]["alpha"],
+        "      const Color.fromARGB(255, %d, %d, %d).withValues(alpha: alpha);"
+        % tuple(hairline),
+        "",
+        "  /// The light catching the top edge of the pane.",
+        "  static Color highlight([double alpha = %g]) =>"
+        % glass["highlight"]["alpha"],
+        "      const Color.fromARGB(255, %d, %d, %d).withValues(alpha: alpha);"
+        % tuple(highlight),
+        "",
+        "  static const double saturate = %g;" % glass["saturate"],
+        "}",
+        "",
+        "/// The five depths, shallowest first. A surface over CONTENT is denser",
+        "/// than one over the GROUND - that is what these are, not five greys.",
+        "/// Do not go below a step's alpha.",
+        "enum GlassDepth {",
+    ]
+    steps = _clean(glass["surface"])
+    for index, (name, step) in enumerate(steps.items()):
+        end = "," if index < len(steps) - 1 else ";"
+        lines.append("  /// %s" % step["use"])
+        lines.append("  %s(alpha: %g, blur: %g, radius: BpRadius.%s)%s"
+                     % (_camel(name), step["alpha"], step["blur"],
+                        _camel(step["radius"]), end))
+    lines += [
+        "",
+        "  const GlassDepth({",
+        "    required this.alpha,",
+        "    required this.blur,",
+        "    required this.radius,",
+        "  });",
+        "",
+        "  final double alpha;",
+        "  final double blur;",
+        "  final double radius;",
+        "}",
+        "",
+        "/// Tinted glass: same blur, keeps its hue, and the border takes the tint",
+        "/// rather than the neutral hairline - which is why the two alphas differ.",
+        "enum GlassTint {",
+    ]
+    tints = _clean(glass["tinted"])
+    for index, (name, value) in enumerate(tints.items()):
+        end = "," if index < len(tints) - 1 else ";"
+        lines.append("  /// %s" % value["use"])
+        lines.append("  %s(color: Color(0xFF%02X%02X%02X), alpha: %g, "
+                     "borderAlpha: %g)%s"
+                     % (_camel(name), *value["rgb"], value["alpha"],
+                        value["border_alpha"], end))
+    lines += [
+        "",
+        "  const GlassTint({",
+        "    required this.color,",
+        "    required this.alpha,",
+        "    required this.borderAlpha,",
+        "  });",
+        "",
+        "  final Color color;",
+        "  final double alpha;",
+        "  final double borderAlpha;",
+        "",
+        "  Color get fill => color.withValues(alpha: alpha);",
+        "  Color get border => color.withValues(alpha: borderAlpha);",
+        "}",
+        "",
+        "/// Ambient light BEHIND the glass. Not decoration: a blur with nothing",
+        "/// to pick up renders as flat grey, and every panel becomes one slab.",
+        "class BpAmbient {",
+        "  BpAmbient._();",
+        "",
+    ]
+    for index, layer in enumerate(glass["ambient"]["layers"]):
+        lines.append("  static const Color wash%d = "
+                     "Color(0xFF%02X%02X%02X);" % (index, *layer["rgb"]))
+        lines.append("  static const double wash%dAlpha = %g;"
+                     % (index, layer["alpha"]))
+        lines.append("  /// Fractional centre of the wash, as (x, y) of the box.")
+        lines.append("  static const Alignment wash%dAt = Alignment(%g, %g);"
+                     % (index,
+                        _fraction(layer["at"], 0), _fraction(layer["at"], 1)))
+        lines.append("  /// The wash's extent as a fraction of the box, width")
+        lines.append("  /// then height - CSS's two radial-gradient")
+        lines.append("  /// percentages, which is an ellipse and not a circle.")
+        lines.append("  static const Size wash%dSize = Size(%g, %g);"
+                     % (index,
+                        _percent(layer["size"], 0), _percent(layer["size"], 1)))
+        lines.append("  /// Where the wash has fallen to nothing.")
+        lines.append("  static const double wash%dStop = %g;"
+                     % (index, _percent(layer["stop"], 0)))
+        lines.append("")
+    lines.append("}")
+    lines.append("")
+    return lines
+
+
+def _percent(value: str, index: int) -> float:
+    """"120% 60%" -> 1.2 or 0.6. A plain fraction of the box."""
+    return round(float(value.split()[index].rstrip("%")) / 100.0, 4)
+
+
+def _fraction(at: str, index: int) -> float:
+    """
+    "78% 4%" -> Flutter's Alignment, which runs -1 to 1 rather than 0 to 100.
+
+    The percentages are written once, in the token source, in CSS's terms
+    because that is where the design specifies them. Converting here keeps the
+    two clients reading one number instead of two that can drift.
+    """
+    percent = float(at.split()[index].rstrip("%"))
+    return round(percent / 50.0 - 1.0, 4)
 
 
 # ---------------------------------------------------------------------------

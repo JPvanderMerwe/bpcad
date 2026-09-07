@@ -43,6 +43,21 @@ def get_json(url):
         return json.loads(response.read())
 
 
+def status_of_post(url, payload) -> int:
+    import urllib.request
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            return response.status
+    except urllib.error.HTTPError as exc:
+        return exc.code
+
+
 def status_of(url) -> int:
     try:
         with get(url) as response:
@@ -380,6 +395,128 @@ def test_the_health_reports_the_mesh_version_so_no_client_repeats_it(base_url):
     # not throw away every cached mesh, and a new baked colour must not throw
     # away every cached frame.
     assert "render_version" in state
+
+
+# ---------------------------------------------------------------------------
+# the command line and the parameter schema, which the workspace is built on
+# ---------------------------------------------------------------------------
+
+
+def post(url, payload):
+    import urllib.request
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:
+        return json.loads(response.read())
+
+
+def test_the_command_line_parses_server_side(base_url):
+    """
+    ONE PARSER, AND THIS ROUTE IS WHY IT CAN BE ONE. The handoff says the
+    command line must genuinely parse and must share the composer's
+    vocabulary. Parsed in each client, `wall 3` would mean one thing in the
+    browser and another on the phone - the same class of bug as a colour that
+    differs between clients, except this one changes geometry.
+    """
+    parsed = post("%s/api/command" % base_url, {"line": "wall 3"})
+    assert parsed["kind"] == "set"
+    assert parsed["parameter"] == "wall_mm"
+    assert parsed["value"] == 3.0
+    # The echo uses the panel's own words, both directions - brief 6.4.
+    assert parsed["echo"] == "wall thickness \u2192 3.0 mm"
+    # And it carries the sentence that applies the change, so a slider and a
+    # typed command cannot ask for different things.
+    assert parsed["refine"] == "set wall thickness to 3.0 mm"
+
+
+def test_a_question_is_answered_from_the_real_profile(base_url):
+    """
+    `clearance ?` reads this machine's configuration - and says where the
+    number came from. Brief 4.3 forbids stating a clearance as if it were
+    calibrated when it is a conservative default, because a maker who
+    believes a number is measured designs to it.
+    """
+    parsed = post("%s/api/command" % base_url,
+                  {"line": "clearance ?", "material": "petg"})
+    assert parsed["kind"] == "ask"
+    assert "0.30 mm" in parsed["echo"]
+    assert "not from a calibration strip" in parsed["echo"], (
+        "a default clearance was reported as though it were measured"
+    )
+
+
+def test_an_unmeasured_clearance_says_so_rather_than_inventing_one(base_url):
+    """
+    TPU's clearance is deliberately UNSET because nothing measured it, and
+    reading an UNSET value raises rather than substituting a guess. The
+    command line has to survive that and answer honestly.
+    """
+    parsed = post("%s/api/command" % base_url,
+                  {"line": "clearance ?", "material": "tpu"})
+    assert "no measured source" in parsed["echo"]
+
+
+def test_an_unknown_line_is_a_new_part_and_not_an_error(base_url):
+    """
+    A command line that only accepts commands is a worse command line: the
+    thing a maker most wants to type is a description of a part.
+    """
+    parsed = post("%s/api/command" % base_url,
+                  {"line": "a hinged clamp for a 32 mm pipe"})
+    assert parsed["kind"] == "prompt"
+    assert parsed["text"] == "a hinged clamp for a 32 mm pipe"
+
+
+def test_a_command_without_a_line_is_refused_rather_than_guessed(base_url):
+    assert status_of_post("%s/api/command" % base_url, {}) == 400
+    assert status_of_post("%s/api/command" % base_url, {"line": 7}) == 400
+    # Longer than any command line, which is a paste accident rather than a
+    # command, and it must not become a two-minute generation.
+    assert status_of_post("%s/api/command" % base_url,
+                          {"line": "x" * 500}) == 400
+
+
+def test_the_template_schema_carries_real_bounds_for_the_sliders(base_url):
+    """
+    THIS IS WHERE THE SLIDERS' MIN AND MAX COME FROM, and the reason the route
+    exists rather than the clients holding a table. The bounds are the
+    Pydantic schema's own, so a slider cannot offer a value the builder will
+    reject - and a client inventing its own range would be guessing at a
+    dimension, which is the one thing this project does not do.
+    """
+    schema = get_json("%s/api/template/louvre_vent" % base_url)
+    params = {p["name"]: p for p in schema["params"]}
+
+    frame = params["frame_w_mm"]
+    assert frame["units"] == "mm"
+    assert frame["bounds"]["gt"] == 10.0
+    assert frame["bounds"]["le"] == 400.0
+    assert frame["description"]
+
+    # An INTEGER parameter is typed as one, which is what stops a blade count
+    # rendering as "4.0" and sliding to 4.3.
+    assert params["n_blades"]["type"] == "int"
+    assert params["n_blades"]["bounds"] == {"ge": 2, "le": 24}
+
+
+def test_every_template_the_health_lists_can_be_read(base_url):
+    """
+    The workspace builds its parameter form from whatever the registry knows,
+    with no per-template code. A template that is listed but cannot be
+    described is a panel that fails to open for exactly one part.
+    """
+    for name in get_json("%s/api/health" % base_url)["templates"]:
+        schema = get_json("%s/api/template/%s" % (base_url, name))
+        assert schema["name"] == name
+        assert isinstance(schema.get("params"), list)
+
+
+def test_an_unknown_template_is_a_404_and_not_a_500(base_url):
+    assert status_of("%s/api/template/not_a_template" % base_url) == 404
 
 
 # ---------------------------------------------------------------------------

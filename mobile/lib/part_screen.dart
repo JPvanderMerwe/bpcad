@@ -14,6 +14,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'theme.dart';
+import 'tokens.dart';
 import 'viewer_screen.dart';
 
 class PartScreen extends StatefulWidget {
@@ -178,10 +179,20 @@ class _PartScreenState extends State<PartScreen> {
           final size = part.sizeMm;
           return Container(
             width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: const BoxDecoration(
-              color: BpcadColors.bedDeep,
-              border: Border(top: BorderSide(color: BpcadColors.edge)),
+            padding: const EdgeInsets.all(BpSpace.wide),
+            // The facts bar is the bottom sheet at its peek height, and the
+            // design puts the sheet at the `float` depth - the densest step,
+            // because it sits over the viewport rather than over the ground
+            // and these numbers have to stay readable against whatever the
+            // render behind them is doing.
+            //
+            // `float` alpha with no blur, and a top hairline instead of a
+            // full border: it is docked to the screen edge, so three of its
+            // four sides do not exist. The blur is off because this bar is
+            // pinned over the turntable, which repaints on every drag frame.
+            decoration: BoxDecoration(
+              color: BpGlass.tint(GlassDepth.float.alpha),
+              border: const Border(top: BorderSide(color: BpcadColors.edge)),
             ),
             child: Row(
               children: [

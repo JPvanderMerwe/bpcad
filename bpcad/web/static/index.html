@@ -28,144 +28,218 @@
 <meta name="mobile-web-app-capable" content="yes">
 </head>
 <body>
-<!-- The build plate. Behind the part, never over it. -->
+<!--
+  THE WEB WORKSPACE. Design handoff section 3, task C1.
+
+  Three zones over a persistent status line, which is the ASCII diagram in
+  product brief 6.3 and the layout in screenshot 12:
+
+    ┌────────────┬──────────────────────────┬────────────┐
+    │ prompt     │                          │ parameters │
+    │ photos     │        viewport          │ dimensions │
+    │ assumptions│                          │ checks     │
+    │ versions   │                          │ export     │
+    │ scrollback │                          │            │
+    ├────────────┴──────────────────────────┴────────────┤
+    │ > command line                    x y z readout    │
+    └────────────────────────────────────────────────────┘
+
+  WHY THE PANELS DO NOT COLLAPSE INTO TABS. The left column is what you asked
+  for, the right is what you got, and the middle is the part. A maker checking
+  whether a wall came out at the thickness they typed should not have to
+  remember which tab they were on - the two numbers belong on screen together
+  or the comparison is from memory.
+
+  Below 900px this becomes one column with the viewport first, because the
+  brief's minimum supported width is 380px and three 270px columns do not fit
+  a phone. The panels keep their order: what you asked, the part, what you got.
+-->
 <div class="plate" aria-hidden="true"></div>
 
-<div class="app">
+<div class="shell">
 
-  <!-- 11.4: minimal top bar — the only thing allowed above the viewport -->
-  <header class="topbar">
-    <div class="brand">
+  <!-- ── zone 1: what you asked for ─────────────────────────────────── -->
+  <aside class="col left" id="colLeft">
+
+    <header class="brandbar">
       <span class="mark" aria-hidden="true"></span>
       <span class="name">bpcad</span>
-    </div>
-    <div class="machine" id="machine" title="">
-      <span class="lamp" id="lamp"></span>
-      <span class="txt" id="machineText">Checking…</span>
-    </div>
-  </header>
+    </header>
 
-  <!-- 11.4: THE VIEWPORT IS THE HERO and gets the screen -->
-  <main class="stage" id="stage">
+    <!-- THE PROMPT. Amber-bordered glass, and it is the only amber-bordered
+         surface on the page - the design gives the commit action one element
+         per screen and this is the composer's. -->
+    <section class="panel glass glass--panel prompt-panel" id="promptPanel">
+      <h2 class="label">prompt</h2>
+      <div class="well glass glass--well">
+        <textarea id="prompt" rows="3" spellcheck="false"
+          placeholder="A hinged clamp for a 32 mm pipe, wall 3 mm, four M4 tabs, prints in place"></textarea>
+      </div>
+
+      <!-- One input for words AND photos - brief 6.7. The tiles are the
+           attached photos, then camera and files. -->
+      <div class="tiles" id="tiles">
+        <button class="tile" id="pickCamera" type="button" title="Take a photo">
+          <span class="glyph" aria-hidden="true"></span>
+          <span class="cap">camera</span>
+        </button>
+        <button class="tile" id="pickFile" type="button" title="Attach a photo">
+          <span class="glyph plus" aria-hidden="true">+</span>
+          <span class="cap">files</span>
+        </button>
+        <input id="fileInput" type="file" accept="image/jpeg,image/png,image/webp" hidden>
+        <input id="cameraInput" type="file" accept="image/*" capture="environment" hidden>
+      </div>
+
+      <!-- THE PIPELINE BANNER IS A TRUST SURFACE. It states which road the
+           request took before a credit is spent, and it must reflect the real
+           router decision rather than a guess - so it is hidden until the
+           router has actually spoken. -->
+      <div class="banner glass glass--ref" id="pipeline" hidden>
+        <span class="bmark" aria-hidden="true">B</span>
+        <div class="btext">
+          <div class="bhead" id="pipelineHead"></div>
+          <p class="bbody" id="pipelineBody"></p>
+        </div>
+      </div>
+
+      <button class="btn commit" id="generate">Generate part</button>
+      <p class="micro" id="generateNote">no account needed for your first part</p>
+    </section>
+
+    <!-- WHAT WAS READ OUT OF THE WORDS, AND WHAT WAS FILLED IN.
+         Brief 4.5: never silently invent a dimension. Parsed values are pass
+         chips; inferred ones are amber and editable. Both are hidden until
+         there is something real to show - an empty heading over nothing reads
+         as a feature that is broken. -->
+    <section class="panel glass glass--panel" id="readPanel" hidden>
+      <h2 class="label">we picked these up</h2>
+      <div class="chips" id="picked"></div>
+      <h2 class="label" id="assumedLabel" hidden>we assumed — click to change</h2>
+      <div class="rows" id="assumed"></div>
+    </section>
+
+    <!-- Editing never destroys the last good version - brief 6.7. -->
+    <section class="panel glass glass--panel" id="versionPanel" hidden>
+      <h2 class="label">versions</h2>
+      <div class="versions" id="versions"></div>
+    </section>
+
+    <!-- The scrollback. Every line the engine actually said. -->
+    <section class="panel glass glass--panel scroll-panel">
+      <h2 class="label">scrollback</h2>
+      <div class="scrollback" id="scrollback" aria-live="polite"></div>
+    </section>
+  </aside>
+
+  <!-- ── zone 2: the part ───────────────────────────────────────────── -->
+  <main class="col centre" id="stage">
+
+    <!-- The chrome floats over the viewport, and the two groups live in ONE
+         wrapping flex row so that a long part name can never push the view
+         toggles off the edge or under them. -->
+    <div class="chrome">
+      <div class="switcher" id="switcher"></div>
+      <div class="toggles">
+        <button class="pill glass glass--pill" id="dimsToggle"
+                aria-pressed="false">dims</button>
+        <button class="pill glass glass--pill" id="viewToggle"
+                aria-pressed="false">3D</button>
+        <button class="pill glass glass--pill" id="flatToggle"
+                aria-pressed="false" title="Drop the blur and the washes">bloom</button>
+      </div>
+    </div>
+
     <div class="blank" id="blank">
       <h1>Describe the part.</h1>
       <p>Plain language, with the dimensions you know. You get parametric CAD
          that fits — not a mesh — and every number stays adjustable.</p>
     </div>
-    <!-- 11.7: the hero is rendered SERVER-SIDE, and the first view of a
-         100k-facet mesh takes seconds. An empty build plate with nothing on
-         it and no word about why is indistinguishable from a hang. -->
+
+    <!-- The hero is rendered SERVER-SIDE, and the first view of a 100k-facet
+         mesh takes seconds. An empty build plate with nothing on it and no
+         word about why is indistinguishable from a hang. -->
     <div class="staging" id="staging" hidden>
       <span class="caliper" aria-hidden="true"><span></span><span></span><span></span></span>
       <span class="txt" id="stagingText"></span>
     </div>
+
     <img id="frame" alt="" hidden draggable="false">
 
     <!-- THE 3D VIEW, IN AN IFRAME OF THE PAGE THE PHONE ALSO LOADS.
          Not a second renderer written for the browser: the same
          /static/viewer.html, so the two clients cannot drift into showing a
-         part slightly differently. Loaded only when asked - the mesh is
-         megabytes and the turntable is what most looks at a part need. -->
+         part slightly differently. -->
     <iframe id="view3d" title="3D view" hidden
             allow="fullscreen; xr-spatial-tracking"></iframe>
 
-    <!-- The turntable is pictures of the part and this is the part; a viewport
-         has to say which one is on screen. -->
-    <button class="viewtoggle" id="viewToggle" hidden
-            aria-pressed="false">3D</button>
+    <!-- Dimension callouts, projected onto the turntable frame. -->
+    <div class="callouts" id="callouts" hidden></div>
 
-    <div class="variants" id="variants" hidden></div>
+    <!-- THE PEN LEGEND. Brief 6.7 forbids colour-only status, so every pen
+         appears here with its meaning spelled out in words. -->
+    <div class="legend glass glass--pill" id="legend" hidden>
+      <span class="pen solid"><i></i>printable part</span>
+      <span class="pen ref"><i></i>reference body — not printed</span>
+      <span class="pen pass"><i></i>check passed</span>
+      <span class="pen warn"><i></i>tolerance risk</span>
+    </div>
+
+    <div class="hint" id="hint" hidden>drag to turn</div>
   </main>
 
-  <!-- 11.4: one-line printability strip, tap to expand -->
-  <button class="strip" id="strip" hidden aria-expanded="false">
-    <span class="flag" id="stripFlag"></span>
-    <span class="what" id="stripWhat"></span>
-    <span class="chev" aria-hidden="true">▲</span>
-  </button>
+  <!-- ── zone 3: what you got ───────────────────────────────────────── -->
+  <aside class="col right" id="colRight">
 
-  <!-- 11.4: everything else is the bottom sheet -->
-  <section class="sheet" id="sheet">
-    <div class="grip" aria-hidden="true"></div>
-
-    <!-- ask -->
-    <div id="askBlock">
-      <div class="ask">
-        <textarea id="prompt" rows="2" spellcheck="false"
-          placeholder="Bracket to hold an 8 mm rod to a wall"></textarea>
-        <!-- 11.2: the ONE amber element on this screen -->
-        <button class="btn commit" id="generate">Generate</button>
+    <section class="panel glass glass--panel" id="paramPanel" hidden>
+      <div class="phead">
+        <h2 class="label">parameters</h2>
+        <span class="state" id="paramState">up to date</span>
       </div>
-      <div class="seeds" id="seeds">
-        <button class="seed" data-fill="Bracket to hold an 8 mm rod to a wall">Rod bracket</button>
-        <button class="seed" data-fill="A flat plate 80 by 40 by 6 mm with two 5 mm holes 60 mm apart">Drilled plate</button>
-        <button class="seed" data-fill="An enclosure 100 by 60 by 30 mm with 2.5 mm walls">Enclosure</button>
-        <button class="seed" data-fill="A shelf bracket for a 200 mm shelf, 6 mm thick">Shelf bracket</button>
-        <button class="seed" data-fill="A wall hook 80 mm tall screwed through two 5 mm holes">Wall hook</button>
-      </div>
-      <p class="note" id="machineNote" hidden></p>
-    </div>
+      <div class="params" id="params"></div>
+      <p class="micro" id="paramNote" hidden></p>
+    </section>
 
-    <!-- working -->
-    <div id="workBlock" hidden>
-      <div class="working">
-        <div class="caliper" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="what">
-          <div class="stagename" id="stageName">Thinking</div>
-          <div class="eta" id="stageEta"></div>
-        </div>
-        <div class="clock" id="clock">0s</div>
-      </div>
-      <div class="track"><i id="track"></i></div>
-      <details id="logBox"><summary>What it's doing</summary>
-        <pre class="log" id="log"></pre>
-      </details>
-    </div>
+    <section class="panel glass glass--panel" id="reportPanel" hidden>
+      <h2 class="label">dimension report</h2>
+      <div class="kv" id="dimReport"></div>
+    </section>
 
-    <!-- options -->
-    <div id="optsBlock" hidden>
-      <h2 id="optsTitle">Options</h2>
-      <div class="opts" id="opts"></div>
-    </div>
-
-    <!-- the chosen part -->
-    <div id="partBlock" hidden>
-      <h2 id="partName">Part</h2>
-      <div class="facts" id="facts"></div>
-
-      <div class="row actions">
-        <a class="btn" id="dlStl" download>Export STL</a>
-        <button class="btn quiet" id="moreExports">More</button>
-      </div>
-      <div class="row wrap" id="exportRow" hidden>
-        <a class="btn quiet" id="dlStep" download hidden>STEP</a>
-        <a class="btn quiet" id="dl3mf" download hidden>3MF</a>
-      </div>
-
-      <div class="ask" style="margin-top:14px">
-        <input id="refine" type="text" spellcheck="false"
-          placeholder="Make it 20 mm taller">
-        <button class="btn" id="refineBtn">Apply</button>
-      </div>
-
-      <details id="reportBox"><summary>Report</summary>
+    <section class="panel glass glass--panel" id="checkPanel" hidden>
+      <h2 class="label">checks</h2>
+      <div class="checks" id="checks"></div>
+      <details id="reportBox"><summary>Full report</summary>
         <pre class="doc" id="reportText"></pre>
       </details>
-      <details id="specBox"><summary>Spec</summary>
-        <pre class="doc" id="specText"></pre>
-      </details>
-    </div>
+    </section>
 
-    <!-- library -->
-    <div id="libBlock">
-      <h2>Your parts</h2>
-      <div class="opts" id="library"></div>
-    </div>
+    <section class="panel glass glass--panel" id="exportPanel" hidden>
+      <h2 class="label">export</h2>
+      <p class="micro" id="exportNote"></p>
+      <div class="exports" id="exports"></div>
+      <a class="btn commit" id="dlStl" download>Download STL</a>
+    </section>
 
-    <div class="row" style="margin-top:16px">
-      <button class="btn quiet" id="flatToggle" style="flex:1">Reduce effects</button>
-    </div>
-  </section>
+    <section class="panel glass glass--panel" id="libPanel">
+      <h2 class="label">your parts</h2>
+      <div class="lib" id="library"></div>
+    </section>
+  </aside>
+
+  <!-- ── the status line, full width ────────────────────────────────── -->
+  <footer class="statusline glass glass--float">
+    <span class="lamp" id="lamp" title=""></span>
+
+    <!-- THE COMMAND LINE. Always present - brief 6.4. It genuinely parses,
+         server-side, with the same vocabulary the panels use, so `wall 3`
+         means the same thing here as it does on the phone. -->
+    <span class="caret" aria-hidden="true">&gt;</span>
+    <input id="command" type="text" spellcheck="false" autocomplete="off"
+           placeholder="hole m4 x4   ·   wall 3   ·   fillet 2   ·   clearance ?">
+
+    <span class="machine" id="machineText">Checking…</span>
+    <span class="readout num" id="readout"></span>
+  </footer>
 </div>
 
 <script src="/static/app.js"></script>

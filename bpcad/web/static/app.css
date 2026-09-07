@@ -28,42 +28,188 @@
  * A misread digit produces a part that does not fit.
  */
 
+/* THE TOKENS COME FIRST, AND THEY ARE THE ONLY SOURCE OF A COLOUR.
+   Generated from design/tokens.json by tools/tokens.py, and the Dart export
+   beside it carries the identical values - which is the whole point: the
+   handoff calls a colour that differs between web and native a bug rather
+   than an inconsistency. tests/test_tokens.py fails if either export is
+   stale. Nothing below invents a value; it names one. */
+@import url("/static/tokens.css");
 @import url("/static/fonts/fonts.css");
 
+/*
+ * ROLE ALIASES.
+ *
+ * The names on the left are this stylesheet's own vocabulary, used by 400
+ * lines of rules below. The values on the right are tokens. Keeping the
+ * aliases rather than renaming every rule is deliberate: a rename touches
+ * every selector and proves nothing, while an alias makes the mapping
+ * explicit in one place where it can be read and argued with.
+ *
+ * MAPPED BY ROLE, NOT BY NAME - and that distinction is the one bug waiting
+ * here. This file's `--bp-dim` is the CYAN measurement accent; the token
+ * called `dim` is grey secondary text. Aliasing name-to-name would have
+ * turned every dimension figure grey and every label cyan, and both would
+ * have looked deliberate.
+ */
 :root {
   /* Surfaces */
-  --bp-bed:        #101720;
-  --bp-bed-deep:   #0A0F16;
-  --bp-glass:      rgba(28, 40, 54, 0.62);
-  --bp-glass-lift: rgba(40, 56, 74, 0.72);
-  --bp-edge:       rgba(150, 180, 210, 0.18);
+  --bp-bed:        var(--bp-case);       /* the app ground */
+  --bp-bed-deep:   var(--bp-case);       /* was a second, darker ground; the
+                                            design has one ground and rules a
+                                            graticule on it */
+  --bp-edge:       rgb(var(--bp-glass-hairline) / var(--bp-glass-hairline-alpha));
 
-  /* Ink */
-  --bp-ink:        #E8EEF4;
-  --bp-ink-dim:    #93A6B8;
-  --bp-ink-faint:  #5E7286;
+  /* Ink. `screen` is primary text, `dim` secondary, `pen-dim` the faintest -
+     the last is borrowed from the pen set for text on purpose: it is the
+     construction-line grey and that is exactly what a version string is. */
+  --bp-ink:        var(--bp-screen);
+  --bp-ink-dim:    var(--bp-dim);
+  --bp-ink-faint:  var(--bp-pen-dim);
 
-  /* Semantic — two accents, two jobs, never swapped */
-  --bp-dim:        #5BC8D6;
-  --bp-act:        #F2A33C;
-  --bp-pass:       #6FC98A;
-  --bp-fail:       #E06060;
+  /* Semantic. Two accents, two jobs, never swapped: cyan is measurement data,
+     amber is the commit action. In the token set those are `pen-ref` and
+     `phosphor`, which say the same thing in the design's own words.
 
-  --bp-ui:   "Archivo", "Space Grotesk", system-ui, -apple-system, sans-serif;
-  --bp-mono: "JetBrains Mono", ui-monospace, "DejaVu Sans Mono", monospace;
+     `--bp-meas` was called `--bp-dim` in this file, and the token set has a
+     `--bp-dim` of its own that means grey secondary text. Keeping the old
+     name would have shadowed the token: every rule reaching for the design's
+     secondary grey would have got cyan, and it would have looked deliberate.
+     Renamed rather than shadowed - 17 rules, all in this file. */
+  --bp-meas:       var(--bp-pen-ref);
+  --bp-act:        var(--bp-phosphor);
+  --bp-pass:       var(--bp-pen-pass);
+  --bp-fail:       var(--bp-pen-fail);
 
-  --bp-blur: 14px;              /* 11.5.3: 16px is the ceiling on mobile */
-  --bp-radius: 14px;
-  --bp-tap: 44px;               /* 11.4: minimum hit target */
+  --bp-ui:   var(--bp-prose);
+  /* No alias for the mono stack or the tap target: `--bp-mono` and `--bp-tap`
+     are already the tokens' own names for exactly these jobs, so this file
+     uses them directly. An alias that only restates a name is a second place
+     for it to be wrong. */
+
+  /* `--bp-blur`, `--bp-radius` and `--bp-glass` were here and are gone: the
+     design has five depths rather than one blur, and every rule that used
+     them now names a depth instead. A variable with no readers is a value
+     that drifts out of the design with nobody noticing.
+
+     `--bp-glass-lift` stays because the buttons still paint a flat raised
+     fill with no blur of their own - one blur layer, never nested, is what
+     keeps this affordable over a live 3D canvas. */
+  --bp-glass-lift: rgb(var(--bp-glass-tint) / var(--bp-glass-pill-alpha));
+
+  /* The graticule's pitch. 26px on the app ground per the design; the 13px
+     thumbnail grid is half of it, and library cards set it locally. Named
+     because it appears in two gradient stops and would otherwise be two
+     numbers that can disagree. */
+  --bp-graticule: 26px;
 }
 
-/* 11.5.7: honour the platform. A manual escape is offered as body.flat. */
-@media (prefers-reduced-transparency: reduce) {
-  :root {
-    --bp-glass:      rgba(20, 30, 42, 0.97);
-    --bp-glass-lift: rgba(30, 44, 60, 0.98);
-    --bp-blur: 0px;
+/* ── the glass layer ─────────────────────────────────────────────────────
+ *
+ * ONE PRIMITIVE. Handoff section 6 and task C0: every raised surface is
+ * `.glass` plus a depth, and nothing in this file or in a screen sets
+ * `backdrop-filter` itself. That rule is the deliverable, not the blur - five
+ * hand-tuned blurs is how the two clients drift apart a fortnight later.
+ *
+ * WHAT STAYS FLAT: the ground and its graticule, the 3D canvas, and INK.
+ * Text, numerals, dimension callouts, slider thumbs and check marks are full
+ * opacity and never translucent. Glass is the surface under a value, never
+ * the value - a numeric field on glass is a misread digit and a part that
+ * does not fit.
+ *
+ * DEPTH IS OVERLAP, NOT TASTE. A surface over content is denser than one over
+ * the ground, because contrast has to hold against the brightest thing the
+ * model behind it can render. `panel` sits on the ground; `float` sits over
+ * everything. Never go below a step's alpha.
+ */
+.glass {
+  position: relative;
+  background: rgb(var(--bp-glass-tint) / var(--bp-glass-alpha, var(--bp-glass-card-alpha)));
+  backdrop-filter: blur(var(--bp-glass-blur, var(--bp-glass-card-blur)))
+                   saturate(var(--bp-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--bp-glass-blur, var(--bp-glass-card-blur)))
+                           saturate(var(--bp-glass-saturate));
+  border: 1px solid rgb(var(--bp-glass-hairline) / var(--bp-glass-hairline-alpha));
+  border-radius: var(--bp-glass-radius, var(--bp-radius-card));
+  /* The light catching the top edge of the pane. One inset line, not a
+     gradient - a gradient reads as a button. */
+  box-shadow: inset 0 1px 0 rgb(var(--bp-glass-highlight) / var(--bp-glass-highlight-alpha));
+}
+
+.glass--panel { --bp-glass-alpha: var(--bp-glass-panel-alpha);
+                --bp-glass-blur:  var(--bp-glass-panel-blur);
+                --bp-glass-radius: var(--bp-glass-panel-radius); }
+.glass--well  { --bp-glass-alpha: var(--bp-glass-well-alpha);
+                --bp-glass-blur:  var(--bp-glass-well-blur);
+                --bp-glass-radius: var(--bp-glass-well-radius); }
+.glass--card  { --bp-glass-alpha: var(--bp-glass-card-alpha);
+                --bp-glass-blur:  var(--bp-glass-card-blur);
+                --bp-glass-radius: var(--bp-glass-card-radius); }
+.glass--pill  { --bp-glass-alpha: var(--bp-glass-pill-alpha);
+                --bp-glass-blur:  var(--bp-glass-pill-blur);
+                --bp-glass-radius: var(--bp-glass-pill-radius); }
+.glass--float { --bp-glass-alpha: var(--bp-glass-float-alpha);
+                --bp-glass-blur:  var(--bp-glass-float-blur);
+                --bp-glass-radius: var(--bp-glass-float-radius); }
+
+/* Tinted glass keeps its hue and gains alpha over the same blur, and its
+   border takes the tint rather than the neutral hairline - which is why the
+   two alphas are separate tokens. */
+.glass--warn {
+  background: rgb(var(--bp-glass-warn) / var(--bp-glass-warn-alpha));
+  border-color: rgb(var(--bp-glass-warn) / var(--bp-glass-warn-border-alpha));
+}
+.glass--ref {
+  background: rgb(var(--bp-glass-ref) / var(--bp-glass-ref-alpha));
+  border-color: rgb(var(--bp-glass-ref) / var(--bp-glass-ref-border-alpha));
+}
+.glass--active {
+  background: rgb(var(--bp-glass-active) / var(--bp-glass-active-alpha));
+  border-color: rgb(var(--bp-glass-active) / var(--bp-glass-active-border-alpha));
+}
+
+/* Data chrome keeps the hard radii. Soft floating surfaces, hard data marks -
+   that contrast is the point, and it is what stops the glass reading as a
+   generic consumer app. */
+.glass--edge { --bp-glass-radius: var(--bp-radius-edge); }
+.glass--square { --bp-glass-radius: var(--bp-radius-none); }
+
+/* PROGRESSIVE ENHANCEMENT, not a requirement. Where backdrop-filter is
+   unsupported the surface falls back to the flat `bezel` fill at full opacity
+   with the etch hairline - handoff section 6. A translucent tint with no blur
+   behind it is just muddy grey text on grey. */
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .glass {
+    background: var(--bp-bezel);
+    border-color: var(--bp-etch);
   }
+  .glass--warn  { background: var(--bp-bezel); border-color: var(--bp-phosphor); }
+  .glass--ref   { background: var(--bp-bezel); border-color: var(--bp-pen-ref); }
+  .glass--active { background: var(--bp-bezel); border-color: var(--bp-phosphor); }
+}
+
+/* AMBIENT LIGHT BEHIND THE GLASS. Not decoration: a blur with nothing behind
+   it to pick up renders as flat grey, and every panel on the page becomes the
+   same slab. Two washes, phosphor and pen-ref, at low alpha - no new hue
+   enters the palette. Applied to a viewport container, never to a panel. */
+.ambient { background-image: var(--bp-ambient); }
+
+/* 11.5.7 / handoff: honour the platform. A manual escape is offered as
+   body.flat. Reduced transparency drops the blur and takes every surface to
+   the flat fill - the alphas do not simply rise, because a 0.97 tint with no
+   blur is a different colour from the one the design specifies. */
+@media (prefers-reduced-transparency: reduce) {
+  .glass {
+    background: var(--bp-bezel);
+    border-color: var(--bp-etch);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+  .glass--warn  { border-color: var(--bp-phosphor); }
+  .glass--ref   { border-color: var(--bp-pen-ref); }
+  .glass--active { border-color: var(--bp-phosphor); }
+  .ambient { background-image: none; }
+  :root { --bp-blur: 0px; }
 }
 
 * { box-sizing: border-box; }
@@ -95,354 +241,621 @@ html, body {
 }
 
 /* ── the build plate ─────────────────────────────────────────────────────
- * 11.1: build plates and layer lines, not generic dark app chrome. It sits
- * BEHIND the part and never over it. */
+ * The ground, with the design's graticule ruled on it. It sits BEHIND
+ * everything and never over the part. Flat by rule: the ground and the 3D
+ * canvas are the two things the glass layer does not touch.
+ */
 .plate {
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(ellipse 120% 70% at 50% 88%,
-                    rgba(91, 200, 214, 0.07) 0%, transparent 60%),
     repeating-linear-gradient(to right,
-      rgba(150, 180, 210, 0.055) 0 1px, transparent 1px 40px),
+      var(--bp-grid) 0 1px, transparent 1px var(--bp-graticule)),
     repeating-linear-gradient(to bottom,
-      rgba(150, 180, 210, 0.055) 0 1px, transparent 1px 40px),
+      var(--bp-grid) 0 1px, transparent 1px var(--bp-graticule)),
     var(--bp-bed);
 }
 
-/* ── shell ─────────────────────────────────────────────────────────────── */
+/* ── the three-zone shell ────────────────────────────────────────────────
+ *
+ * Handoff: `minmax(0,270px) minmax(0,1fr) minmax(0,290px)`, minimum height
+ * 660. The `minmax(0, ...)` matters more than it looks: a plain `270px 1fr
+ * 290px` lets a long unbroken string in a panel force the column wider than
+ * its track, and the viewport then loses width to a filename.
+ *
+ * The status line is a fourth row spanning all three columns, so it stays
+ * full width whatever the columns do.
+ */
+.shell {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 270px) minmax(0, 1fr) minmax(0, 290px);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: var(--bp-space-base);
+  padding: var(--bp-space-base);
+  height: 100%;
+  min-height: 660px;
+}
+.statusline { grid-column: 1 / -1; }
 
-.app { position: relative; z-index: 1; display: flex; flex-direction: column;
-       height: 100%; }
+.col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bp-space-base);
+  min-width: 0;
+  min-height: 0;
+}
+/* The side columns scroll; the viewport never does. A viewport that scrolls
+   away under a drag is the one thing a 3D view must not do. */
+.left, .right { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; }
+.left { scrollbar-color: var(--bp-etch) transparent; }
+.right { scrollbar-color: var(--bp-etch) transparent; }
 
-.topbar {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px;
-  padding: max(10px, env(safe-area-inset-top)) 16px 10px;
+/* ONE COLUMN BELOW THE THREE-COLUMN WIDTH.
+   The order is deliberate: the part first, then what you asked for, then what
+   you got. On a phone the viewport is the reason the page exists, and the
+   brief's minimum supported width is 380px - three 270px tracks do not fit. */
+@media (max-width: 899px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(320px, 52vh) auto auto auto;
+    height: auto;
+    min-height: 100%;
+    overflow-y: auto;
+  }
+  .centre { order: 1; }
+  .left   { order: 2; }
+  .right  { order: 3; }
+  .left, .right { overflow: visible; }
+  .statusline { order: 4; grid-column: 1; position: sticky; bottom: 0; }
+}
+
+/* ── panels ──────────────────────────────────────────────────────────────
+ * Every panel is the glass primitive plus padding. Nothing here sets a fill,
+ * a blur or a border: those are the depth's, and a panel that sets its own is
+ * the drift the primitive exists to prevent.
+ */
+.panel { padding: var(--bp-space-base); flex: none; }
+.panel > * + * { margin-top: var(--bp-space-snug); }
+
+.label {
+  margin: 0;
+  font: var(--bp-weight-regular) var(--bp-text-micro)/1.3 var(--bp-mono);
+  letter-spacing: .06em;
+  color: var(--bp-ink-dim);
+}
+.phead { display: flex; align-items: baseline; justify-content: space-between;
+         gap: var(--bp-space-snug); }
+.phead .label { margin: 0; }
+
+.micro {
+  margin: 0;
+  font: var(--bp-weight-regular) var(--bp-text-micro)/1.45 var(--bp-mono);
+  color: var(--bp-ink-faint);
+}
+.micro.warn { color: var(--bp-act); }
+
+.brandbar {
+  display: flex; align-items: center; gap: var(--bp-space-snug);
+  padding: 0 var(--bp-space-tight) var(--bp-space-tight);
   flex: none;
 }
-.brand { display: flex; align-items: center; gap: 9px; font-weight: 600;
-         letter-spacing: -0.2px; }
-.brand .mark {
-  width: 20px; height: 20px; flex: none; border-radius: 5px;
-  background: linear-gradient(140deg, var(--bp-dim), #2c7f8c);
-  box-shadow: 0 0 14px -4px var(--bp-dim);
+.brandbar .name { font: var(--bp-weight-bold) var(--bp-text-figure)/1 var(--bp-mono);
+                  letter-spacing: -.01em; }
+.brandbar .mark {
+  width: 22px; height: 22px; flex: none;
+  border-radius: var(--bp-radius-edge);
+  background: linear-gradient(140deg, var(--bp-act),
+              color-mix(in srgb, var(--bp-act) 45%, var(--bp-case)));
 }
-.brand .name { font-size: 16px; }
 
-.machine { display: flex; align-items: center; gap: 7px; font-size: 12px;
-           color: var(--bp-ink-dim); min-width: 0; }
-.machine .lamp { width: 7px; height: 7px; border-radius: 50%;
-                 background: var(--bp-ink-faint); flex: none; }
-.machine .lamp.ready { background: var(--bp-pass); box-shadow: 0 0 8px rgba(111,201,138,.7); }
-.machine .lamp.slow  { background: var(--bp-act); }
-.machine .lamp.none  { background: var(--bp-fail); }
-.machine .lamp.busy  { background: var(--bp-dim); animation: lamp 1.2s ease-in-out infinite; }
-@keyframes lamp { 0%,100% { opacity: 1 } 50% { opacity: .3 } }
-.machine .txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ── the prompt ──────────────────────────────────────────────────────────
+ * The one amber-bordered surface on the page. The design gives the commit
+ * action one element per screen, and on this screen it is the composer.
+ */
+.prompt-panel { border-color: color-mix(in srgb, var(--bp-act) 65%, transparent); }
 
-/* ── the viewport, which is the hero ───────────────────────────────────── */
+.well { padding: var(--bp-space-snug); }
+.well textarea, .well input {
+  display: block; width: 100%; border: 0; padding: 0; margin: 0;
+  background: transparent; color: var(--bp-ink); resize: vertical;
+  font: var(--bp-weight-regular) var(--bp-text-reading)/1.5 var(--bp-prose);
+}
+.well textarea:focus, .well input:focus { outline: none; }
+.well textarea::placeholder { color: var(--bp-ink-faint); }
 
-.stage {
-  position: relative; flex: 1 1 auto; min-height: 0;
+/* Photo tiles: 56px, the design's size. An attached photo is outlined in the
+   reference pen because that is what it becomes - a measured body, not a
+   printed one. */
+.tiles { display: flex; gap: var(--bp-space-snug); flex-wrap: wrap; }
+.tile {
+  width: 56px; height: 56px; flex: none;
+  display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 3px;
+  background: transparent; cursor: pointer;
+  border: 1px solid var(--bp-etch);
+  border-radius: var(--bp-radius-control);
+  color: var(--bp-ink-faint);
+  font: var(--bp-weight-regular) 9.5px/1 var(--bp-mono);
+}
+.tile:hover { border-color: var(--bp-act); color: var(--bp-act); }
+.tile .glyph { width: 16px; height: 12px; border: 1px solid currentColor;
+               border-radius: 2px; }
+.tile .glyph.plus { border: 0; font-size: 15px; height: auto; width: auto;
+                    line-height: 1; }
+.tile.photo { border-color: var(--bp-meas); color: var(--bp-meas);
+              overflow: hidden; padding: 0; }
+.tile.photo img { width: 100%; height: 100%; object-fit: cover; }
+
+/* The pipeline banner. A trust surface: it says which road the request took
+   before a credit is spent. */
+.banner { display: flex; gap: var(--bp-space-snug);
+          padding: var(--bp-space-snug) var(--bp-space-base); }
+.bmark {
+  width: 18px; height: 18px; flex: none;
+  display: grid; place-items: center;
+  border: 1px solid var(--bp-meas); border-radius: 2px;
+  color: var(--bp-meas);
+  font: var(--bp-weight-medium) 10px/1 var(--bp-mono);
+}
+.banner.warnish .bmark { border-color: var(--bp-act); color: var(--bp-act); }
+.bhead { font: var(--bp-weight-medium) var(--bp-text-label)/1.35 var(--bp-mono);
+         color: var(--bp-ink); }
+.bbody { margin: 3px 0 0; font: var(--bp-weight-regular) var(--bp-text-label)/1.5
+         var(--bp-prose); color: var(--bp-ink-dim); }
+
+/* ── chips and assumption rows ───────────────────────────────────────────
+ * Brief 4.5: never silently invent a dimension. A value read out of the
+ * words is a pass chip; a value filled in for you is amber and editable, and
+ * the difference is legible without reading either.
+ */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  padding: 4px 8px;
+  border: 1px solid var(--bp-pass);
+  border-radius: var(--bp-radius-edge);
+  color: var(--bp-pass);
+  font: var(--bp-weight-regular) var(--bp-text-label)/1.2 var(--bp-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.rows { display: flex; flex-direction: column; }
+.arow {
+  display: flex; align-items: center; gap: var(--bp-space-snug);
+  width: 100%; padding: 7px 2px; cursor: pointer;
+  background: transparent; border: 0; border-bottom: 1px solid var(--bp-etch);
+  text-align: left; color: var(--bp-ink);
+  font: var(--bp-weight-regular) var(--bp-text-label)/1.3 var(--bp-mono);
+}
+.arow:last-child { border-bottom: 0; }
+.arow:hover .av { text-decoration: underline; }
+/* A square, not a dot: data marks keep the hard radii. */
+.arow .square { width: 8px; height: 8px; flex: none; background: var(--bp-act); }
+.arow .ak { flex: 1 1 auto; min-width: 0; overflow: hidden;
+            text-overflow: ellipsis; white-space: nowrap; }
+.arow .av { color: var(--bp-act); font-variant-numeric: tabular-nums; }
+
+/* ── versions ────────────────────────────────────────────────────────────
+ * Editing never destroys the last good result. The active one is
+ * amber-bordered; each row carries a pen dot for how it came out.
+ */
+.versions { display: flex; flex-direction: column; gap: 6px; }
+.vrow {
+  display: flex; align-items: center; gap: var(--bp-space-snug);
+  padding: 7px var(--bp-space-snug); cursor: pointer; text-align: left;
+  background: transparent; border: 1px solid var(--bp-etch);
+  border-radius: var(--bp-radius-control); color: var(--bp-ink);
+  font: var(--bp-weight-regular) var(--bp-text-label)/1.3 var(--bp-mono);
+}
+.vrow[aria-current="true"] { border-color: var(--bp-act); }
+.vrow .vid { color: var(--bp-act); font-variant-numeric: tabular-nums; }
+.vrow .vnote { flex: 1 1 auto; min-width: 0; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap;
+               color: var(--bp-ink-dim); }
+.vrow .vdot { width: 8px; height: 8px; flex: none; background: var(--bp-ink-faint); }
+.vrow .vdot.pass { background: var(--bp-pass); }
+.vrow .vdot.warn { background: var(--bp-act); }
+.vrow .vdot.fail { background: var(--bp-fail); }
+
+/* ── scrollback ──────────────────────────────────────────────────────────
+ * Input in `screen`, success in the pass pen, anything provisional in amber -
+ * the design's own three tones, and they are the only colour in here.
+ */
+.scroll-panel { flex: 1 1 auto; min-height: 120px; display: flex;
+                flex-direction: column; }
+.scrollback {
+  margin-top: var(--bp-space-snug);
+  flex: 1 1 auto; overflow-y: auto; min-height: 0;
+  font: var(--bp-weight-regular) 11px/1.6 var(--bp-mono);
+  color: var(--bp-ink-dim);
+  scrollbar-width: thin; scrollbar-color: var(--bp-etch) transparent;
+}
+.scrollback .line { white-space: pre-wrap; word-break: break-word; }
+.scrollback .said { color: var(--bp-ink); }
+.scrollback .ok   { color: var(--bp-pass); }
+.scrollback .prov { color: var(--bp-act); }
+.scrollback .bad  { color: var(--bp-fail); }
+
+/* ── the viewport, which is the hero ─────────────────────────────────────
+ * The ambient wash lives here and nowhere else: it is what the glass has to
+ * pick up, and on the app ground it becomes a full-screen stain instead.
+ */
+.centre {
+  position: relative;
   display: flex; align-items: center; justify-content: center;
-  touch-action: none; user-select: none; overflow: hidden;
+  overflow: hidden;
+  touch-action: none; user-select: none;
+  border-radius: var(--bp-radius-card);
+  background-image: var(--bp-ambient);
 }
-.stage img { max-width: 100%; max-height: 100%; display: block;
-             -webkit-user-drag: none; }
+.centre img, .centre iframe { max-width: 100%; max-height: 100%; display: block;
+                              -webkit-user-drag: none; }
+.centre iframe { position: absolute; inset: 0; width: 100%; height: 100%;
+                 max-width: none; max-height: none; border: 0;
+                 background: transparent; }
 
-/* THE 3D VIEW. Fills the stage, and it is the page the phone loads - not a
-   second renderer, so the two clients cannot drift. `background: transparent`
-   matters: the page paints its own ground and a default white iframe flashes
-   through for a frame on every open. */
-.stage iframe {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  border: 0; background: transparent; display: block;
+/* ONE ROW, WRAPPING. The switcher and the toggles cannot collide because
+   they are the same flex row - a long part name wraps the toggles to the
+   next line rather than sliding under them. */
+.chrome {
+  position: absolute; top: var(--bp-space-base); left: var(--bp-space-base);
+  right: var(--bp-space-base); z-index: 3;
+  display: flex; flex-wrap: wrap; align-items: flex-start;
+  justify-content: space-between; gap: var(--bp-space-snug);
+  pointer-events: none;
 }
+.chrome > * { pointer-events: auto; display: flex; flex-wrap: wrap;
+              gap: 6px; min-width: 0; }
 
-/* Which of the two views is on screen. The turntable is PICTURES of the part
-   and the 3D view is the part; a viewport that does not say which is which
-   makes a slow-loading mesh look like a frozen turntable. Bottom right, out
-   of the part's way, and a real tap target - brief 6.3 pins 44px. */
-.viewtoggle {
-  position: absolute; right: 14px; bottom: 14px; z-index: 2;
-  min-width: 44px; height: 32px; padding: 0 12px;
-  font: 500 12px/1 var(--bp-mono, ui-monospace, monospace);
-  letter-spacing: .04em;
-  color: var(--bp-ink-dim); background: rgba(11, 15, 13, .72);
-  border: 1px solid var(--bp-edge, rgba(150, 180, 210, .18));
-  border-radius: 3px; cursor: pointer;
-  backdrop-filter: blur(6px);
+.pill {
+  padding: 6px 11px; min-height: 28px; cursor: pointer;
+  color: var(--bp-ink-dim);
+  font: var(--bp-weight-regular) var(--bp-text-label)/1.2 var(--bp-mono);
 }
-.viewtoggle:hover { color: var(--bp-ink); }
-.viewtoggle[aria-pressed="true"] {
-  color: var(--bp-act, #FFB000);
-  border-color: var(--bp-act, #FFB000);
+.pill:hover { color: var(--bp-ink); }
+/* An active pill is tinted glass, not a different grey. */
+.pill[aria-pressed="true"] {
+  background: rgb(var(--bp-glass-active) / var(--bp-glass-active-alpha));
+  border-color: rgb(var(--bp-glass-active) / var(--bp-glass-active-border-alpha));
+  color: var(--bp-act);
 }
+.pill.name { color: var(--bp-ink); max-width: 100%; overflow: hidden;
+             text-overflow: ellipsis; white-space: nowrap; }
+.pill.name b { font-weight: var(--bp-weight-medium); }
+.pill.name span { color: var(--bp-ink-dim); font-size: 9.5px; }
 
-/* 11.6: ONE orchestrated moment — the part resolving in. Nothing else in the
-   interface animates on entry. */
-.stage img.resolving { animation: resolve 620ms cubic-bezier(.2,.8,.2,1); }
+.blank { max-width: 30ch; padding: 0 var(--bp-space-loose); text-align: center; }
+.blank h1 { margin: 0 0 var(--bp-space-snug);
+            font: var(--bp-weight-bold) var(--bp-text-title)/1.2 var(--bp-prose); }
+.blank p { margin: 0; color: var(--bp-ink-dim);
+           font: var(--bp-weight-regular) var(--bp-text-body)/1.55 var(--bp-prose); }
+
+/* Shown while the server makes the first frame. It borrows the caliper from
+   the generate block deliberately - one "working" mark in the whole
+   interface, so it is never a question of which kind of waiting this is. */
+.staging { display: flex; align-items: center; gap: var(--bp-space-base);
+           padding: 0 var(--bp-space-loose); text-align: left;
+           color: var(--bp-ink-dim);
+           font: var(--bp-weight-regular) var(--bp-text-body)/1.5 var(--bp-prose); }
+.staging.failed { color: var(--bp-fail); }
+.caliper { display: inline-flex; gap: 3px; align-items: flex-end; height: 14px; }
+.caliper span { width: 3px; height: 6px; background: var(--bp-act);
+                animation: caliper 1.05s ease-in-out infinite; }
+.caliper span:nth-child(2) { animation-delay: .14s; }
+.caliper span:nth-child(3) { animation-delay: .28s; }
+@keyframes caliper { 0%,100% { height: 5px; opacity: .5; }
+                     50% { height: 14px; opacity: 1; } }
+
+/* ONE orchestrated moment - the part resolving in. Nothing else animates on
+   entry. */
+.centre img.resolving { animation: resolve 620ms cubic-bezier(.2,.8,.2,1); }
 @keyframes resolve {
   from { opacity: 0; transform: scale(.94) translateY(10px); filter: blur(6px); }
   to   { opacity: 1; transform: none;                        filter: none; }
 }
+
+/* Dimension callouts. Mono, tabular, in the pen colour of what they describe,
+   on a `case`-at-82% chip with a matching hairline - so a number never sits
+   directly on the part where the part's own shading can eat it. */
+.callouts { position: absolute; inset: 0; z-index: 2; pointer-events: none; }
+.callout {
+  position: absolute; transform: translate(-50%, -50%);
+  padding: 3px 6px; white-space: nowrap;
+  background: color-mix(in srgb, var(--bp-case) 82%, transparent);
+  border: 1px solid var(--bp-meas);
+  color: var(--bp-meas);
+  font: var(--bp-weight-regular) var(--bp-text-micro)/1.2 var(--bp-mono);
+  font-variant-numeric: tabular-nums;
+  animation: fadein 320ms ease-out;
+}
+@keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
+
+.legend {
+  position: absolute; left: var(--bp-space-base); bottom: var(--bp-space-base);
+  z-index: 3; display: flex; flex-direction: column; gap: 3px;
+  padding: var(--bp-space-snug) var(--bp-space-base);
+}
+.pen { display: flex; align-items: center; gap: 7px; color: var(--bp-ink-dim);
+       font: var(--bp-weight-regular) 9.5px/1.4 var(--bp-mono); }
+.pen i { width: 10px; height: 2px; flex: none; }
+.pen.solid i { background: var(--bp-pen-solid); }
+.pen.ref i   { background: var(--bp-pen-ref); }
+.pen.pass i  { background: var(--bp-pen-pass); }
+.pen.warn i  { background: var(--bp-pen-warn); }
+
+.hint {
+  position: absolute; right: var(--bp-space-base); bottom: var(--bp-space-base);
+  z-index: 3; color: var(--bp-ink-faint);
+  font: var(--bp-weight-regular) 9.5px/1 var(--bp-mono);
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .stage img.resolving { animation: none; }
-  .machine .lamp.busy { animation: none; }
+  .centre img.resolving, .callout { animation: none; }
+  .caliper span { animation: none; }
+  .lamp.busy { animation: none; }
 }
 
-/* 11.7: shown while the server makes the first frame. It borrows the caliper
-   from the generate block deliberately - one "working" mark in the whole
-   interface, so it is never a question of which kind of waiting this is. */
-.staging { display: flex; align-items: center; gap: 12px; padding: 0 28px;
-           color: var(--bp-ink-dim); font-size: 13.5px; text-align: left; }
-.staging.failed .caliper { display: none; }
-.staging.failed .txt { color: var(--bp-fail); }
-
-.blank { text-align: center; padding: 0 28px; max-width: 420px;
-         color: var(--bp-ink-dim); }
-.blank h1 { font-size: 22px; font-weight: 600; letter-spacing: -0.3px;
-            color: var(--bp-ink); margin: 0 0 8px; }
-.blank p { margin: 0; font-size: 14px; }
-
-.variants { position: absolute; left: 0; right: 0; bottom: 10px;
-            display: flex; align-items: center; justify-content: center; gap: 6px; }
-.variants button { width: var(--bp-tap); height: 26px; display: grid;
-                   place-items: center; background: none; border: 0;
-                   cursor: pointer; padding: 0; }
-.variants button i { display: block; width: 8px; height: 8px; border-radius: 50%;
-                     background: var(--bp-ink-faint);
-                     transition: background .18s, transform .18s; }
-.variants button[aria-current="true"] i { background: var(--bp-dim);
-                                          transform: scale(1.4); }
-
-/* ── the printability strip ────────────────────────────────────────────── */
-
-.strip {
-  flex: none; margin: 0 12px;
-  border-radius: var(--bp-radius) var(--bp-radius) 0 0;
-  border: 1px solid var(--bp-edge); border-bottom: 0;
-  background: var(--bp-glass);
-  backdrop-filter: blur(var(--bp-blur));
-  padding: 11px 14px;
-  display: flex; align-items: center; gap: 10px;
-  font-size: 13px; cursor: pointer;
+/* ── parameters ──────────────────────────────────────────────────────────
+ * A numeric value is an INPUT, not a readout. Every slider has a tappable
+ * field beside it: a maker knows the exact number, and hunting for it with a
+ * thumb is an insult. The field is solid, never glass - a misread digit
+ * produces a part that does not fit.
+ */
+.params { display: flex; flex-direction: column; gap: var(--bp-space-base); }
+.param { display: flex; flex-direction: column; gap: 5px; }
+.prow { display: flex; align-items: baseline; gap: var(--bp-space-snug); }
+.pname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+         white-space: nowrap; color: var(--bp-ink);
+         font: var(--bp-weight-regular) var(--bp-text-label)/1.3 var(--bp-mono); }
+.pval {
+  width: 5.5ch; padding: 2px 4px; text-align: right;
+  background: var(--bp-bezel); color: var(--bp-act);
+  border: 1px solid var(--bp-etch); border-radius: var(--bp-radius-none);
+  font: var(--bp-weight-medium) var(--bp-text-figure)/1.1 var(--bp-mono);
+  font-variant-numeric: tabular-nums;
 }
-.strip .flag { font-family: var(--bp-mono); font-size: 12px; flex: none; }
-.strip .flag.pass { color: var(--bp-pass); }
-.strip .flag.fail { color: var(--bp-fail); }
-.strip .what { color: var(--bp-ink-dim); min-width: 0; overflow: hidden;
-               text-overflow: ellipsis; white-space: nowrap; }
-.strip .chev { margin-left: auto; color: var(--bp-ink-faint); flex: none; }
+.pval:focus { outline: none; border-color: var(--bp-act); }
+.punit { color: var(--bp-ink-dim); font: var(--bp-weight-regular) 9.5px/1 var(--bp-mono); }
 
-/* ── the bottom sheet ──────────────────────────────────────────────────── */
-
-.sheet {
-  flex: none;
-  border-radius: var(--bp-radius) var(--bp-radius) 0 0;
-  border: 1px solid var(--bp-edge); border-bottom: 0;
-  background: var(--bp-glass);
-  /* 11.5.3: ONE blur layer. Nothing inside this may declare another. */
-  backdrop-filter: blur(var(--bp-blur));
-  margin: 0 12px;
-  padding: 0 14px max(14px, env(safe-area-inset-bottom));
-  max-height: 62vh; overflow-y: auto; overscroll-behavior: contain;
+/* A 2px track and a 12px SQUARE thumb. Data chrome keeps the hard radii, and
+   this is the clearest place that rule shows. */
+input[type="range"] {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 12px; margin: 0; background: transparent; cursor: pointer;
 }
-
-/* 11.5.4: while the model turns or a slider moves, the blur becomes a flat
-   tint. Compositing a blur over a canvas repainting every frame is the single
-   most expensive thing on this page. */
-body.interacting .sheet,
-body.interacting .strip { backdrop-filter: none;
-                          background: rgba(20, 30, 42, 0.94); }
-
-.grip { width: 40px; height: 4px; border-radius: 2px;
-        background: var(--bp-ink-faint); opacity: .5; margin: 10px auto 12px; }
-
-.sheet h2 { font-size: 13px; font-weight: 600; color: var(--bp-ink-dim);
-            margin: 4px 0 10px; }
-
-/* ── prompt ────────────────────────────────────────────────────────────── */
-
-.ask { display: flex; gap: 10px; align-items: flex-end; }
-textarea, input[type=text], input[type=search] {
-  flex: 1; width: 100%; min-height: var(--bp-tap);
-  background: var(--bp-bed-deep); color: var(--bp-ink);
-  border: 1px solid var(--bp-edge); border-radius: 10px;
-  padding: 12px 13px;
-  font-family: var(--bp-ui);
-  font-size: 16px;                 /* under 16 and iOS zooms the page on focus */
-  line-height: 1.4; resize: none;
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 2px; background: var(--bp-etch);
 }
-textarea:focus, input:focus { outline: none; border-color: var(--bp-dim);
-                              box-shadow: 0 0 0 1px var(--bp-dim); }
-::placeholder { color: var(--bp-ink-faint); }
+input[type="range"]::-moz-range-track { height: 2px; background: var(--bp-etch); }
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px; margin-top: -5px;
+  background: var(--bp-act); border: 0; border-radius: 0;
+}
+input[type="range"]::-moz-range-thumb {
+  width: 12px; height: 12px; background: var(--bp-act);
+  border: 0; border-radius: 0;
+}
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--bp-act) 45%, transparent);
+}
+.pfoot { display: flex; justify-content: space-between; gap: var(--bp-space-snug);
+         color: var(--bp-ink-faint);
+         font: var(--bp-weight-regular) 9.5px/1.3 var(--bp-mono); }
+.pfoot .hintword { flex: 1 1 auto; text-align: center; color: var(--bp-ink-dim); }
 
-/* ── buttons ───────────────────────────────────────────────────────────── */
+.state { font: var(--bp-weight-regular) 9.5px/1 var(--bp-mono);
+         color: var(--bp-ink-faint); }
+.state.dirty { color: var(--bp-act); animation: pulse 1s ease-in-out infinite; }
+@keyframes pulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .state.dirty { animation: none; } }
 
+/* ── the dimension report ────────────────────────────────────────────────
+ * Dimensions are the best-treated element on screen. Tabular, right-aligned,
+ * so a column of them reads as a column.
+ */
+.kv { display: flex; flex-direction: column; }
+.kv .r { display: flex; align-items: baseline; gap: var(--bp-space-snug);
+         padding: 5px 0; border-bottom: 1px solid var(--bp-etch); }
+.kv .r:last-child { border-bottom: 0; }
+.kv .k { flex: 1 1 auto; color: var(--bp-ink-dim);
+         font: var(--bp-weight-regular) var(--bp-text-label)/1.3 var(--bp-mono); }
+.kv .v { color: var(--bp-meas); font-variant-numeric: tabular-nums;
+         font: var(--bp-weight-regular) var(--bp-text-label)/1.3 var(--bp-mono);
+         font-variant-numeric: tabular-nums; }
+.kv .v.warn { color: var(--bp-act); }
+
+/* ── checks ──────────────────────────────────────────────────────────────
+ * A 16px bordered mark in the pen colour carrying the glyph, the name, a
+ * spelled-out tag, and a prose explanation. Never colour alone - brief 6.7.
+ */
+.checks { display: flex; flex-direction: column; gap: var(--bp-space-base); }
+.check { display: flex; gap: var(--bp-space-snug); }
+.cmark {
+  width: 16px; height: 16px; flex: none; display: grid; place-items: center;
+  border: 1px solid currentColor; border-radius: var(--bp-radius-none);
+  font: var(--bp-weight-medium) 10px/1 var(--bp-mono);
+}
+.check.pass .cmark { color: var(--bp-pass); }
+.check.warn .cmark { color: var(--bp-act); }
+.check.fail .cmark { color: var(--bp-fail); }
+.cbody { min-width: 0; }
+.chead { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.cname { color: var(--bp-ink);
+         font: var(--bp-weight-regular) var(--bp-text-label)/1.3 var(--bp-mono); }
+.ctag { font: var(--bp-weight-regular) 9.5px/1 var(--bp-mono); }
+.check.pass .ctag { color: var(--bp-pass); }
+.check.warn .ctag { color: var(--bp-act); }
+.check.fail .ctag { color: var(--bp-fail); }
+.cwhy { margin: 3px 0 0; color: var(--bp-ink-dim);
+        font: var(--bp-weight-regular) var(--bp-text-label)/1.5 var(--bp-prose); }
+
+/* ── export ──────────────────────────────────────────────────────────────
+ * One row per format: a bordered extension tag, the filename, a note, and
+ * the size or a gate word. A gated format is amber and legible, never
+ * disabled grey - "you cannot have this" and "this is broken" must not look
+ * the same.
+ */
+.exports { display: flex; flex-direction: column; }
+.erow {
+  display: flex; align-items: center; gap: var(--bp-space-snug);
+  padding: 7px 0; border-bottom: 1px solid var(--bp-etch);
+  color: var(--bp-ink); text-decoration: none;
+}
+.erow:last-child { border-bottom: 0; }
+.etag {
+  min-width: 44px; padding: 4px 0; text-align: center; flex: none;
+  border: 1px solid var(--bp-etch); border-radius: var(--bp-radius-edge);
+  color: var(--bp-ink-dim);
+  font: var(--bp-weight-regular) 9.5px/1 var(--bp-mono);
+}
+.erow.gated .etag, .erow.gated .esize { color: var(--bp-act);
+                                        border-color: var(--bp-act); }
+.ebody { flex: 1 1 auto; min-width: 0; }
+.ename { font: var(--bp-weight-regular) var(--bp-text-label)/1.3 var(--bp-mono);
+         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.enote { margin: 2px 0 0; color: var(--bp-ink-dim);
+         font: var(--bp-weight-regular) 9.5px/1.4 var(--bp-prose); }
+.esize { flex: none; color: var(--bp-ink-dim); font-variant-numeric: tabular-nums;
+         font: var(--bp-weight-regular) 9.5px/1 var(--bp-mono);
+         font-variant-numeric: tabular-nums; }
+
+/* ── buttons ─────────────────────────────────────────────────────────────
+ * 44px minimum, because a thumb is not a mouse. Amber is the commit action
+ * and there is one per zone.
+ */
 .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  min-height: var(--bp-tap); padding: 0 18px;
-  border-radius: 10px; border: 1px solid var(--bp-edge);
+  display: flex; align-items: center; justify-content: center; gap: 7px;
+  width: 100%; min-height: var(--bp-tap); padding: 0 var(--bp-space-base);
+  cursor: pointer; text-decoration: none;
   background: var(--bp-glass-lift); color: var(--bp-ink);
-  font-family: var(--bp-ui); font-size: 14px; font-weight: 500;
-  cursor: pointer; white-space: nowrap;
+  border: 1px solid var(--bp-edge); border-radius: var(--bp-radius-control);
+  font: var(--bp-weight-medium) var(--bp-text-body)/1 var(--bp-mono);
 }
-.btn:active { transform: translateY(1px); }
-.btn:disabled { opacity: .45; cursor: default; transform: none; }
-
-/* 11.2: amber is the commit action and there is ONE per screen. */
+.btn:hover { border-color: var(--bp-ink-faint); }
 .btn.commit {
   background: var(--bp-act); border-color: var(--bp-act);
-  color: #241503; font-weight: 700;
-  box-shadow: 0 6px 20px -8px rgba(242, 163, 60, .7);
+  color: var(--bp-case); font-weight: var(--bp-weight-bold);
+  box-shadow: 0 6px 20px -8px color-mix(in srgb, var(--bp-act) 70%, transparent);
 }
-.btn.commit:disabled { background: var(--bp-glass-lift);
-                       border-color: var(--bp-edge);
-                       color: var(--bp-ink-faint); box-shadow: none; }
-.btn.quiet { background: transparent; color: var(--bp-ink-dim); }
+.btn.commit .cost { font-weight: var(--bp-weight-regular); opacity: .8; }
+.btn:disabled { background: var(--bp-glass-lift); border-color: var(--bp-edge);
+                color: var(--bp-ink-faint); box-shadow: none; cursor: default; }
+.btn.quiet { background: transparent; }
 
-.row { display: flex; gap: 10px; align-items: center; }
-.row.wrap { flex-wrap: wrap; }
-.row.actions { margin-top: 14px; }
-.row.actions .btn { flex: 1; }
-
-.seeds { display: flex; gap: 8px; overflow-x: auto; margin-top: 10px;
-         padding-bottom: 2px; scrollbar-width: none; }
-.seeds::-webkit-scrollbar { display: none; }
-.seed { flex: none; min-height: 34px; padding: 0 13px; border-radius: 17px;
-        border: 1px solid var(--bp-edge); background: transparent;
-        color: var(--bp-ink-dim); font-family: var(--bp-ui); font-size: 13px;
-        cursor: pointer; }
-.seed:active { background: var(--bp-glass-lift); }
-
-/* ── parameters ────────────────────────────────────────────────────────── */
-
-.param { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px;
-         align-items: center; padding: 6px 0; }
-.param .label { font-size: 13.5px; color: var(--bp-ink-dim); }
-/* 11.5.5: solid, never glass. A misread digit produces a part that does not
-   fit. And it is an input, not a readout — a maker knows the exact number and
-   hunting for it with a thumb is an insult. */
-.param .val {
-  width: 82px; min-height: 34px; text-align: right;
-  background: var(--bp-bed-deep); border: 1px solid var(--bp-edge);
-  border-radius: 8px; color: var(--bp-dim); font-size: 14px; padding: 0 9px;
+/* ── the library ─────────────────────────────────────────────────────────
+ * Two columns of glass cards. The thumbnail band sits on `case` with its own
+ * finer graticule, so a render with a transparent background has the build
+ * plate behind it rather than the card.
+ */
+.lib { display: grid; grid-template-columns: 1fr 1fr; gap: var(--bp-space-snug);
+       margin-top: var(--bp-space-snug); }
+.card {
+  display: flex; flex-direction: column; gap: 5px; padding: 5px;
+  cursor: pointer; text-align: left; color: var(--bp-ink);
+  background: rgb(var(--bp-glass-tint) / var(--bp-glass-card-alpha));
+  border: 1px solid var(--bp-edge); border-radius: var(--bp-radius-card);
 }
-.param input[type=range] {
-  grid-column: 1 / -1; -webkit-appearance: none; appearance: none;
-  width: 100%; height: var(--bp-tap); background: transparent; margin: 0;
+.card[aria-current="true"] { border-color: var(--bp-act); }
+.card .shot {
+  aspect-ratio: 4 / 3; display: grid; place-items: center; overflow: hidden;
+  border-radius: var(--bp-radius-control);
+  background:
+    repeating-linear-gradient(to right, var(--bp-grid) 0 1px, transparent 1px 13px),
+    repeating-linear-gradient(to bottom, var(--bp-grid) 0 1px, transparent 1px 13px),
+    var(--bp-case);
 }
-.param input[type=range]::-webkit-slider-runnable-track {
-  height: 3px; border-radius: 2px; background: var(--bp-edge);
+.card .shot img { width: 100%; height: 100%; object-fit: contain; }
+.card .kind { color: var(--bp-ink-faint);
+              font: var(--bp-weight-regular) 9.5px/1 var(--bp-mono); }
+.card .nm { overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            font: var(--bp-weight-regular) var(--bp-text-label)/1.2 var(--bp-mono); }
+.card .mm { color: var(--bp-meas); font-variant-numeric: tabular-nums;
+            font: var(--bp-weight-regular) 9.5px/1.2 var(--bp-mono);
+            font-variant-numeric: tabular-nums; }
+.card.draft .shot { color: var(--bp-ink-faint);
+                    font: var(--bp-weight-regular) 9.5px/1.5 var(--bp-mono);
+                    text-align: center; }
+
+/* A status badge is bordered in its pen colour with the word spelled out.
+   Colour never carries status alone. */
+.badge {
+  align-self: flex-start; padding: 2px 5px;
+  border: 1px solid currentColor; border-radius: var(--bp-radius-none);
+  font: var(--bp-weight-regular) 9px/1.3 var(--bp-mono);
 }
-.param input[type=range]::-webkit-slider-thumb {
-  -webkit-appearance: none; appearance: none;
-  width: 22px; height: 22px; border-radius: 50%;
-  background: var(--bp-dim); border: 3px solid var(--bp-bed);
-  margin-top: -10px; box-shadow: 0 0 12px -3px var(--bp-dim);
+.badge.moves { color: var(--bp-pass); }
+.badge.ok { color: var(--bp-pass); }
+.badge.noscale { color: var(--bp-act); }
+.badge.ref { color: var(--bp-meas); }
+
+.empty { margin: var(--bp-space-snug) 0 0; color: var(--bp-ink-faint);
+         font: var(--bp-weight-regular) var(--bp-text-label)/1.5 var(--bp-prose); }
+
+/* ── the status line ─────────────────────────────────────────────────────
+ * Full width, always present, and the command line lives in it. The caret is
+ * amber; the coordinate readout is right-aligned and tabular.
+ */
+.statusline {
+  display: flex; align-items: center; gap: var(--bp-space-snug);
+  padding: 0 var(--bp-space-base);
+  min-height: var(--bp-tap);
 }
-.param input[type=range]::-moz-range-track { height: 3px; border-radius: 2px;
-                                             background: var(--bp-edge); }
-.param input[type=range]::-moz-range-thumb { width: 22px; height: 22px;
-  border-radius: 50%; background: var(--bp-dim); border: 3px solid var(--bp-bed); }
-
-/* ── measured facts ────────────────────────────────────────────────────── */
-
-.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(94px, 1fr));
-         gap: 1px; background: var(--bp-edge); border: 1px solid var(--bp-edge);
-         border-radius: 10px; overflow: hidden; margin: 12px 0; }
-.fact { background: var(--bp-bed-deep); padding: 9px 11px; }
-.fact .k { font-size: 10.5px; color: var(--bp-ink-faint); }
-.fact .v { font-size: 15px; color: var(--bp-dim); margin-top: 2px; }
-.fact .v.warn { color: var(--bp-act); }
-.fact .v.bad  { color: var(--bp-fail); }
-
-/* ── options ───────────────────────────────────────────────────────────── */
-
-.opts { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
-        gap: 9px; }
-.opt { border: 1px solid var(--bp-edge); border-radius: 10px;
-       background: var(--bp-bed-deep); padding: 7px; cursor: pointer;
-       text-align: left; color: inherit; font: inherit; }
-.opt[aria-current="true"] { border-color: var(--bp-dim);
-                            box-shadow: 0 0 0 1px var(--bp-dim); }
-.opt img { width: 100%; aspect-ratio: 4/3; object-fit: contain; display: block;
-           border-radius: 6px; background: var(--bp-bed); }
-/* A part name is as long as the prompt that made it -
- * `birdhouse_with_feeder_and_water_retainer` - and unclipped it ran
- * out of its card, painted UNDER the neighbouring cards, and showed
- * through in the gap between them. Clip it to one line. */
-.opt .nm { font-size: 12px; margin-top: 5px; white-space: nowrap;
-           overflow: hidden; text-overflow: ellipsis; }
-.opt .mm { font-size: 10.5px; color: var(--bp-dim); margin-top: 1px; }
-.opt.waiting img {
-  animation: shimmer 1.3s linear infinite;
-  background: linear-gradient(100deg, transparent 20%,
-    rgba(150,180,210,.08) 50%, transparent 80%) var(--bp-bed);
-  background-size: 300% 100%;
+.statusline .caret { color: var(--bp-act); flex: none;
+                     font: var(--bp-weight-medium) var(--bp-text-body)/1 var(--bp-mono); }
+.statusline input {
+  flex: 1 1 auto; min-width: 0; border: 0; background: transparent;
+  color: var(--bp-ink); padding: 0;
+  font: var(--bp-weight-regular) var(--bp-text-body)/1 var(--bp-mono);
 }
-@keyframes shimmer { to { background-position: -200% 0; } }
-@media (prefers-reduced-motion: reduce) { .opt.waiting img { animation: none; } }
+.statusline input:focus { outline: none; }
+.statusline input::placeholder { color: var(--bp-ink-faint); }
+.statusline .machine { flex: none; color: var(--bp-ink-dim);
+                       font: var(--bp-weight-regular) var(--bp-text-micro)/1 var(--bp-mono); }
+.statusline .readout { flex: none; color: var(--bp-ink-faint);
+                       font: var(--bp-weight-regular) var(--bp-text-micro)/1 var(--bp-mono); }
 
-/* ── working ───────────────────────────────────────────────────────────── */
+.lamp { width: 8px; height: 8px; flex: none; background: var(--bp-ink-faint); }
+.lamp.ready { background: var(--bp-pass); }
+.lamp.slow  { background: var(--bp-act); }
+.lamp.none  { background: var(--bp-fail); }
+.lamp.busy  { background: var(--bp-act);
+              animation: pulse 1s ease-in-out infinite; }
 
-.working { display: flex; align-items: center; gap: 12px; padding: 4px 0 2px; }
-.caliper { position: relative; width: 34px; height: 34px; flex: none; }
-.caliper span { position: absolute; left: 0; right: 0; height: 2px;
-                border-radius: 1px; background: var(--bp-dim); opacity: .8; }
-.caliper span:nth-child(1) { top: 5px; animation: jaw 1.5s ease-in-out infinite; }
-.caliper span:nth-child(2) { bottom: 5px;
-                             animation: jaw 1.5s ease-in-out infinite reverse; }
-.caliper span:nth-child(3) { top: 50%; height: 1px; opacity: .35; }
-@keyframes jaw { 0%,100% { transform: translateY(0) } 50% { transform: translateY(9px) } }
-@media (prefers-reduced-motion: reduce) { .caliper span { animation: none; } }
-
-.working .what { min-width: 0; flex: 1; }
-.working .stagename { font-size: 13.5px; }
-.working .eta { font-size: 11.5px; color: var(--bp-ink-faint); margin-top: 1px; }
-.working .clock { font-size: 12px; color: var(--bp-dim); }
-
-.track { height: 2px; background: var(--bp-edge); border-radius: 2px;
-         margin: 10px 0 2px; overflow: hidden; }
-.track i { display: block; height: 100%; width: 0; background: var(--bp-dim);
-           transition: width .5s ease; }
-
-/* ── notes, log, library ───────────────────────────────────────────────── */
-
-.note { font-size: 12.5px; color: var(--bp-ink-dim); margin: 8px 0 0; }
-.note.warn { color: var(--bp-act); }
-pre.log, pre.doc { font-size: 12px; line-height: 1.55; color: var(--bp-ink-dim);
-  background: var(--bp-bed-deep); border: 1px solid var(--bp-edge);
-  border-radius: 10px; padding: 11px; margin: 10px 0 0; max-height: 220px;
-  overflow: auto; white-space: pre-wrap; word-break: break-word; }
-details summary { font-size: 12.5px; color: var(--bp-ink-faint);
-                  cursor: pointer; padding: 8px 0; }
-.empty { color: var(--bp-ink-faint); font-size: 13px; padding: 14px 0; }
-
-/* ── reduce effects, offered manually per 11.5.7 ───────────────────────── */
-
-body.flat .sheet, body.flat .strip { backdrop-filter: none;
-                                     background: rgba(20, 30, 42, 0.97); }
-body.flat .plate { background: var(--bp-bed); }
-body.flat .stage img.resolving { animation: none; }
-
-/* ── wider screens ─────────────────────────────────────────────────────
- * The phone layout IS the layout (11.4). On a desktop the sheet becomes a
- * side panel rather than growing into something else — one interface, and the
- * thumb-reachable version is the one that got the attention. */
-@media (min-width: 900px) {
-  .app { flex-direction: row; }
-  .topbar { position: absolute; top: 0; left: 0; right: 372px; z-index: 2;
-            padding-left: 22px; padding-right: 22px; }
-  .stage { flex: 1; }
-  .strip { position: absolute; left: 22px; right: 394px; bottom: 22px;
-           margin: 0; border-radius: var(--bp-radius);
-           border-bottom: 1px solid var(--bp-edge); }
-  .sheet { width: 360px; flex: none; max-height: none; height: 100%;
-           margin: 0; border-radius: 0; border-right: 0; border-top: 0;
-           padding-top: 8px; }
-  .grip { display: none; }
+@media (max-width: 640px) {
+  /* The machine note goes first: the command line is the control, and 380px
+     cannot hold both it and a sentence about the model. */
+  .statusline .machine, .statusline .readout { display: none; }
 }
+
+/* ── details blocks ─────────────────────────────────────────────────────── */
+details { margin-top: var(--bp-space-snug); }
+summary { cursor: pointer; color: var(--bp-ink-dim);
+          font: var(--bp-weight-regular) var(--bp-text-micro)/1.4 var(--bp-mono); }
+summary::marker { color: var(--bp-ink-faint); }
+.doc {
+  margin: var(--bp-space-snug) 0 0; max-height: 40vh; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+  color: var(--bp-ink-dim);
+  font: var(--bp-weight-regular) 11px/1.6 var(--bp-mono);
+  scrollbar-width: thin; scrollbar-color: var(--bp-etch) transparent;
+}
+
+/* ── reduce effects, offered manually ────────────────────────────────────
+ * The `bloom` pill. It drops the blur and the washes, for a low-end GPU or
+ * for anybody who simply prefers it flat.
+ */
+body.flat .glass { backdrop-filter: none; -webkit-backdrop-filter: none;
+                   background: var(--bp-bezel); }
+body.flat .centre { background-image: none; }
+body.flat .centre img.resolving { animation: none; }
+
+/* While the model turns or a slider moves, the blur becomes a flat tint.
+   Compositing a blur over a canvas repainting every frame is the single most
+   expensive thing on this page. */
+body.interacting .glass { backdrop-filter: none; -webkit-backdrop-filter: none;
+                          background: var(--bp-bezel); }

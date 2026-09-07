@@ -52,14 +52,46 @@ def tokens() -> dict:
     return json.loads(SOURCE.read_text())
 
 
+def _without_comments(source: str) -> str:
+    """
+    Strip comments before looking for code.
+
+    Both primitive tests below search for a construct by name, and this file's
+    own prose explains at length why that construct is forbidden outside the
+    primitive - so the first version of those tests failed on the comments
+    that describe the rule they enforce. Blanked rather than deleted so line
+    numbers in a failure message still point at the right place.
+    """
+    source = re.sub(r"/\*.*?\*/", lambda m: "\n" * m.group().count("\n"),
+                    source, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", source, flags=re.M)
+
+
 # ---------------------------------------------------------------------------
 # The source says what the brief says.
 # ---------------------------------------------------------------------------
 
 def test_the_core_palette_is_the_briefs_six_values():
+    """
+    Plus `grid`, and that seventh value is checked separately below rather
+    than folded in here. This test is the brief's own list, to the byte, and
+    it stops being that the moment additions are allowed to pass silently.
+    """
     core = {k: v["hex"] for k, v in tokens()["core"].items()
             if not k.startswith("$")}
-    assert core == BRIEF_CORE
+    assert {k: v for k, v in core.items() if k != "grid"} == BRIEF_CORE
+
+
+def test_the_seventh_core_value_is_the_graticule_and_says_why():
+    """
+    The token source demands a written reason for a seventh core colour. The
+    design handoff draws a graticule on every ground and names its colour, so
+    it was going to be written down somewhere - and written in two stylesheets
+    it is two values that can disagree.
+    """
+    grid = tokens()["core"]["grid"]
+    assert grid["hex"] == "#141A17"
+    assert grid.get("why"), "a seventh core colour with no reason recorded"
 
 
 def test_the_pen_set_is_the_briefs_six_pens():
@@ -103,6 +135,219 @@ def test_the_pinned_metrics_match_the_briefs_floors():
     metric = tokens()["metric"]
     assert metric["tap"] == 44
     assert metric["min_width"] == 380
+
+
+# ---------------------------------------------------------------------------
+# The glass layer. Design handoff section 6, an accepted amendment to brief
+# 6.6, and task C0.
+#
+# What is worth testing here is not the numbers - those are a design decision
+# and they will be retuned. It is the STRUCTURE the design depends on: five
+# depths that increase, two radii the sheet needs, a tint exported as one
+# value rather than five, and an ambient wash that exists at all.
+# ---------------------------------------------------------------------------
+
+GLASS_DEPTHS = ["panel", "well", "card", "pill", "float"]
+
+
+def test_the_glass_depths_are_ordered_shallowest_to_densest():
+    """
+    THE ONE RULE THAT KEEPS GLASS LEGIBLE: a surface over content is denser
+    than one over the ground, because contrast has to hold against the
+    brightest thing the render behind it can produce. If the alphas ever stop
+    increasing, a bottom sheet becomes more transparent than a side panel and
+    the numbers on it stop being readable over a bright part.
+    """
+    surface = tokens()["glass"]["surface"]
+    assert [k for k in surface if not k.startswith("$")] == GLASS_DEPTHS
+
+    alphas = [surface[name]["alpha"] for name in GLASS_DEPTHS]
+    assert alphas == sorted(alphas), (
+        "the depths are not ordered: %s" % dict(zip(GLASS_DEPTHS, alphas))
+    )
+    # The handoff's floor, and its ceiling on the whole scale.
+    assert min(alphas) >= 0.30, "below the design's alpha floor"
+    assert max(alphas) <= 0.62, "denser than the design's densest surface"
+
+
+@pytest.mark.parametrize("name", GLASS_DEPTHS)
+def test_every_depth_names_a_radius_that_exists(name):
+    """
+    A depth pointing at a radius token that is not there produces
+    `var(--bp-radius-nonsense)` in CSS, which silently computes to 0 - square
+    corners on the bottom sheet, with nothing in the console.
+    """
+    step = tokens()["glass"]["surface"][name]
+    assert step["radius"] in tokens()["radius"], (
+        "depth %r names radius %r, which is not a token" % (name, step["radius"])
+    )
+    assert step["blur"] > 0
+    assert step.get("use"), "depth %r does not say what it is for" % name
+
+
+def test_the_two_radii_the_glass_needed_were_added():
+    """
+    The scale topped out at 10 and a floating sheet needs more. Handoff
+    TOKENS.md: `control` 7 for pills and segments, `float` 16 for the sheet,
+    the bezel and the status line.
+    """
+    radius = tokens()["radius"]
+    assert radius["control"] == 7
+    assert radius["float"] == 16
+    # And the hard end of the scale survives. Soft radii belong to floating
+    # SURFACES; 0 and 3 stay on data marks - check marks, status squares,
+    # slider thumbs, progress bars. That contrast is the design's whole point
+    # and it is the thing a later retune would quietly lose.
+    assert radius["none"] == 0
+    assert radius["edge"] == 3
+
+
+def test_the_tint_is_one_value_and_not_one_per_depth():
+    """
+    Handoff TOKENS.md says it plainly: export the tint as a function of alpha
+    rather than as six separate colours, so a theme change moves all of it.
+    Five baked colours is five places for a retune to miss one.
+    """
+    tint = tokens()["glass"]["tint"]
+    assert len(tint["rgb"]) == 3
+    assert all(0 <= channel <= 255 for channel in tint["rgb"])
+
+    css = CSS.read_text()
+    # Space-separated: these are composed with CSS Color 4's slash syntax,
+    # which rejects commas and computes to transparent when it gets them.
+    assert "--bp-glass-tint: %s;" % " ".join(str(c) for c in tint["rgb"]) in css
+    assert "rgb(var(--bp-glass-tint) /" in (WEB_STATIC / "app.css").read_text()
+    # The depths carry an alpha, never a finished colour.
+    for name in GLASS_DEPTHS:
+        assert "--bp-glass-%s-alpha:" % name in css
+
+    dart = DART.read_text()
+    assert "static Color tint(double alpha)" in dart, (
+        "the Dart export bakes the tint instead of taking an alpha"
+    )
+
+
+def test_tinted_glass_has_a_separate_border_alpha():
+    """
+    A tinted surface's border takes the tint at 35-70% while its fill takes it
+    at 10-18%. One alpha for both gives either an invisible border or a fill
+    that swamps the text on it.
+    """
+    for name, tint in tokens()["glass"]["tinted"].items():
+        if name.startswith("$"):
+            continue
+        assert tint["border_alpha"] > tint["alpha"], (
+            "%s: the border is no more visible than the fill" % name
+        )
+        assert tint.get("use"), "tint %r does not say what it is for" % name
+
+
+def test_the_ambient_wash_exists_and_reaches_both_clients():
+    """
+    Not decoration. A blur with nothing behind it to pick up renders as flat
+    grey and every panel becomes the same slab - which is the failure mode the
+    handoff calls out by name, and it looks like the glass simply not working.
+    """
+    layers = tokens()["glass"]["ambient"]["layers"]
+    assert len(layers) == 2, "the design specifies two washes"
+
+    css = CSS.read_text()
+    assert "--bp-ambient:" in css
+    assert css.count("radial-gradient") >= 2
+
+    dart = DART.read_text()
+    for index in range(2):
+        for field in ("wash%d", "wash%dAlpha", "wash%dAt", "wash%dSize",
+                      "wash%dStop"):
+            assert (field % index) in dart, (
+                "%s missing from the Dart export" % (field % index)
+            )
+
+
+def test_the_ambient_wash_introduces_no_new_hue():
+    """
+    It is phosphor and pen-ref at low alpha. A third colour appearing here is
+    a palette expansion disguised as a lighting effect.
+    """
+    allowed = {
+        tuple(int(BRIEF_CORE["phosphor"].lstrip("#")[i:i + 2], 16)
+              for i in (0, 2, 4)),
+        tuple(int(BRIEF_PENS["ref"].lstrip("#")[i:i + 2], 16)
+              for i in (0, 2, 4)),
+    }
+    for layer in tokens()["glass"]["ambient"]["layers"]:
+        assert tuple(layer["rgb"]) in allowed, (
+            "the ambient wash uses %s, which is not in the palette" % layer["rgb"]
+        )
+        assert layer["alpha"] <= 0.20, "a wash this strong is a stain"
+
+
+def test_the_web_glass_primitive_is_the_only_place_that_blurs():
+    """
+    TASK C0'S ACTUAL DELIVERABLE. The blur is not the point - one primitive
+    is. Five surfaces each tuning their own alpha and blur is how the two
+    clients drift apart a fortnight later, and the drift is invisible until
+    somebody puts the phone next to the browser.
+
+    Two exceptions are allowed and both are named here: the media query that
+    turns blur OFF, and the fallback block. A third is a regression.
+    """
+    css = _without_comments((WEB_STATIC / "app.css").read_text())
+    blurs = [
+        line.strip() for line in css.splitlines()
+        if re.match(r"\s*-?(webkit-)?backdrop-filter\s*:", line)
+        and "none" not in line
+    ]
+    assert blurs, "no rule blurs at all; the glass layer is gone"
+
+    # EVERY blur radius must be a token, whichever rule sets it. That is the
+    # rule that survives new surfaces being added - a count would just have to
+    # be raised each time and would stop meaning anything.
+    for line in blurs:
+        assert "var(--bp-glass-" in line, (
+            "a hand-typed blur radius, which is how the two clients drift: %s"
+            % line
+        )
+
+
+def test_the_flutter_glass_primitive_is_the_only_place_that_blurs():
+    """The same rule on the other client, which is the point of the rule."""
+    lib = ROOT / "mobile" / "lib"
+    offenders = [
+        path.name for path in lib.glob("*.dart")
+        if path.name != "glass.dart"
+        and "BackdropFilter(" in _without_comments(path.read_text())
+    ]
+    assert not offenders, (
+        "these build their own BackdropFilter instead of using GlassSurface: %s"
+        % offenders
+    )
+
+
+def test_neither_client_hardcodes_a_colour():
+    """
+    ACCEPTANCE CRITERION 10, the half that is not about staleness. A hex value
+    in a stylesheet is a value that cannot be moved from the token source, and
+    it is invisible until the two screens are side by side.
+
+    app.css is checked because it is the file the design pass rewrote. The
+    Dart side is covered by the generated-file check above plus theme.dart,
+    which holds the role mapping and must hold no values.
+    """
+    css = (WEB_STATIC / "app.css").read_text()
+    assert not re.findall(r"#[0-9A-Fa-f]{3,8}\b", css), (
+        "app.css carries hex literals: %s"
+        % re.findall(r"#[0-9A-Fa-f]{3,8}\b", css)
+    )
+    assert not re.findall(r"rgba?\(\s*\d", css), (
+        "app.css carries raw rgb values: %s"
+        % re.findall(r"rgba?\([^)]*\)", css)
+    )
+
+    theme = (ROOT / "mobile" / "lib" / "theme.dart").read_text()
+    assert not re.findall(r"0x[0-9A-Fa-f]{8}", theme), (
+        "theme.dart carries colour literals; it should map roles to tokens"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -168,6 +413,9 @@ def test_no_hex_literal_creeps_into_the_generated_dart_outside_the_tokens():
     literals = re.findall(r"Color\(0xFF([0-9A-Fa-f]{6})\)", dart)
     allowed = {v.lstrip("#").upper() for v in
                list(BRIEF_CORE.values()) + list(BRIEF_PENS.values())}
+    # The graticule, and the ambient washes - which are phosphor and pen-ref
+    # and so are already in the set above.
+    allowed.add(tokens()["core"]["grid"]["hex"].lstrip("#").upper())
     assert set(literals) <= allowed, (
         "the generated Dart carries a colour that is not a token: %s"
         % (set(literals) - allowed)

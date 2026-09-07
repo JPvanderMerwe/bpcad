@@ -14,7 +14,9 @@
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'glass.dart';
 import 'theme.dart';
+import 'tokens.dart';
 import 'part_screen.dart';
 
 void main() => runApp(const BpcadApp());
@@ -105,7 +107,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
         child: RefreshIndicator(
           onRefresh: _refresh,
           color: BpcadColors.live,
-          backgroundColor: BpcadColors.bedDeep,
+          backgroundColor: BpcadColors.bezel,
           child: CustomScrollView(
             slivers: [
               SliverToBoxAdapter(child: _header()),
@@ -188,9 +190,9 @@ class _LibraryScreenState extends State<LibraryScreen> {
         child: Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: BpcadColors.bedDeep,
+            color: BpcadColors.bezel,
             border: Border.all(color: BpcadColors.edge),
-            borderRadius: BorderRadius.circular(14),
+            borderRadius: BorderRadius.circular(BpRadius.card),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -330,18 +332,23 @@ class _LibraryScreenState extends State<LibraryScreen> {
   Widget _partCard(PartSummary part) {
     final renderVersion = _health?.renderVersion ?? 1;
     return InkWell(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(BpRadius.card),
       onTap: () => Navigator.of(context).push(MaterialPageRoute(
         builder: (_) => PartScreen(
             api: _api, name: part.name, renderVersion: renderVersion),
       )),
-      child: Container(
-        decoration: BoxDecoration(
-          color: BpcadColors.bedDeep,
-          border: Border.all(color: BpcadColors.edge),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        padding: const EdgeInsets.all(7),
+      // A library card is glass at the `card` depth - it sits over the ground
+      // rather than over content, and the design lists it there by name.
+      //
+      // WITH THE BLUR OFF. This is a grid item in a scrolling list, and a
+      // BackdropFilter per card samples everything behind it every frame of
+      // every scroll. The handoff's own note says cap the blur to the sheet,
+      // the tab bar and the floating pills for exactly this reason. The card
+      // keeps the right fill and hairline; it just stops sampling.
+      child: GlassSurface(
+        depth: GlassDepth.card,
+        blur: false,
+        padding: const EdgeInsets.all(BpSpace.snug),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

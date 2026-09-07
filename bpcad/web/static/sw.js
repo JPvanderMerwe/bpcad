@@ -26,12 +26,17 @@
 // up with the new list rather than the old files plus the new ones.
 //
 // v1 -> v2: the 3D viewer page and its vendored renderer.
-const SHELL = 'bpcad-shell-v2';
+// v2 -> v3: the generated design tokens, which app.css now imports.
+const SHELL = 'bpcad-shell-v3';
 
 const SHELL_FILES = [
   '/',
   '/static/app.css',
   '/static/app.js',
+  // The tokens are SHELL. app.css @imports them, so without this the app
+  // opens offline with no palette at all - every colour falling back to the
+  // browser default, which is white on white in half the rules.
+  '/static/tokens.css',
   '/static/manifest.webmanifest',
   // Fonts are SHELL. Brief 11.3: the apps must render offline, and a font that
   // fails to load silently reflows every dimension figure into a different

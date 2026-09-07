@@ -1,33 +1,59 @@
-// One palette, shared with the web app to the byte.
+// One palette, and it is not chosen here.
 //
-// These are not chosen here. They are brief 11.2's tokens, the same values in
-// bpcad/web/static/app.css, and the same ground the CPU rasteriser renders on
-// (bpcad/gui/theme.py's VIEWPORT_BG). Change one and you must change all
-// three: a render sitting on a different ground from the screen around it
-// shows as a hard rectangle behind the part, which is exactly what it looked
-// like before that was fixed.
+// Every value on this screen comes from design/tokens.json through
+// tools/tokens.py, which writes tokens.dart beside this file and tokens.css
+// for the web client from the same source. The design handoff calls a colour
+// that differs between web and native a bug rather than an inconsistency, and
+// tests/test_tokens.py fails if either export is stale.
+//
+// So this file holds NO hex values. What it holds is the mapping from this
+// app's own vocabulary to the tokens - by ROLE, not by name.
+//
+// THE ONE TRAP IN THAT MAPPING. This app's `live` is the CYAN that says "this
+// is measured data", and the token called `dim` is grey secondary text. A
+// name-for-name mapping would have turned every dimension figure grey and
+// every label cyan, and both would have looked deliberate. `live` maps to
+// `pen-ref`, which is the design's own word for the same job.
+//
+// The CPU rasteriser's ground (bpcad/gui/theme.py's VIEWPORT_BG) has to agree
+// with `bed` or a render sits on a different ground from the screen around it
+// and shows as a hard rectangle behind the part - which is exactly what it
+// looked like before that was fixed.
 
 import 'package:flutter/material.dart';
+
+import 'tokens.dart';
 
 class BpcadColors {
   BpcadColors._();
 
-  /// The build plate. Also render.raster's background, to the byte.
-  static const Color bed = Color(0xFF101720);
-  static const Color bedDeep = Color(0xFF0A0F16);
-  static const Color edge = Color(0x2E96B4D2); // rgba(150,180,210,.18)
+  /// The app ground. Also render.raster's background, to the byte.
+  static const Color bed = BpCore.caseColor;
 
-  static const Color ink = Color(0xFFE8EEF4);
-  static const Color inkDim = Color(0xFF93A6B8);
-  static const Color inkFaint = Color(0xFF5E7286);
+  /// The graticule ruled over the ground - `case` lightened.
+  static const Color grid = BpCore.grid;
 
-  /// TWO ACCENTS, TWO JOBS, NEVER SWAPPED. Cyan says "this is live"; amber is
-  /// the commit action and there is one per screen. Spending either on
-  /// decoration is how an accent stops meaning anything.
-  static const Color live = Color(0xFF5BC8D6);
-  static const Color act = Color(0xFFF2A33C);
-  static const Color pass = Color(0xFF6FC98A);
-  static const Color fail = Color(0xFFE06060);
+  /// The flat fill for a surface that cannot carry a blur.
+  static const Color bezel = BpCore.bezel;
+
+  /// Hairlines on flat chrome. `etch` is the token for exactly this; the
+  /// translucent one on glass is BpGlass.hairline().
+  static const Color edge = BpCore.etch;
+
+  static const Color ink = BpCore.screen;
+  static const Color inkDim = BpCore.dim;
+
+  /// The faintest text is the pen set's construction-line grey, borrowed
+  /// deliberately: a version string IS construction geometry.
+  static const Color inkFaint = BpPen.dim;
+
+  /// TWO ACCENTS, TWO JOBS, NEVER SWAPPED. Cyan says "this is measured";
+  /// amber is the commit action and there is one per screen. Spending either
+  /// on decoration is how an accent stops meaning anything.
+  static const Color live = BpPen.ref;
+  static const Color act = BpCore.phosphor;
+  static const Color pass = BpPen.pass;
+  static const Color fail = BpPen.fail;
 }
 
 class BpcadText {
@@ -37,15 +63,15 @@ class BpcadText {
   /// up and a 1 cannot be mistaken for a 7 at a glance - on a measuring
   /// instrument that is not a cosmetic point.
   static const TextStyle dimension = TextStyle(
-    fontFamily: 'monospace',
-    fontSize: 11.5,
+    fontFamily: BpType.mono,
+    fontSize: BpType.micro,
     color: BpcadColors.live,
     fontFeatures: [FontFeature.tabularFigures()],
   );
 
   static const TextStyle fact = TextStyle(
-    fontFamily: 'monospace',
-    fontSize: 15,
+    fontFamily: BpType.mono,
+    fontSize: BpType.reading,
     color: BpcadColors.live,
     fontFeatures: [FontFeature.tabularFigures()],
   );
@@ -59,6 +85,10 @@ ThemeData bpcadTheme() {
     error: BpcadColors.fail,
     onSurface: BpcadColors.ink,
   );
+
+  // Data chrome keeps the hard radii and floating surfaces get the soft ones.
+  // Buttons and fields are controls, so they take `control`.
+  final control = BorderRadius.circular(BpRadius.control);
 
   return ThemeData(
     useMaterial3: true,
@@ -78,37 +108,55 @@ ThemeData bpcadTheme() {
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         backgroundColor: BpcadColors.act,
-        foregroundColor: const Color(0xFF17130A),
-        // 44 logical pixels is the minimum hit target this product uses
+        // `case` on phosphor, which is what the design says plainly. The old
+        // value was a hand-darkened brown that existed nowhere else.
+        foregroundColor: BpCore.caseColor,
+        // The brief pins 44 logical pixels as the minimum hit target
         // everywhere; a thumb is not a mouse.
-        minimumSize: const Size(0, 44),
-        padding: const EdgeInsets.symmetric(horizontal: 18),
-        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
-        shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(11)),
+        minimumSize: const Size(0, BpMetric.tap),
+        padding: const EdgeInsets.symmetric(horizontal: BpSpace.wide),
+        textStyle: const TextStyle(
+            fontSize: BpType.reading, fontWeight: FontWeight.w600),
+        shape: RoundedRectangleBorder(borderRadius: control),
       ),
     ),
     inputDecorationTheme: InputDecorationTheme(
       filled: true,
-      fillColor: BpcadColors.bedDeep,
-      hintStyle: const TextStyle(color: BpcadColors.inkFaint, fontSize: 15),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      // A field WELL, which the design makes glass - but an InputDecoration
+      // cannot carry a BackdropFilter, so it takes the flat fill. A field
+      // wrapped in GlassSurface sets `filled: false` and lets the pane show.
+      fillColor: BpcadColors.bezel,
+      hintStyle: const TextStyle(
+          color: BpcadColors.inkFaint, fontSize: BpType.reading),
+      contentPadding: const EdgeInsets.symmetric(
+          horizontal: BpSpace.base, vertical: BpSpace.base),
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(11),
+        borderRadius: control,
         borderSide: const BorderSide(color: BpcadColors.edge),
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(11),
+        borderRadius: control,
         borderSide: const BorderSide(color: BpcadColors.edge),
       ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(11),
-        borderSide: const BorderSide(color: BpcadColors.live),
+        borderRadius: control,
+        // The focus ring is phosphor: brief 6.7 wants keyboard focus visible,
+        // and amber is the one colour that reads as "this is where you are".
+        borderSide: const BorderSide(color: BpcadColors.act),
       ),
     ),
+    sliderTheme: const SliderThemeData(
+      activeTrackColor: BpcadColors.act,
+      inactiveTrackColor: BpcadColors.edge,
+      thumbColor: BpcadColors.act,
+      trackHeight: 2,
+    ),
     progressIndicatorTheme: const ProgressIndicatorThemeData(
-      color: BpcadColors.live,
+      // Progress is a commit in flight, so it is amber, and its track is the
+      // etch hairline. 2px: it is a data mark, not a decoration.
+      color: BpcadColors.act,
       linearTrackColor: BpcadColors.edge,
+      linearMinHeight: 2,
     ),
   );
 }

@@ -734,6 +734,10 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/parts":
             return self._json({"parts": _library_payload()})
 
+        m = re.fullmatch(r"/api/template/([^/]+)", path)
+        if m:
+            return self._json(self._template(m.group(1)))
+
         m = re.fullmatch(r"/api/part/([^/]+)", path)
         if m:
             return self._json(self._one_part(m.group(1)))
@@ -798,6 +802,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._receive_image()
 
         body = self._body()
+
+        # `body`, not self._body() again. _body() reads Content-Length bytes off
+        # the socket, and a second call blocks for ever waiting for bytes the
+        # client already sent and will not send twice - the request simply
+        # hangs, with no error on either side until something times out.
+        if path == "/api/command":
+            return self._json(self._command(body))
 
         if path == "/api/generate":
             request = (body.get("request") or "").strip()
@@ -978,6 +989,91 @@ class Handler(BaseHTTPRequestHandler):
             if f.suffix.lstrip(".").lower() in self.DOWNLOADABLE
         })
         return payload
+
+    def _template(self, name: str) -> dict:
+        """
+        A template described as data: every parameter with its type, default,
+        bounds, units and description.
+
+        THIS IS WHERE THE SLIDERS' MIN AND MAX COME FROM, and it is the reason
+        this route exists rather than the clients carrying a table. The bounds
+        are the Pydantic schema's own - `wall_mm` is `gt=0.4, le=30.0` because
+        that is what the template accepts - so a slider cannot offer a value
+        the builder will reject, and a new template gets a working parameter
+        form with no client change at all.
+
+        A client inventing its own ranges would be guessing at a dimension,
+        which is the one thing this project does not do.
+        """
+        self._check_name(name)
+        from bpcad import api
+
+        try:
+            return api.template_info(name)
+        except api.ApiError as exc:
+            raise HttpError(404, str(exc))
+
+    def _command(self, body: dict) -> dict:
+        """
+        Parse one command-line entry. Brief 6.4, design handoff.
+
+        ONE PARSER, SHARED. The handoff says the command line must genuinely
+        parse and must use the composer's parser rather than its own. Written
+        in each client, `wall 3` would mean one thing in the browser and
+        another on the phone - the same class of bug as a colour that differs
+        between clients, except this one changes geometry.
+
+        The parse itself is bpcad.agent.command. What is added here is the one
+        thing the parser deliberately does not hold: the answer to a question,
+        which comes from the machine's own profile.
+        """
+        from bpcad.agent import command as parser
+
+        line = body.get("line")
+        if not isinstance(line, str):
+            raise HttpError(400, "send a command as {\"line\": \"wall 3\"}")
+        if len(line) > 400:
+            raise HttpError(400, "that is longer than a command line")
+
+        parsed = parser.parse(line)
+        payload = parsed.to_json()
+
+        if parsed.kind == "ask":
+            payload["echo"] = self._answer(parsed.topic,
+                                           body.get("material") or "petg")
+
+        return payload
+
+    def _answer(self, topic: str | None, material: str) -> str:
+        """
+        Answer a `<topic> ?` from the machine's real configuration.
+
+        AND SAY WHERE THE NUMBER CAME FROM. Brief 4.3 forbids stating a
+        clearance as if it were calibrated when it is a conservative default,
+        because a maker who believes a number is measured designs to it. There
+        is no calibration record in config yet, so every clearance this can
+        answer with is a default and it says so - and when a calibration flow
+        lands, this is the one place that sentence changes.
+
+        An UNSET value is not a missing feature either: TPU's clearance is
+        deliberately unset because nothing measured it, and reading one raises
+        rather than substituting a guess (CLAUDE.md 29). The honest answer is
+        that nobody has measured it.
+        """
+        from bpcad import api
+        from bpcad.agent.loop import running_clearance_mm
+
+        if topic != "clearance":
+            return "%s - nothing here answers that yet" % topic
+
+        cfg = api.config()
+        value = running_clearance_mm(cfg, material)
+        if value is None:
+            return ("clearance for %s has no measured source - print the "
+                    "calibration strip and it becomes a real number" % material)
+
+        return ("clearance %.2f mm - a conservative default for %s, not from "
+                "a calibration strip" % (value, material))
 
     def _send_glb(self, name: str):
         """
