@@ -480,6 +480,62 @@ def test_a_command_without_a_line_is_refused_rather_than_guessed(base_url):
                           {"line": "x" * 500}) == 400
 
 
+def test_refine_reaches_the_agent_instead_of_dying_on_a_type(base_url):
+    """
+    THE REGRESSION. api.refine takes a loaded PartSpec; this route passed the
+    part NAME straight through, so every refine died inside the agent on
+    `'str' object has no attribute 'level'`.
+
+    It had never worked. Nothing exercised it until the phone's command line
+    ran `wall 3` against a real part - and the web client's refine box had
+    been broken in the same way for as long as it had existed.
+
+    THIS TEST DOES NOT RUN A REFINE. A real one calls the model and takes
+    minutes on a CPU. What it checks is the boundary that was wrong: a valid
+    name is accepted and gets a job, and an unknown one is refused with a
+    sentence rather than a type error - which is enough to catch a name being
+    handed to something that wants a spec.
+    """
+    built = a_built_part(base_url)
+
+    accepted = post("%s/api/refine" % base_url,
+                    {"name": built["name"], "instruction": "make it taller"})
+    assert accepted.get("job"), "a valid part did not start a refine"
+
+    # And the job must not have died immediately on a type error. The work
+    # runs on a thread, so this reads the job back rather than the response.
+    import time
+    for _ in range(20):
+        state = get_json("%s/api/job/%s" % (base_url, accepted["job"]))
+        message = str((state.get("result") or {}).get("message", ""))
+        assert "has no attribute" not in message, (
+            "the refine route is still handing a name to something that "
+            "wants a spec: %s" % message
+        )
+        if state.get("done"):
+            break
+        time.sleep(0.25)
+
+
+def test_refining_a_part_that_is_not_there_says_so(base_url):
+    """A missing part is a sentence, not a traceback."""
+    answer = post("%s/api/refine" % base_url,
+                  {"name": "not_a_part", "instruction": "make it taller"})
+    job = answer.get("job")
+    assert job, "the route refused before it could even look"
+
+    import time
+    for _ in range(20):
+        state = get_json("%s/api/job/%s" % (base_url, job))
+        if state.get("done"):
+            result = state.get("result") or {}
+            assert result.get("ok") is False
+            assert "no part called" in str(result.get("message", ""))
+            return
+        time.sleep(0.25)
+    raise AssertionError("the job never finished")
+
+
 def test_the_template_schema_carries_real_bounds_for_the_sliders(base_url):
     """
     THIS IS WHERE THE SLIDERS' MIN AND MAX COME FROM, and the reason the route

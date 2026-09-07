@@ -130,16 +130,60 @@ class _ResultScreenState extends State<ResultScreen> {
     // phone does not end up with a sheet taking two thirds of it.
     final peek = (screen * 0.30).clamp(200.0, 300.0);
     final half = (screen * 0.47).clamp(peek, screen * 0.5);
-    return _half || _sheet != SheetState.peek ? half : peek;
+
+    // THE ECHO GETS ITS OWN ROOM RATHER THAN TAKING THE PANEL'S.
+    //
+    // The sheet is a fixed height and the echo is variable, so adding one
+    // squeezed what was already in there: after a command the Edit / Checks /
+    // Export row was half cut off by the clip, which looks like a rendering
+    // fault rather than a full sheet.
+    //
+    // Three lines of mono 11 at 1.5, plus the row's padding. Still clamped to
+    // half the screen, so the handoff's rule that the viewport keeps at least
+    // half of it holds whatever the echo says.
+    final echo = _scrollback.isEmpty ? 0.0 : 3 * 11 * 1.5 + BpSpace.base;
+    if (_half || _sheet != SheetState.peek) return half;
+    return (peek + echo).clamp(peek, screen * 0.5);
   }
 
   @override
   Widget build(BuildContext context) {
     final part = _part;
+
+    // THE KEYBOARD IS SCAFFOLD'S JOB, AND DOING IT TWICE IS WORSE THAN NOT
+    // DOING IT AT ALL.
+    //
+    // The command line is docked to the sheet's bottom edge and the sheet is
+    // pinned to the body's. Tapping the field opened the keyboard over it, so
+    // the first fix offset every child by viewInsets.bottom - which pushed
+    // the sheet a second keyboard's height up the screen, off the top, with a
+    // 400dp black band where the viewport should have been.
+    //
+    // Scaffold's `resizeToAvoidBottomInset` already shrinks the body to sit
+    // above the keyboard. `bottom: 0` is then the top of the keyboard, which
+    // is exactly where the command line belongs, and the viewport takes what
+    // is left. No arithmetic, and nothing to get wrong twice.
     final inset = part == null ? 0.0 : _sheetHeight(context);
 
     return Scaffold(
+      // StackFit.expand, AND EVERY CHILD POSITIONED. Both halves matter, and
+      // getting it wrong put the whole screen upside down on the device while
+      // every test passed.
+      //
+      // A Stack sizes itself to its largest NON-POSITIONED child. The chrome
+      // row was one - a SafeArea around a Wrap, about 60dp tall - so the Stack
+      // became 60dp tall instead of the screen. From there: the viewport, laid
+      // out as top 0 to bottom `inset`, got a NEGATIVE height and vanished;
+      // and the sheet, pinned `bottom: 0` with `height: inset`, ran from -240
+      // to +60 - so it drew across the top of the screen with its own contents
+      // clipped above the status bar.
+      //
+      // Nothing threw. No overflow warning, no assertion, no red screen: the
+      // layout was arithmetically valid and completely wrong. The widget test
+      // passed too, because with no server `part` is null, the chrome is never
+      // built, and the Stack then has no non-positioned child at all.
       body: Stack(
+        fit: StackFit.expand,
         children: [
           // The viewport, framed inside the band the sheet leaves it.
           Positioned.fill(
@@ -148,7 +192,8 @@ class _ResultScreenState extends State<ResultScreen> {
               child: part == null ? _loading() : _viewport(part),
             ),
           ),
-          if (part != null) _chrome(part),
+          if (part != null)
+            Positioned(top: 0, left: 0, right: 0, child: _chrome(part)),
           if (part != null)
             Positioned(
               left: BpSpace.base,
@@ -346,10 +391,20 @@ class _ResultScreenState extends State<ResultScreen> {
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(BpRadius.control),
-          child: Container(
-            constraints: const BoxConstraints(minWidth: 44, minHeight: 32),
-            alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(horizontal: 11),
+          // PADDING ONLY - NO `alignment`, NO `constraints`.
+          //
+          // A Container with a non-null `alignment` sizes itself as large as
+          // its constraints allow. Inside the chrome's Wrap that is the full
+          // screen width, so each pill became a full-width row stacked down
+          // the viewport instead of a pill beside the part's name. Nothing
+          // warned; it is documented Container behaviour.
+          //
+          // The tap target still clears the brief's 44 × 32 floor on padding
+          // alone: the shortest label is "3D", about 17px of mono 12 plus 28
+          // of horizontal padding, and 12px of line plus 20 of vertical.
+          child: Padding(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             child: Text(label,
                 style: TextStyle(
                     fontFamily: BpType.mono,
@@ -389,6 +444,13 @@ class _ResultScreenState extends State<ResultScreen> {
           children: [
             _grip(),
             Expanded(child: _sheetBody(part)),
+            // THE ECHO GOES WHERE THE COMMAND LINE IS.
+            //
+            // It used to be drawn inside the peek body, so a command typed
+            // from the parameters or the checks sheet produced an echo the
+            // user never saw - and brief 6.4 makes the echo half of the
+            // contract: it is how you know the machine read what you meant.
+            if (_scrollback.isNotEmpty) _echo(),
             _CommandLine(
               onRun: _runCommand,
               readout: part.sizeMm == null
@@ -464,8 +526,6 @@ class _ResultScreenState extends State<ResultScreen> {
             const SizedBox(width: BpSpace.snug),
             Expanded(child: _sheetButton('Export', SheetState.export, true)),
           ]),
-          const SizedBox(height: BpSpace.base),
-          ..._scrollbackLines(),
         ],
       );
 
@@ -763,15 +823,32 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
-  List<Widget> _scrollbackLines() => [
-        for (final (text, tone) in _scrollback.reversed.take(6))
-          Padding(
-            padding: const EdgeInsets.only(bottom: 3),
-            child: Text(text,
-                style: TextStyle(
-                    fontFamily: BpType.mono, fontSize: 11, height: 1.5, color: tone)),
-          ),
-      ];
+  /// The last few lines, newest at the bottom, immediately above the input.
+  ///
+  /// Three rather than the whole history: this is a strip inside a sheet that
+  /// may not exceed half the screen, and a scrollback tall enough to scroll
+  /// would be competing with the panel it sits under. The full history is
+  /// what the web workspace's own scrollback panel is for.
+  Widget _echo() => Padding(
+        padding: const EdgeInsets.fromLTRB(
+            BpSpace.base, 0, BpSpace.base, BpSpace.snug),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final (text, tone) in _scrollback.length <= 3
+                ? _scrollback
+                : _scrollback.sublist(_scrollback.length - 3))
+              Text(text,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: 11,
+                      height: 1.5,
+                      color: tone)),
+          ],
+        ),
+      );
 
   // ── the command line ────────────────────────────────────────────────────
 
@@ -1099,7 +1176,13 @@ class _CommandLineState extends State<_CommandLine> {
         padding: EdgeInsets.only(
           left: BpSpace.base,
           right: BpSpace.base,
-          bottom: MediaQuery.of(context).padding.bottom + BpSpace.snug,
+          // The home-bar inset only matters when the keyboard is DOWN. With
+          // it up the sheet is already riding above it and the extra padding
+          // is just a gap.
+          bottom: (MediaQuery.of(context).viewInsets.bottom > 0
+                  ? 0.0
+                  : MediaQuery.of(context).padding.bottom) +
+              BpSpace.snug,
           top: BpSpace.snug,
         ),
         decoration: const BoxDecoration(

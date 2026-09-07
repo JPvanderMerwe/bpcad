@@ -340,8 +340,27 @@ def _refine_work(name: str, instruction: str):
     def work(job: Job) -> dict:
         from bpcad import api
 
+        # api.refine TAKES A LOADED SPEC, NOT A NAME.
+        #
+        # This route passed the name straight through, so every refine died
+        # inside the agent on `'str' object has no attribute 'level'` - and it
+        # had never worked, because nothing exercised it until the phone's
+        # command line ran `wall 3` against a real part. The web client's
+        # refine box went the same way.
+        #
+        # Loading it here rather than widening api.refine to accept either: a
+        # function that takes "a spec or the name of one" has two code paths
+        # and the seldom-used one is the one that rots.
         job.emit("note", text="reading %s" % name)
-        result = api.refine(name, instruction,
+        spec_path = api._spec_path_for(name)
+        if spec_path is None:
+            return {"ok": False,
+                    "message": "no part called %r, or it has no spec.yaml to "
+                               "change" % name}
+        loaded = api.load_spec(spec_path)
+        spec = loaded[0] if isinstance(loaded, tuple) else loaded
+
+        result = api.refine(spec, instruction,
                             on_event=lambda k, p: job.emit("note", text=str(k)))
         if not result.ok or result.part is None:
             return {"ok": False,

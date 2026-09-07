@@ -141,6 +141,40 @@ void main() {
     expect(find.text('hinge_pip'), findsWidgets);
   });
 
+  testWidgets('the result screen stack fills the screen',
+      (WidgetTester tester) async {
+    // THE BUG THIS PINS, WHICH ONLY THE DEVICE FOUND.
+    //
+    // A Stack sizes itself to its largest NON-POSITIONED child. The result
+    // screen's chrome row was one, about 60dp tall, so the Stack became 60dp
+    // instead of the screen: the viewport was laid out top 0 to bottom
+    // `inset` and got a negative height, and the sheet pinned to `bottom: 0`
+    // drew across the TOP of the screen with its contents clipped above the
+    // status bar.
+    //
+    // Nothing threw. No overflow warning, no assertion, no red screen - the
+    // layout was arithmetically valid and completely wrong. And the existing
+    // test passed, because with no server the part is null, the chrome is
+    // never built, and the Stack then has no non-positioned child to be
+    // sized by.
+    //
+    // So this checks the declaration rather than the geometry: the Stack must
+    // say it fills, whatever its children happen to be that frame.
+    await tester.pumpWidget(MaterialApp(
+      home: ResultScreen(
+        api: BpcadApi('http://localhost:8765'),
+        name: 'hinge_pip',
+      ),
+    ));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    final stack = tester.widget<Stack>(find
+        .descendant(of: find.byType(Scaffold), matching: find.byType(Stack))
+        .first);
+    expect(stack.fit, StackFit.expand,
+        reason: 'the result screen stack can be sized by a child again');
+  });
+
   // NO WIDGET TEST FOR THE 3D VIEWER. It is a WebView, and webview_flutter
   // has no platform implementation under `flutter test` - pumping it throws
   // "A platform implementation for `webview_flutter` has not been set", which
