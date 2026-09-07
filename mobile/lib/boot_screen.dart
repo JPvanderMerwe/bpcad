@@ -24,6 +24,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'glass.dart';
+import 'marks.dart';
 import 'theme.dart';
 import 'tokens.dart';
 
@@ -132,20 +133,16 @@ class _BootScreenState extends State<BootScreen>
 
   Widget _wordmark() => Row(
         children: [
-          // The mark, at the design's 72px with a 14 radius. The real icon
-          // ships in the app bundle; this is the launcher's own gradient so
-          // the boot screen and the launcher agree.
-          Container(
-            width: 72,
-            height: 72,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(14),
-              gradient: const LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [BpCore.phosphor, BpCore.bezel],
-              ),
-            ),
+          // THE REAL MARK, at the design's 72px with a 14 radius.
+          //
+          // This was an amber gradient square, which meant the one screen
+          // whose job is to say "this is bpcad" showed something that appears
+          // nowhere else in the product - least of all on the launcher icon
+          // the user had just tapped to get here.
+          ClipRRect(
+            borderRadius: BorderRadius.circular(14),
+            child: Image.asset('assets/app-icon.png',
+                width: 72, height: 72, filterQuality: FilterQuality.medium),
           ),
           const SizedBox(width: BpSpace.wide),
           Text('bpcad',
@@ -162,7 +159,13 @@ class _BootScreenState extends State<BootScreen>
   /// that came from configuration rather than from a test.
   Widget _selfTest() {
     if (!_done) {
-      return _line('link', 'checking…', BpcadColors.inkDim, pulsing: true);
+      return Row(children: [
+        const Caliper(height: 12),
+        const SizedBox(width: BpSpace.base),
+        Expanded(
+          child: _line('link', 'checking…', BpcadColors.inkDim, pulsing: true),
+        ),
+      ]);
     }
     final health = _health;
     if (health == null) {

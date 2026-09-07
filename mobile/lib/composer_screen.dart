@@ -32,6 +32,7 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'building_screen.dart';
 import 'glass.dart';
+import 'marks.dart';
 import 'theme.dart';
 import 'tokens.dart';
 
@@ -220,16 +221,19 @@ class _ComposerScreenState extends State<ComposerScreen> {
             ),
             const SizedBox(height: BpSpace.base),
             Row(children: [
-              _tile('camera', Icons.photo_camera_outlined),
+              _tile('camera',
+                  const CameraMark(colour: BpcadColors.inkFaint)),
               const SizedBox(width: BpSpace.snug),
-              _tile('files', Icons.add),
+              _tile('files', const TypeMark.plus(colour: BpcadColors.inkFaint)),
             ]),
           ],
         ),
       );
 
   /// 56px, the design's size, bordered in `etch` and going amber on press.
-  Widget _tile(String caption, IconData glyph) => InkWell(
+  /// 56px, the design's size, bordered in `etch`. The mark inside is drawn
+  /// rather than taken from an icon family - see marks.dart.
+  Widget _tile(String caption, Widget mark) => InkWell(
         onTap: _attach,
         borderRadius: BorderRadius.circular(BpRadius.control),
         child: Container(
@@ -242,8 +246,8 @@ class _ComposerScreenState extends State<ComposerScreen> {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(glyph, size: 16, color: BpcadColors.inkFaint),
-              const SizedBox(height: 3),
+              mark,
+              const SizedBox(height: 4),
               Text(caption,
                   style: const TextStyle(
                       fontFamily: BpType.mono,

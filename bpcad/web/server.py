@@ -80,7 +80,11 @@ TURNTABLE_STEPS = 24
 #
 # BUMP THIS whenever the renderer's output changes - background, alpha,
 # shading, camera, size. The client appends it to every frame URL.
-RENDER_VERSION = 2
+# 2 -> 3: the turntable renders in the design's technical style - `bezel`
+# faces, drawn feature edges, a graticule and three axis lines - instead of a
+# shaded grey Lambert render. Every frame's content changed and no frame's URL
+# would have, which is exactly what this constant is for.
+RENDER_VERSION = 3
 
 # Renders are cached by (part, step, size) and never invalidated, because a
 # built part's geometry does not change - a refinement writes a NEW part.
@@ -471,8 +475,7 @@ def _render_turntable_frame(name: str, step: int, width: int, height: int,
     import trimesh
     from PIL import Image
 
-    from bpcad.gui import theme
-    from bpcad.render.raster import render
+    from bpcad.render.technical import render_technical
 
     if layout == "print":
         _part_dir, stl = _resolve_part(name)
@@ -485,16 +488,25 @@ def _render_turntable_frame(name: str, step: int, width: int, height: int,
         mesh = _assembled_mesh(name)
 
     azim = 360.0 * (step % TURNTABLE_STEPS) / TURNTABLE_STEPS
-    # TRANSPARENT. The page draws a build-plate grid (brief 11.1) and a flat
-    # backed render dropped on top of it reads as a hard rectangle around the
-    # part, because the grid stops where the picture starts. With alpha the
-    # part sits ON the plate.
-    img = render(
+
+    # THE DESIGN'S VIEWPORT, not a shaded grey render.
+    #
+    # The handoff's viewport is a technical drawing - dark `bezel` faces, white
+    # feature edges, a graticule floor and three amber axis lines - and this is
+    # the view BOTH clients show by default, so a shaded Lambert render made
+    # the whole product look like something else. See render/technical.py.
+    #
+    # TRANSPARENT. The page draws its own build plate, and a flat-backed
+    # render dropped on top of it reads as a hard rectangle around the part
+    # because the grid stops where the picture starts. With alpha the part
+    # sits ON the plate - and the technical view's own graticule is opaque
+    # where it is drawn, so the two never show through each other.
+    img = render_technical(
         np.asarray(mesh.vertices, dtype=float),
         np.asarray(mesh.faces),
         np.asarray(mesh.face_normals, dtype=float),
         width=width, height=height, elev_deg=26.0, azim_deg=azim,
-        background=theme.VIEWPORT_BG, alpha=True,
+        alpha=True,
     )
     arr = img if img.dtype == np.uint8 else (np.clip(img, 0, 1) * 255).astype(np.uint8)
     buf = io.BytesIO()

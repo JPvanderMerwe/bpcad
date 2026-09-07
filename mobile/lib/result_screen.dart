@@ -38,6 +38,7 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'building_screen.dart';
 import 'glass.dart';
+import 'marks.dart';
 import 'theme.dart';
 import 'tokens.dart';
 import 'viewer_screen.dart';
@@ -231,11 +232,7 @@ class _ResultScreenState extends State<ResultScreen> {
                     color: BpcadColors.ink)),
             const SizedBox(height: BpSpace.base),
             if (_problem == null)
-              const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(
-                      strokeWidth: 1.5, color: BpcadColors.inkFaint))
+              const Waiting(what: 'reading the part', tight: true)
             else
               Text('$_problem — at ${widget.api.baseUrl}',
                   textAlign: TextAlign.center,
@@ -271,9 +268,16 @@ class _ResultScreenState extends State<ResultScreen> {
                     .toString(),
                 fit: BoxFit.contain,
                 gaplessPlayback: true,
-                errorBuilder: (_, __, ___) => Center(
+                // The first view of a 100k-facet mesh takes seconds on the
+                // computer. An empty plate with no word about why is
+                // indistinguishable from a part that failed to arrive.
+                loadingBuilder: (context, child, progress) => progress == null
+                    ? child
+                    : const Center(
+                        child: Waiting(what: 'rendering the part')),
+                errorBuilder: (_, __, ___) => const Center(
                   child: Text('could not render this part',
-                      style: const TextStyle(
+                      style: TextStyle(
                           fontFamily: BpType.mono,
                           fontSize: BpType.label,
                           color: BpPen.fail)),
@@ -338,13 +342,14 @@ class _ResultScreenState extends State<ResultScreen> {
             children: [
               GlassSurface(
                 depth: GlassDepth.pill,
-                child: IconButton(
-                  icon: const Icon(Icons.arrow_back, size: 18),
-                  color: BpcadColors.ink,
-                  constraints:
-                      const BoxConstraints(minWidth: 32, minHeight: 32),
-                  padding: EdgeInsets.zero,
-                  onPressed: () => Navigator.of(context).maybePop(),
+                child: InkWell(
+                  onTap: () => Navigator.of(context).maybePop(),
+                  borderRadius: BorderRadius.circular(BpRadius.control),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 8),
+                    child: TypeMark.back(colour: BpcadColors.ink),
+                  ),
                 ),
               ),
               GlassSurface(
@@ -609,15 +614,15 @@ class _ResultScreenState extends State<ResultScreen> {
                     color: _edits.isEmpty
                         ? BpcadColors.inkFaint
                         : BpCore.phosphor)),
-          IconButton(
-            icon: const Icon(Icons.close, size: 16),
-            color: BpcadColors.inkFaint,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            padding: EdgeInsets.zero,
-            onPressed: () => setState(() {
+          InkWell(
+            onTap: () => setState(() {
               _sheet = SheetState.peek;
               _half = false;
             }),
+            child: const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              child: TypeMark.close(colour: BpcadColors.inkFaint),
+            ),
           ),
         ]),
       );

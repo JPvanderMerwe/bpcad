@@ -150,6 +150,17 @@ ThemeData bpcadTheme() {
       inactiveTrackColor: BpcadColors.edge,
       thumbColor: BpcadColors.act,
       trackHeight: 2,
+      // A 12px SQUARE THUMB, NOT MATERIAL'S CIRCLE.
+      //
+      // The handoff states the reason rather than the taste: soft radii belong
+      // to floating SURFACES, and 0 stays on DATA marks - check marks, status
+      // squares, progress bars and slider thumbs. "That contrast is the point,
+      // and it is what stops the glass reading as a generic consumer app."
+      //
+      // Material's default is a 20dp circle, so leaving it alone lost both
+      // halves at once: the wrong shape and twice the size.
+      thumbShape: SquareSliderThumb(),
+      overlayShape: RoundSliderOverlayShape(overlayRadius: 20),
     ),
     progressIndicatorTheme: const ProgressIndicatorThemeData(
       // Progress is a commit in flight, so it is amber, and its track is the
@@ -159,4 +170,49 @@ ThemeData bpcadTheme() {
       linearMinHeight: 2,
     ),
   );
+}
+
+
+/// A square slider thumb, 12px, per the design.
+///
+/// Written out because Flutter ships circles only. It is the same twelve
+/// pixels the web client's `input[type=range]::-webkit-slider-thumb` uses, so
+/// a parameter row looks the same on both clients - which is the whole reason
+/// the tokens exist.
+class SquareSliderThumb extends SliderComponentShape {
+  const SquareSliderThumb({this.side = 12});
+
+  final double side;
+
+  @override
+  Size getPreferredSize(bool isEnabled, bool isDiscrete) =>
+      Size(side, side);
+
+  @override
+  void paint(
+    PaintingContext context,
+    Offset center, {
+    required Animation<double> activationAnimation,
+    required Animation<double> enableAnimation,
+    required bool isDiscrete,
+    required TextPainter labelPainter,
+    required RenderBox parentBox,
+    required SliderThemeData sliderTheme,
+    required TextDirection textDirection,
+    required double value,
+    required double textScaleFactor,
+    required Size sizeWithOverflow,
+  }) {
+    final paint = Paint()
+      ..color = sliderTheme.thumbColor ?? BpcadColors.act
+      ..style = PaintingStyle.fill;
+
+    // No radius at all - Radius.zero rather than a small one. A 1px round is
+    // not a square with softer corners, it is a circle nobody can see the
+    // point of.
+    context.canvas.drawRect(
+      Rect.fromCenter(center: center, width: side, height: side),
+      paint,
+    );
+  }
 }

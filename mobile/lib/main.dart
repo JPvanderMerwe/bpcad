@@ -26,6 +26,7 @@ import 'api.dart';
 import 'boot_screen.dart';
 import 'composer_screen.dart';
 import 'glass.dart';
+import 'marks.dart';
 import 'result_screen.dart';
 import 'theme.dart';
 import 'tokens.dart';
@@ -130,8 +131,8 @@ class _TabBar extends StatelessWidget {
           child: Row(
             children: [
               Expanded(
-                  child: _tab('Library', Icons.grid_view_outlined, index == 0,
-                      () => onTab(0))),
+                  child: _tab('Library', index == 0, () => onTab(0),
+                      (colour) => GridMark(colour: colour))),
               // 56 across, and a real tap target - the brief pins 44 as the
               // floor and this is the button the whole app is for.
               SizedBox(
@@ -149,15 +150,14 @@ class _TabBar extends StatelessWidget {
                         borderRadius:
                             BorderRadius.circular(BpRadius.control),
                       ),
-                      child: const Icon(Icons.add,
-                          size: 22, color: BpCore.caseColor),
+                      child: const TypeMark.plus(colour: BpCore.caseColor),
                     ),
                   ),
                 ),
               ),
               Expanded(
-                  child: _tab('Machine', Icons.memory_outlined, index == 1,
-                      () => onTab(1))),
+                  child: _tab('Machine', index == 1, () => onTab(1),
+                      (colour) => MachineMark(colour: colour))),
             ],
           ),
         ),
@@ -165,16 +165,15 @@ class _TabBar extends StatelessWidget {
     );
   }
 
-  Widget _tab(String label, IconData glyph, bool on, VoidCallback onTap) =>
+  Widget _tab(String label, bool on, VoidCallback onTap,
+          Widget Function(Color) mark) =>
       InkWell(
         onTap: onTap,
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(glyph,
-                size: 18,
-                color: on ? BpCore.phosphor : BpcadColors.inkFaint),
-            const SizedBox(height: 3),
+            mark(on ? BpCore.phosphor : BpcadColors.inkFaint),
+            const SizedBox(height: 5),
             // The word as well as the icon. Colour never carries meaning
             // alone - brief 6.7.
             Text(label,
@@ -207,7 +206,7 @@ class LibraryScreen extends StatefulWidget {
 enum _Filter {
   all('All'),
   parametric('Parametric'),
-  composed('Composed'),
+  fromPhoto('From photo'),
   moving('Moving');
 
   const _Filter(this.label);
@@ -233,8 +232,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
             return true;
           case _Filter.parametric:
             return part.template != null && part.template!.isNotEmpty;
-          case _Filter.composed:
-            return part.template == null || part.template!.isEmpty;
+          case _Filter.fromPhoto:
+            // THE DESIGN'S OWN FOURTH CHIP. A part fitted to a photograph is
+            // one the reconstructor produced, and none exist on this build -
+            // the reconstruct backend is still `null`. So the chip is here,
+            // it filters on the real thing, and it comes back empty and says
+            // so rather than being quietly renamed to something that does
+            // have results.
+            return part.makes.contains('from photo');
           case _Filter.moving:
             return (part.bodies ?? 1) > 1;
         }
@@ -294,18 +299,7 @@ class _LibraryScreenState extends State<LibraryScreen> {
               SliverToBoxAdapter(child: _unreachable(_problem!)),
             if (_loading && _parts.isEmpty)
               const SliverToBoxAdapter(
-                child: Padding(
-                  padding: EdgeInsets.all(BpSpace.hall),
-                  child: Center(
-                    child: SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 1.5, color: BpcadColors.inkFaint),
-                    ),
-                  ),
-                ),
-              )
+                child: Center(child: Waiting(what: 'reading your parts')))
             else if (_visible.isEmpty)
               SliverToBoxAdapter(child: _empty()),
             SliverPadding(
@@ -365,7 +359,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
               blur: false,
               padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
               child: Row(children: [
-                const Icon(Icons.search, size: 16, color: BpcadColors.inkFaint),
+                // THE DESIGN'S PREFIX IS A SLASH, not a magnifier: `/ Search
+                // parts and versions`. It is the same prompt character the
+                // command line uses, which is the point - this field takes
+                // words, like every other input in the product.
+                const TypeMark.search(colour: BpcadColors.inkFaint),
                 const SizedBox(width: BpSpace.snug),
                 Expanded(
                   child: TextField(
@@ -575,8 +573,25 @@ class _Card extends StatelessWidget {
                                         renderVersion: renderVersion)
                                     .toString(),
                                 fit: BoxFit.contain,
-                                errorBuilder: (_, __, ___) =>
-                                    const SizedBox.shrink(),
+                                // A RENDER ON ITS WAY IS NOT AN EMPTY CARD.
+                                // The first view of a part is rendered on
+                                // demand and takes real time, and a bare
+                                // graticule looks exactly like a part that
+                                // failed. The amber sweeps across the plate
+                                // instead - which says "coming" rather than
+                                // "nothing".
+                                loadingBuilder:
+                                    (context, child, progress) =>
+                                        progress == null
+                                            ? child
+                                            : const Skeleton(),
+                                errorBuilder: (_, __, ___) => const Center(
+                                  child: Text('no render',
+                                      style: TextStyle(
+                                          fontFamily: BpType.mono,
+                                          fontSize: 9.5,
+                                          color: BpcadColors.inkFaint)),
+                                ),
                               )
                             : const Center(
                                 child: Text('draft\nnot built',
