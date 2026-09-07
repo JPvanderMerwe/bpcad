@@ -143,3 +143,75 @@ def test_the_options_are_not_all_the_same_object():
         api.config(), count=4, out_root="/tmp/bpcad_var_test3")
     volumes = [round(v.volume_cm3, 1) for v in built]
     assert len(set(volumes)) == len(volumes), "two options measured identically: %s" % volumes
+
+
+# ---------------------------------------------------------------------------
+# Variants of a part that has ops instead of parameters - which is every part
+# that arrived as an uploaded mesh.
+# ---------------------------------------------------------------------------
+
+LEVEL_2_POT = dict(
+    name="imported_pot", level=2, material="petg", nozzle_mm=0.4, layer_mm=0.2,
+    ops=[
+        # A 90 mm square outline, 70 tall - the shape a fitter recovers from
+        # an uploaded mesh: an outline and a height, and no named parameters
+        # anywhere in it.
+        {"op": "profile_extrude",
+         "points": [[-45.0, -45.0], [45.0, -45.0], [45.0, 45.0], [-45.0, 45.0]],
+         "height_mm": 70.0},
+    ],
+)
+
+
+def test_a_scaled_op_scales_the_outline_too():
+    """
+    THE SUFFIX RULE IS NOT ENOUGH. Almost every length in the DSL ends in
+    `_mm`, but a profile_extrude's `points` are bare (x, y) pairs and with the
+    default scale_mm of 1.0 those pairs ARE millimetres. Trusting the suffix
+    scaled the height and left the outline alone: a 90 x 90 x 70 pot came back
+    90 x 90 x 56 - shorter, and never narrower.
+    """
+    from bpcad.agent.variations import _scaled_op
+
+    scaled = _scaled_op({"op": "profile_extrude",
+                         "points": [[10.0, 0.0], [10.0, 20.0]],
+                         "height_mm": 50.0}, 0.5)
+    assert scaled["height_mm"] == 25.0
+    assert scaled["points"] == [[5.0, 0.0], [5.0, 10.0]]
+
+
+def test_scaling_leaves_counts_and_angles_alone():
+    """Scaling `rotate_deg` makes a different part; scaling `count` is not
+    even meaningful."""
+    from bpcad.agent.variations import _scaled_op
+
+    scaled = _scaled_op({"op": "pattern_polar", "count": 6, "radius_mm": 20.0,
+                         "start_deg": 45.0,
+                         "step": {"op": "disc", "diameter_mm": 4.0,
+                                  "height_mm": 10.0}}, 2.0)
+    assert scaled["count"] == 6
+    assert scaled["start_deg"] == 45.0
+    assert scaled["radius_mm"] == 40.0
+    assert scaled["step"]["diameter_mm"] == 8.0, "nested ops scale too"
+
+
+def test_more_versions_of_a_part_with_no_template(tmp_path):
+    """
+    An uploaded mesh never has a template - the fitter recovers an outline,
+    not a wall thickness - so this is the path that makes "more versions of
+    what I uploaded" mean anything at all. build_variants returns nothing for
+    these, by design.
+    """
+    from bpcad import api
+    from bpcad.agent.variations import build_scale_variants, build_variants
+    from bpcad.spec.schema import PartSpec
+
+    spec = PartSpec(**LEVEL_2_POT)
+    assert build_variants(spec, api.config()) == [], "no parameters to vary"
+
+    made = build_scale_variants(spec, api.config(), count=4,
+                                out_root=str(tmp_path))
+    assert len(made) >= 3, [v.label for v in made]
+    widths = sorted(round(v.envelope_mm[0], 1) for v in made)
+    assert len(set(widths)) == len(widths), "the variants are all different sizes"
+    assert widths[0] < 90.0 < widths[-1], "a smaller one and a bigger one"

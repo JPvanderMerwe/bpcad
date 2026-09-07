@@ -1,0 +1,65 @@
+# Vague prompts for things that MOVE.
+#
+# Every other prompt list in this repo states its dimensions, because that is
+# how you measure whether a part came out the size it was asked for. These
+# state nothing. That is the point: they test the half of the job the corpus
+# cannot, which is whether bpcad can pick sensible numbers when nobody gave it
+# any, and whether it knows that a moving part is two bodies with a measured
+# gap rather than one lump.
+#
+# HOW TO READ A RESULT. There is no expected envelope to check, so a run is
+# judged on four things instead, all of which the report already carries:
+#
+#   bodies         a mechanism that comes out as ONE body is fused solid. It
+#                  will build, verify, report PASS and not move. This is the
+#                  failure that looks like success.
+#   supports       an unsupported area with a drop far past the clearance
+#                  means something is floating rather than hinged. The 0.30 mm
+#                  print-in-place gap reads as a bridge and is fine; a 9 mm
+#                  drop is a piece that has come adrift.
+#   feature sizes  the nozzle linter judges the thin walls a mechanism needs.
+#                  A 0.3 mm hinge leaf is a drawing, not a part.
+#   ASSUMPTIONS    every number the prompt did not give should appear in the
+#                  report under that heading. A vague prompt that produces a
+#                  report with no assumptions listed is not being honest about
+#                  where its dimensions came from.
+#
+# The gap itself is never invented: it is [materials.<name>].clearance_mm in
+# config, harvested off parts that printed and worked - 0.30 mm for PETG, from
+# a pivot and a print-in-place linkage. TPU's is UNSET, so these prompts in TPU
+# should refuse rather than guess.
+
+# --- one moving joint, the simplest case ----------------------------------
+a hinge
+a ring that turns on a post
+a spinning top
+a lid that swings open
+a swivel hook
+
+# --- two-body mechanisms with a defined travel ---------------------------
+a box with a hinged lid
+a clip that snaps onto a rail
+a bracket that folds flat
+a phone holder that tilts
+a clamp with a wing nut
+
+# --- rotation about an axle ----------------------------------------------
+a wheel on an axle
+a caster
+a fidget spinner
+a pulley
+a turntable for a plant pot
+
+# --- things that hold themselves shut ------------------------------------
+a latch
+a catch for a cupboard door
+a spring clip
+a peg
+a cable clip that opens
+
+# --- deliberately harder: more than one moving body ----------------------
+a scissor linkage
+a gear train
+a ratchet
+a caliper
+a parallelogram lift

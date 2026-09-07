@@ -226,6 +226,163 @@ class Creator(DslOp):
     def _label(self) -> str:
         return getattr(self, "op", type(self).__name__)
 
+    def _missed_cut_advice(self, scene, part, body) -> str:
+        """
+        Which placement field is wrong, for a cut that removed nothing.
+
+        THE ADVICE HAS TO BE ABOUT THE RIGHT AXIS. Asked for "a hinge" the
+        model put a bore at x_mm 20 on a part 30 mm wide, four times running,
+        and the critique answered with "set z_mm to -2 and height_mm to 54" -
+        true of a cut that is too SHORT and useless for one that is in the
+        wrong PLACE. It handed off after four attempts having never been told
+        the thing that was actually wrong.
+
+        Rotation does not affect this: apply() rotates about the origin and
+        THEN translates by (x_mm, y_mm, z_mm), so those fields are always
+        world-axis offsets. Length is the only thing rotation reinterprets,
+        which is why _through_cut_numbers still refuses to speak about a
+        rotated cut and this does not.
+        """
+        fields = {"x": "x_mm", "y": "y_mm", "z": "z_mm"}
+        offsets = {"x": self.x_mm, "y": self.y_mm, "z": self.z_mm}
+        # SIDEWAYS AXES FIRST, and the print axis is left to the through-cut
+        # advice below. Centring is the right correction for a cut that is
+        # beside the part; along the print axis it is the wrong one - centring
+        # a short cut inside a tall part turns a miss into a sealed internal
+        # void, which then trips the ceiling check instead.
+        axis_order = [a for a in "xyz" if a != (scene.print_axis or "z")]
+        for axis in axis_order:
+            p0, p1 = _axis_extent(part, axis)
+            c0, c1 = _axis_extent(body, axis)
+            if c1 < p0 or c0 > p1:
+                # No overlap at all on this axis: this is the one that is wrong.
+                middle = offsets[axis] - ((c0 + c1) / 2.0 - (p0 + p1) / 2.0)
+                return (" It misses along %s: the cut spans %.2f..%.2f and the "
+                        "part spans %.2f..%.2f. Set %s to %.2f to centre it on "
+                        "the part, then adjust from there."
+                        % (axis, c0, c1, p0, p1, fields[axis], middle))
+        return self._through_cut_numbers(scene, part)
+
+    def _through_cut_numbers(self, scene, part) -> str:
+        """
+        The two numbers that would make this cut go through, spelled out.
+
+        WHY THIS IS NOT ADVICE. The first version said "start it below the
+        bottom face and make it longer than the part is thick", which is true
+        and got the following, twice, from two different models: the cut moved
+        from z_mm -2 to z_mm -42 on a part 50 mm tall, with height_mm left
+        alone. One fault became the other - a blind pocket became a cut that
+        misses the part completely - and four attempts burned on it.
+
+        The loop's own rule is that a critique names the parameter most likely
+        responsible and the value it should take. A small model given a
+        principle edits one number and hopes; given two numbers it sets two
+        numbers. Both are computed off the measured part, so they are right
+        for THIS part rather than generally sound.
+
+        Only offered for a cut that is not rotated, because z_mm is then the
+        cut's own base. On a rotated cut the placement fields do not line up
+        with the print axis and naming them would be worse than saying
+        nothing.
+        """
+        axis = scene.print_axis if scene.print_axis in "xyz" else "z"
+        if self.rotate_deg or axis != "z":
+            return ""
+        p0, p1 = _axis_extent(part, axis)
+        if p1 - p0 <= 0:
+            return (" Set z_mm below the part's bottom face and height_mm "
+                    "longer than the part is thick.")
+        return (" Set z_mm to %.2f and height_mm to %.2f, which spans "
+                "%.2f..%.2f and clears both faces by 2 mm. Change BOTH: "
+                "moving z_mm down on its own only moves the same short cut "
+                "further away." % (p0 - 2.0, (p1 - p0) + 4.0, p0 - 2.0, p1 + 2.0))
+
+    def _note_if_it_leaves_a_ceiling(self, scene, part, body) -> None:
+        """
+        A cut that enters the bottom face and stops inside leaves a roof.
+
+        CLAUDE.md 23: a cavity opening downward creates a ceiling needing
+        support, and that is a lint rule, not a preference. Nothing enforced
+        it, so this happened: asked for two 5 mm holes through a 6 mm plate,
+        the model wrote `height_mm 7` at `z_mm -2`, spanning -2..5. Every
+        number looks deliberate and the holes are 1 mm short of the top face.
+
+        The part built, verified, and reported 39.3 mm2 of downward-facing
+        area - which is exactly the two hole roofs, to a tenth of a
+        millimetre - and shipped as PASS with two blind pockets where two
+        holes were asked for. The volume gave it away and nothing else did,
+        because "supports needed" is not a failure on its own: plenty of good
+        parts need support, the vent reference among them.
+
+        Which face counts as the bottom is the PRINT axis, not Z by habit.
+        """
+        axis = scene.print_axis if scene.print_axis in "xyz" else "z"
+        p0, p1 = _axis_extent(part, axis)
+        c0, c1 = _axis_extent(body, axis)
+        if p1 - p0 <= 0:
+            return
+
+        eps = 0.001
+        enters_the_bottom = c0 <= p0 + eps
+        stops_short_of_the_top = c1 < p1 - eps
+        if not (enters_the_bottom and stops_short_of_the_top):
+            return
+
+        # A CHANNEL IS NOT A HOLE THAT STOPPED SHORT.
+        #
+        # This flagged the rod channel of a saddle clamp, which opens downward
+        # because the clamp goes OVER the rod - there is no other way to shape
+        # it, and it is the corpus's rod_clamp_8mm. The discriminator is
+        # whether the cut also leaves through a side: a blind hole sits wholly
+        # inside the footprint and opens in one direction only, while a
+        # channel runs out of the part and is a deliberate shape.
+        footprint = {}
+        for other in [a for a in "xyz" if a != axis]:
+            q0, q1 = _axis_extent(part, other)
+            d0, d1 = _axis_extent(body, other)
+            footprint[other] = (d0, d1)
+            if d0 <= q0 + eps or d1 >= q1 - eps:
+                return
+        cx0, cx1 = footprint.get("x", _axis_extent(body, "x"))
+        cy0, cy1 = footprint.get("y", _axis_extent(body, "y"))
+
+        # IS THERE ANYTHING ACTUALLY ABOVE IT? The test so far compares the
+        # cut's top against the part's GLOBAL top, and a part is not a
+        # rectangle. A 3.5 mm screw hole through the 3 mm foot of a clip whose
+        # arch stands 12 mm tall elsewhere was reported as stopping 4 mm short
+        # of the top - it goes straight through the foot and out into open
+        # air, because at that x and y there is no arch above it. Under
+        # strict_cuts that rejected a part that was completely correct.
+        #
+        # So ask the geometry instead of the bounding box: put a probe over
+        # the cut's own footprint, from where the cut ends up to the top of
+        # the part, and see whether any material is in there. One boolean, and
+        # only on the path that was about to raise.
+        try:
+            probe_box = (
+                cq.Workplane("XY")
+                .box(max(cx1 - cx0, 1e-3), max(cy1 - cy0, 1e-3), max(p1 - c1, 1e-3),
+                     centered=(True, True, False))
+                .translate(((cx0 + cx1) / 2.0, (cy0 + cy1) / 2.0, c1))
+            )
+            if _volume(part.intersect(probe_box)) <= 1e-6:
+                return
+        except Exception:
+            # A probe that cannot be built is no evidence either way, and a
+            # lint must not fire on its own failure to measure.
+            return
+
+        scene.log.notes.append(
+            "%s %s in cut mode enters the bottom face and stops %.2f mm short "
+            "of the top, so it is a blind pocket opening DOWNWARD, not a hole "
+            "through the part. It leaves a roof that has to print over air. "
+            "The part spans %s %.2f..%.2f and the cut spans %.2f..%.2f. For a "
+            "hole through it, the cut must clear both faces.%s If a recess on "
+            "the underside really was wanted, put it on the top face instead."
+            % (CUT_FAULT, self._label(), p1 - c1, axis, p0, p1, c0, c1,
+               self._through_cut_numbers(scene, part))
+        )
+
     def apply(self, scene: Scene) -> Scene:
         body = self._emit()
 
@@ -258,12 +415,58 @@ class Creator(DslOp):
                 % (self._label(), self.mode, before)
             )
         if self.mode == "cut" and abs(after - before) < 1e-6:
+            # STILL A NOTE HERE, DELIBERATELY. A person's own spec must not lose
+            # a whole build over one cut that missed - see
+            # test_a_cut_that_misses_is_reported_but_not_fatal.
+            #
+            # But the note now carries the numbers, because the agent DOES
+            # treat this as a failure (compile_and_verify(strict_cuts=True))
+            # and a critique that says only "removed nothing" gives a small
+            # model nothing to change. It sat here as a bare sentence while a
+            # drilled plate shipped with one hole instead of two.
             scene.log.notes.append(
-                "%s in cut mode removed nothing - it does not touch the part"
-                % self._label()
+                "%s %s in cut mode removed nothing - it does not touch the "
+                "part. It sits at (%.1f, %.1f, %.1f) and the part spans %s.%s"
+                % (CUT_FAULT, self._label(), self.x_mm, self.y_mm, self.z_mm,
+                   _extent(solid), self._missed_cut_advice(scene, solid, body))
             )
+        else:
+            self._note_if_it_leaves_a_ceiling(scene, solid, body)
         scene.solid = result
         return scene
+
+
+# TAG ON EVERY CUT FAULT. compile_and_verify(strict_cuts=True) keys off this
+# rather than matching an English phrase, so rewording a note cannot silently
+# switch the enforcement off.
+CUT_FAULT = "cut fault:"
+
+
+def _axis_extent(solid: cq.Workplane, axis: str) -> tuple[float, float]:
+    """(min, max) of a solid along one axis, or (0, 0) if it cannot be read."""
+    try:
+        bb = solid.val().BoundingBox()
+        return {
+            "x": (bb.xmin, bb.xmax), "y": (bb.ymin, bb.ymax),
+            "z": (bb.zmin, bb.zmax),
+        }[axis]
+    except Exception:
+        return (0.0, 0.0)
+
+
+def _extent(solid: cq.Workplane) -> str:
+    """
+    The part's bounding box, so a miss can be acted on.
+
+    "it does not touch the part" says something is wrong. "it sits at
+    (50.0, 0.0, 0.0) and the part spans x -40.0..40.0" says what.
+    """
+    try:
+        bb = solid.val().BoundingBox()
+        return ("x %.1f..%.1f, y %.1f..%.1f, z %.1f..%.1f"
+                % (bb.xmin, bb.xmax, bb.ymin, bb.ymax, bb.zmin, bb.zmax))
+    except Exception:
+        return "an extent that could not be read"
 
 
 def _volume(solid: cq.Workplane) -> float:

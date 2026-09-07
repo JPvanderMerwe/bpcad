@@ -1,0 +1,50 @@
+{
+  "name": "make_a_regular_usuable_bowl_with_a_uniqu",
+  "prompt": "make a regular usuable bowl with a unique exterior",
+  "image": null,
+  "measurements": null,
+  "versions": [
+    {
+      "index": 0,
+      "instruction": "",
+      "note": "",
+      "changes": [],
+      "ok": true,
+      "error": "",
+      "elapsed_s": 266.72,
+      "attempts": 1,
+      "spec": {
+        "name": "bowl",
+        "level": 1,
+        "material": "petg",
+        "nozzle_mm": 0.4,
+        "layer_mm": 0.2,
+        "print_axis": "z",
+        "template": "vessel",
+        "params": {
+          "outer_dia_mm": 150,
+          "height_mm": 60,
+          "wall_mm": 3,
+          "floor_mm": 2,
+          "profile": "flared",
+          "rim_dia_mm": 140,
+          "base_dia_mm": 120
+        },
+        "ops": [],
+        "assumptions": [],
+        "scale_departures": []
+      }
+    },
+    {
+      "index": 1,
+      "instruction": "add a unique exterior (wood like) tot he outer walls",
+      "note": "",
+      "changes": [],
+      "ok": false,
+      "error": "The model could not make that change: no parameter of this template can do that: add a unique exterior (wood like) to the outer walls",
+      "elapsed_s": 49.23,
+      "attempts": 1,
+      "spec": null
+    }
+  ]
+}

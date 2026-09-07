@@ -33,12 +33,27 @@ correctness, and everything else is downstream of it.
 
 from __future__ import annotations
 
+import math
+
 from dataclasses import dataclass, field
 from typing import Any
 
 # Brief 9.4 names this figure for a hole. It is achievable because the
 # measurement comes off the kernel: a hole cut at 8.2 measures 8.2000.
 HOLE_TOLERANCE_MM = 0.05
+
+# A BORE WRAPS THE CIRCLE; A ROUNDED CORNER COVERS A QUARTER OF IT.
+#
+# Both are cylindrical faces of some radius, and counting both meant a plate
+# with `corner_r_mm: 2` had four 4 mm "holes" in its corners. That is not
+# hypothetical: the first-ever first-try measurement reported
+# plate_four_holes_countersunk as 6 holes where 4 were asked for, and
+# shelf_bracket as 4 where 2 were asked for - both parts the model may well
+# have built correctly, marked wrong by the thing measuring them.
+#
+# 179 rather than 360 because a boolean often leaves one bore as two half
+# faces, which _holes_of_diameter then merges by axis.
+BORE_ARC_DEG = 179.0
 
 # An overall extent is looser, because a request that says "80 mm wide" is
 # usually describing the part and not a mating surface, and because corner
@@ -125,6 +140,13 @@ def cylindrical_faces(solid) -> list[dict[str, float]]:
 
     This is how a hole is measured. A counterbore contributes two faces of
     different diameters, which is correct - they are two different features.
+
+    `arc_deg` is how much of the circle the face actually covers, and it is
+    what separates a BORE from a FILLET. Both are cylindrical faces of some
+    radius; a bore wraps the full 360 degrees and a rounded corner covers 90.
+    Without it, a plate with `corner_r_mm: 2` reads as having four 4 mm
+    "holes" in its corners - which is exactly how a part with no holes at all
+    satisfied a request for two.
     """
     from OCP.BRepAdaptor import BRepAdaptor_Surface
     from OCP.GeomAbs import GeomAbs_SurfaceType
@@ -137,7 +159,9 @@ def cylindrical_faces(solid) -> list[dict[str, float]]:
         cylinder = adaptor.Cylinder()
         location = cylinder.Location()
         axis = cylinder.Axis().Direction()
+        span = abs(float(adaptor.LastUParameter()) - float(adaptor.FirstUParameter()))
         out.append({
+            "arc_deg": round(math.degrees(span), 1),
             "diameter_mm": round(2.0 * float(cylinder.Radius()), 4),
             "x_mm": round(float(location.X()), 3),
             "y_mm": round(float(location.Y()), 3),
@@ -149,7 +173,8 @@ def cylindrical_faces(solid) -> list[dict[str, float]]:
     return out
 
 
-def _holes_of_diameter(solid, diameter: float, tolerance: float) -> list[dict]:
+def _holes_of_diameter(solid, diameter: float, tolerance: float,
+                       min_arc_deg: float = 0.0) -> list[dict]:
     """Cylindrical faces matching a diameter, de-duplicated by axis position.
 
     A single hole can present as more than one face when it passes through
@@ -158,7 +183,8 @@ def _holes_of_diameter(solid, diameter: float, tolerance: float) -> list[dict]:
     plate that has two.
     """
     matching = [c for c in cylindrical_faces(solid)
-                if abs(c["diameter_mm"] - diameter) <= tolerance]
+                if abs(c["diameter_mm"] - diameter) <= tolerance
+                and c.get("arc_deg", 360.0) >= min_arc_deg]
     unique: list[dict] = []
     for candidate in matching:
         for seen in unique:
@@ -238,7 +264,8 @@ def check(solid, want: dict[str, Any], features: dict[str, float] | None = None,
 
     if "hole_dia_mm" in want:
         expected = float(want["hole_dia_mm"])
-        found = _holes_of_diameter(solid, expected, HOLE_TOLERANCE_MM)
+        found = _holes_of_diameter(solid, expected, HOLE_TOLERANCE_MM,
+                                   min_arc_deg=BORE_ARC_DEG)
         report.checks.append(Check(
             kind="hole", name="hole_dia_mm", expected=expected,
             measured=round(found[0]["diameter_mm"], 3) if found else None,

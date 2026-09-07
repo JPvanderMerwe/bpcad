@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Mirrors `case` from design/tokens.json. Android resources cannot import
+     the generated Dart, so this is the one place the value is repeated - and
+     tests/test_tokens.py checks it against the source. -->
+<resources>
+    <color name="bp_case">#0B0F0D</color>
+</resources>

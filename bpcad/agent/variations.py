@@ -163,6 +163,118 @@ def _distinct(new: Variant, kept: list[Variant]) -> bool:
     return True
 
 
+# Scale steps for a part with no named parameters. A spread either side of
+# what was asked for, close enough to be useful and far enough apart to be
+# told apart on a bed.
+SCALE_STEPS = (0.8, 0.9, 1.1, 1.25)
+
+
+def _scaled_op(op: dict, factor: float) -> dict:
+    """
+    One op with every length multiplied, and nothing else touched.
+
+    ALMOST every length in the DSL ends in `_mm`, which makes this mostly exact
+    rather than a list of field names that would rot the first time an op
+    gained one. Counts, angles and modes do not end in _mm and are carried
+    through untouched - scaling `rotate_deg` would turn a variant into a
+    different part, and scaling `count` is not even meaningful.
+
+    `points` IS THE EXCEPTION AND IT CAUGHT ME. A profile_extrude's outline is
+    a list of bare (x, y) pairs, and with the default scale_mm of 1.0 those
+    pairs ARE millimetres. Trusting the suffix rule scaled the height and left
+    the outline alone: a 90 x 90 x 70 pot came back as 90 x 90 x 56, taller
+    and shorter but never narrower. So points are scaled here, and `scale_mm`
+    is then left alone - doing both would scale the outline twice.
+    """
+    out: dict = {}
+    for key, value in op.items():
+        if key == "step" and isinstance(value, dict):
+            out[key] = _scaled_op(value, factor)
+        elif key == "points" and isinstance(value, list):
+            out[key] = [[round(float(x) * factor, 4), round(float(y) * factor, 4)]
+                        for x, y in value]
+        elif key == "scale_mm":
+            out[key] = value
+        elif key.endswith("_mm") and isinstance(value, (int, float)):
+            out[key] = round(float(value) * factor, 4)
+        else:
+            out[key] = value
+    return out
+
+
+def scale_plan(ops: list[dict], count: int = 4) -> list[tuple[str, float, list[dict]]]:
+    """
+    (label, factor, ops) for a part that has ops instead of parameters.
+
+    WHY SCALE AND NOTHING ELSE. Varying a level-1 part means nudging named
+    parameters - wall thickness, blade count, rim diameter - and the template
+    says what those mean. A level-2 composition has no such names: it is a
+    list of primitives, and there is no field in it that means "wall". The one
+    change that is unambiguously right for any of them is size.
+
+    That matters most for an imported mesh, which is exactly the case with no
+    parameters: somebody uploads an STL, the fitter recovers an outline, and
+    "more versions of this" can honestly mean a bigger one and a smaller one.
+    Anything cleverer would be inventing intent that is not in the file.
+    """
+    out = []
+    for factor in SCALE_STEPS[:count]:
+        label = "%d%% of the original" % round(factor * 100)
+        out.append((label, factor, [_scaled_op(op, factor) for op in ops]))
+    return out
+
+
+def build_scale_variants(spec, cfg, count: int = 4, out_root: str = "",
+                         on_event=None) -> list[Variant]:
+    """
+    Build size variants of a spec that carries ops rather than parameters.
+
+    Same discipline as build_variants: one that fails to build is dropped, not
+    offered. An option that turns out broken when clicked is worse than one
+    fewer option.
+    """
+    from bpcad import api
+
+    emit = on_event or (lambda kind, payload: None)
+    ops = list(getattr(spec, "ops", []) or [])
+    if not ops:
+        return []
+
+    kept: list[Variant] = []
+    for index, (label, factor, scaled) in enumerate(scale_plan(ops, count)):
+        digest = hashlib.sha1(
+            ("%s:%.3f" % (spec.name, factor)).encode()
+        ).hexdigest()[:6]
+        name = "%s_%s" % (spec.name, digest)
+        emit("variant", {"index": index, "label": label})
+        try:
+            candidate = spec.model_copy(update={"name": name, "ops": scaled})
+            built = api.build(
+                spec=candidate,
+                out_dir="%s/%s" % (out_root.rstrip("/"), name) if out_root else None,
+                render=False,
+            )
+        except Exception as exc:
+            emit("variant_dropped",
+                 {"label": label, "why": str(exc).split("\n")[0][:160]})
+            continue
+
+        mesh = built.report.mesh
+        kept.append(Variant(
+            label=label,
+            params={"scale": factor},
+            changed={"scale": factor},
+            volume_cm3=float(mesh.volume_cm3),
+            envelope_mm=tuple(round(float(v), 2) for v in mesh.bbox_mm),
+            verdict=built.report.verdict,
+            ok=bool(built.report.ok),
+            name=name,
+        ))
+        emit("variant_built", {"label": label, "name": name,
+                               "volume_cm3": float(mesh.volume_cm3)})
+    return kept
+
+
 def build_variants(
     spec,
     cfg,

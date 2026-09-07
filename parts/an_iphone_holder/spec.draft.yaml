@@ -1,0 +1,24 @@
+# bpcad handoff - the model could not produce a valid spec.
+#
+# Requested:
+#   an iPhone holder
+#
+# Tried 4 attempt(s) across qwen2.5-coder:7b then hermes3:latest on machine 'laptop', 1176.9s total.
+# Below is the closest attempt, with every problem marked inline.
+#
+# No field-level problems were recorded - see the error below.
+#
+# WHEN YOU HAVE FIXED IT:
+#   bpcad build parts/an_iphone_holder/spec.yaml
+#
+# Useful while editing:
+#   bpcad spec list                 # what templates exist
+#   bpcad spec ops                  # level-2 operations and anchors
+
+name: iPhone_holder
+print_axis: Z
+
+params: {}
+
+# The full error was:
+#   hermes3:latest did not answer within 420s. On a CPU-only machine this usually means the model is simply slow rather than broken - raise timeout_s for this machine profile, or drop to the smaller model.

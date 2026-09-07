@@ -118,6 +118,33 @@ allowed_model_hosts = []
 #
 # Override any of these the moment you measure better ones.
 
+# RECONSTRUCTION: A PHOTOGRAPH TO A MESH
+# ---------------------------------------------------------------------------
+# backend  null or triposr. NULL BY DEFAULT, and that is not timidity: a
+#          reconstructor is about 2.5 GB of torch and weights, and bpcad has to
+#          install and run on a machine that has neither. Every part in parts/
+#          still rebuilds from its spec.yaml with this off.
+#
+# device   auto, cpu or cuda. On a 3060 Ti a photograph is a second or two; on
+#          a CPU it is minutes. "auto" takes the GPU when there is one and says
+#          which it used, so a slow run is never a mystery.
+#
+# marching_resolution
+#          Marching cubes grid for the surface. 256 is the model's own default.
+#          128 halves the memory and loses small features - on a part with a
+#          5 mm hole in it that is the wrong trade.
+#
+# WHAT A RECONSTRUCTION IS NOT. It has no scale: a photograph of a bracket and
+# a photograph of a bridge are the same pixels, so one real dimension has to
+# come from the person holding the object. It is also not printable until
+# bpcad's own verify pass has said so - neural meshes are routinely
+# non-manifold. Both facts are carried in the result rather than left to a UI
+# to remember.
+[reconstruct]
+backend = "null"
+device = "auto"
+marching_resolution = 256
+
 [materials.pla]
 clearance_mm = 0.20
 shrink_pct = 0.0

@@ -1,11 +1,12 @@
 {
  "reachable": {
   "mode": "reachable",
-  "fit_rate": 0.8889,
-  "fitted": 16,
-  "measurable": 18,
-  "built_not_fitted": 1,
-  "failed_to_build": 1,
+  "fit_rate": 1.0,
+  "failure_classes": {},
+  "fitted": 19,
+  "measurable": 19,
+  "built_not_fitted": 0,
+  "failed_to_build": 0,
   "unmeasurable": [
    "birdhouse_with_feeder",
    "cup_no_context",
@@ -34,7 +35,11 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "plate_four_holes_countersunk",
@@ -45,7 +50,7 @@
     "measurable": true,
     "passed_checks": 6,
     "total_checks": 6,
-    "seconds": 0.2,
+    "seconds": 0.3,
     "lines": [
      "6 of 6 assertions passed",
      "  extent_x_mm              expected 100.000   got 100.000   pass  ",
@@ -57,7 +62,11 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "shelf_bracket",
@@ -68,7 +77,7 @@
     "measurable": true,
     "passed_checks": 4,
     "total_checks": 4,
-    "seconds": 0.4,
+    "seconds": 0.3,
     "lines": [
      "4 of 4 assertions passed",
      "  extent_any_mm            expected 200.000   got 200.000   pass  any axis",
@@ -78,22 +87,35 @@
     ],
     "error": "",
     "template": "bracket",
-    "level": 1
+    "level": 1,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "rod_clamp_8mm",
     "request": "a clamp that holds an 8 mm rod against a flat surface, 40 mm wide, screwed down with two 4 mm holes",
     "mode": "reachable",
-    "built": false,
-    "fits": false,
+    "built": true,
+    "fits": true,
     "measurable": true,
-    "passed_checks": 0,
-    "total_checks": 0,
-    "seconds": 0.0,
-    "lines": [],
-    "error": "no spec - the vocabulary cannot express this request",
+    "passed_checks": 3,
+    "total_checks": 3,
+    "seconds": 0.2,
+    "lines": [
+     "3 of 3 assertions passed",
+     "  extent_any_mm            expected 40.000    got 40.000    pass  any axis",
+     "  hole_dia_mm              expected 8.000     got 8.000     pass  ",
+     "  bodies                   expected 1         got 1         pass  "
+    ],
+    "error": "",
     "template": null,
-    "level": null
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "right_angle_gusset",
@@ -104,7 +126,7 @@
     "measurable": true,
     "passed_checks": 3,
     "total_checks": 3,
-    "seconds": 0.7,
+    "seconds": 0.5,
     "lines": [
      "3 of 3 assertions passed",
      "  extent_z_mm              expected 60.000    got 60.000    pass  ",
@@ -113,7 +135,11 @@
     ],
     "error": "",
     "template": "bracket",
-    "level": 1
+    "level": 1,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "enclosure_pcb",
@@ -124,7 +150,7 @@
     "measurable": true,
     "passed_checks": 3,
     "total_checks": 3,
-    "seconds": 0.2,
+    "seconds": 0.1,
     "lines": [
      "3 of 3 assertions passed",
      "  extent_x_mm              expected 100.000   got 100.000   pass  ",
@@ -133,7 +159,11 @@
     ],
     "error": "",
     "template": "enclosure",
-    "level": 1
+    "level": 1,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "divided_tray",
@@ -154,7 +184,11 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "birdhouse_entrance",
@@ -165,7 +199,7 @@
     "measurable": true,
     "passed_checks": 2,
     "total_checks": 2,
-    "seconds": 1.5,
+    "seconds": 1.4,
     "lines": [
      "2 of 2 assertions passed",
      "  hole_dia_mm              expected 32.000    got 32.000    pass  ",
@@ -173,7 +207,11 @@
     ],
     "error": "",
     "template": "enclosure",
-    "level": 1
+    "level": 1,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "birdhouse_with_feeder",
@@ -188,7 +226,11 @@
     "lines": [],
     "error": "no spec - the vocabulary cannot express this request",
     "template": null,
-    "level": null
+    "level": null,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "",
+    "run_record": {}
    },
    {
     "id": "bowl_180",
@@ -209,21 +251,25 @@
     ],
     "error": "",
     "template": "vessel",
-    "level": 1
+    "level": 1,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "plant_pot_drained",
     "request": "a plant pot 120 mm across and 110 mm tall with four 6 mm drainage holes",
     "mode": "reachable",
     "built": true,
-    "fits": false,
+    "fits": true,
     "measurable": true,
-    "passed_checks": 4,
+    "passed_checks": 5,
     "total_checks": 5,
-    "seconds": 2.4,
+    "seconds": 2.3,
     "lines": [
-     "4 of 5 assertions passed  -> DOES NOT FIT",
-     "  extent_x_mm              expected 120.000   got 119.441   FAIL  ",
+     "5 of 5 assertions passed",
+     "  extent_x_mm              expected 120.000   got 120.002   pass  ",
      "  extent_z_mm              expected 110.000   got 110.007   pass  ",
      "  hole_dia_mm              expected 6.000     got 6.000     pass  ",
      "  hole_count               expected 4         got 4         pass  ",
@@ -231,7 +277,11 @@
     ],
     "error": "",
     "template": "vessel",
-    "level": 1
+    "level": 1,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "pen_pot",
@@ -242,7 +292,7 @@
     "measurable": true,
     "passed_checks": 4,
     "total_checks": 4,
-    "seconds": 1.1,
+    "seconds": 0.9,
     "lines": [
      "4 of 4 assertions passed",
      "  extent_x_mm              expected 80.000    got 80.006    pass  ",
@@ -252,7 +302,11 @@
     ],
     "error": "",
     "template": "vessel",
-    "level": 1
+    "level": 1,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "cup_no_context",
@@ -267,7 +321,11 @@
     "lines": [],
     "error": "no spec - the vocabulary cannot express this request",
     "template": null,
-    "level": null
+    "level": null,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "",
+    "run_record": {}
    },
    {
     "id": "keyring_tag",
@@ -290,7 +348,11 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "cable_clip",
@@ -301,7 +363,7 @@
     "measurable": true,
     "passed_checks": 3,
     "total_checks": 3,
-    "seconds": 0.2,
+    "seconds": 0.1,
     "lines": [
      "3 of 3 assertions passed",
      "  hole_dia_mm              expected 5.000     got 5.000     pass  ",
@@ -310,7 +372,36 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
+   },
+   {
+    "id": "snap_over_cable_clip",
+    "request": "a clip that snaps over a 10 mm cable and screws to a surface",
+    "mode": "reachable",
+    "built": true,
+    "fits": true,
+    "measurable": true,
+    "passed_checks": 4,
+    "total_checks": 4,
+    "seconds": 0.3,
+    "lines": [
+     "4 of 4 assertions passed",
+     "  extent_x_mm              expected 26.000    got 26.000    pass  ",
+     "  extent_z_mm              expected 12.000    got 12.001    pass  ",
+     "  hole_dia_mm              expected 11.000    got 11.000    pass  ",
+     "  bodies                   expected 1         got 1         pass  "
+    ],
+    "error": "",
+    "template": null,
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "spacer_ring",
@@ -321,7 +412,7 @@
     "measurable": true,
     "passed_checks": 5,
     "total_checks": 5,
-    "seconds": 0.1,
+    "seconds": 0.0,
     "lines": [
      "5 of 5 assertions passed",
      "  extent_x_mm              expected 30.000    got 30.002    pass  ",
@@ -332,7 +423,11 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "knob_6mm_shaft",
@@ -354,7 +449,11 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "wall_hook",
@@ -365,7 +464,7 @@
     "measurable": true,
     "passed_checks": 4,
     "total_checks": 4,
-    "seconds": 0.3,
+    "seconds": 0.2,
     "lines": [
      "4 of 4 assertions passed",
      "  extent_any_mm            expected 80.000    got 80.000    pass  any axis",
@@ -375,7 +474,11 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "funnel_20mm_neck",
@@ -394,7 +497,11 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "phone_stand_60deg",
@@ -413,7 +520,11 @@
     ],
     "error": "",
     "template": null,
-    "level": 2
+    "level": 2,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "fit",
+    "run_record": {}
    },
    {
     "id": "iphone_from_photo",
@@ -428,7 +539,11 @@
     "lines": [],
     "error": "no spec - the vocabulary cannot express this request",
     "template": null,
-    "level": null
+    "level": null,
+    "model_used": "",
+    "attempts": 0,
+    "failure_class": "",
+    "run_record": {}
    }
   ]
  }

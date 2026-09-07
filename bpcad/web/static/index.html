@@ -4,163 +4,155 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="color-scheme" content="dark">
-<meta name="theme-color" content="#09090b">
-<title>bpcad — Bit Primitive</title>
+<meta name="theme-color" content="#0B0F0D">
+<title>bpcad — describe the part, get CAD that fits</title>
 <link rel="stylesheet" href="/static/app.css">
 
-<!-- Installable on Android and iOS. "Add to Home Screen" then gives a
-     full-screen app with its own icon and no browser chrome - the same UI the
-     desktop shell shows, because it is the same files. -->
+<!-- Installable on Android and iOS. Brief 9.7: one frontend, three
+     deliveries. This is the canonical build; the native shells wrap it. -->
 <link rel="manifest" href="/static/manifest.webmanifest">
-<link rel="apple-touch-icon" href="/static/icons/apple-touch-icon.png">
+<!-- The mark: an isometric solid with a quarter section cut away, the
+     exposed faces lit in amber. A section view is the drafting convention for
+     showing what is inside a part, which is what this program does. -->
+<link rel="icon" href="/static/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/static/icons/icon-32.png">
 <link rel="icon" type="image/png" sizes="192x192" href="/static/icons/icon-192.png">
-<!-- iOS ignores the manifest's display mode and needs its own tags. -->
+<link rel="apple-touch-icon" href="/static/icons/icon-180.png">
+<meta property="og:image" content="/static/og-image-1200x630.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="bpcad">
 <meta name="mobile-web-app-capable" content="yes">
 </head>
 <body>
-<!-- The ground. Three stacked layers: an isometric lattice, a slow drift, and
-     a vignette that keeps the middle of the screen darker than the edges so a
-     render always sits on the quietest part of the page. -->
-<div class="ground" aria-hidden="true">
-  <div class="grid-iso"></div>
-  <div class="grid-fine"></div>
-  <div class="vignette"></div>
-</div>
-<div class="scanlines" aria-hidden="true"></div>
+<!-- The build plate. Behind the part, never over it. -->
+<div class="plate" aria-hidden="true"></div>
 
-<header class="bar">
-  <div class="brand">
-    <span class="glyph" aria-hidden="true">▚</span>
-    <span class="wordmark">BIT<span class="dim">·</span>PRIMITIVE</span>
-    <span class="tool">bpcad</span>
-  </div>
-  <div class="status" id="status">
-    <span class="dot" id="statusDot"></span>
-    <span id="statusText">checking…</span>
-  </div>
-</header>
+<div class="app">
 
-<main>
-  <!-- ── ask ──────────────────────────────────────────────────────────── -->
-  <section class="panel hero" id="askPanel">
-    <h1 class="lede">What do you want to make?</h1>
-    <p class="sub">
-      Plain language, with the dimensions you know. You get options — real
-      dimensioned parts, not meshes — and you can change any of them by asking.
-    </p>
-
-    <div class="promptwrap">
-      <textarea id="prompt" rows="2" spellcheck="false"
-        placeholder="a birdhouse for small garden birds"></textarea>
-      <button class="btn primary go" id="createBtn">
-        <span class="label">Create</span>
-        <span class="kbd" id="kbdHint">↵</span>
-      </button>
+  <!-- 11.4: minimal top bar — the only thing allowed above the viewport -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <span class="name">bpcad</span>
     </div>
-
-    <div class="row wrap chips">
-      <label class="chip">
-        <span class="tag">material</span>
-        <select id="material"></select>
-      </label>
-      <button class="chip suggest" data-fill="a birdhouse for small garden birds">birdhouse</button>
-      <button class="chip suggest" data-fill="a round bowl 180 mm across and 70 mm deep">bowl</button>
-      <button class="chip suggest" data-fill="a shelf bracket for a 200 mm shelf">bracket</button>
-      <button class="chip suggest" data-fill="a plant pot 120 mm across with drainage holes">plant pot</button>
+    <div class="machine" id="machine" title="">
+      <span class="lamp" id="lamp"></span>
+      <span class="txt" id="machineText">Checking…</span>
     </div>
-    <p class="hint" id="printerHint"></p>
-    <p class="hint cap" id="capNote" hidden></p>
-  </section>
+  </header>
 
-  <!-- ── working ──────────────────────────────────────────────────────── -->
-  <section class="panel work" id="runPanel" hidden>
-    <div class="workhead">
-      <div class="lathe" aria-hidden="true">
-        <span class="ring r1"></span><span class="ring r2"></span>
-        <span class="ring r3"></span><span class="core"></span>
+  <!-- 11.4: THE VIEWPORT IS THE HERO and gets the screen -->
+  <main class="stage" id="stage">
+    <div class="blank" id="blank">
+      <h1>Describe the part.</h1>
+      <p>Plain language, with the dimensions you know. You get parametric CAD
+         that fits — not a mesh — and every number stays adjustable.</p>
+    </div>
+    <!-- 11.7: the hero is rendered SERVER-SIDE, and the first view of a
+         100k-facet mesh takes seconds. An empty build plate with nothing on
+         it and no word about why is indistinguishable from a hang. -->
+    <div class="staging" id="staging" hidden>
+      <span class="caliper" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span class="txt" id="stagingText"></span>
+    </div>
+    <img id="frame" alt="" hidden draggable="false">
+    <div class="variants" id="variants" hidden></div>
+  </main>
+
+  <!-- 11.4: one-line printability strip, tap to expand -->
+  <button class="strip" id="strip" hidden aria-expanded="false">
+    <span class="flag" id="stripFlag"></span>
+    <span class="what" id="stripWhat"></span>
+    <span class="chev" aria-hidden="true">▲</span>
+  </button>
+
+  <!-- 11.4: everything else is the bottom sheet -->
+  <section class="sheet" id="sheet">
+    <div class="grip" aria-hidden="true"></div>
+
+    <!-- ask -->
+    <div id="askBlock">
+      <div class="ask">
+        <textarea id="prompt" rows="2" spellcheck="false"
+          placeholder="Bracket to hold an 8 mm rod to a wall"></textarea>
+        <!-- 11.2: the ONE amber element on this screen -->
+        <button class="btn commit" id="generate">Generate</button>
       </div>
-      <div class="workwhat">
-        <div class="workstage" id="workStage">thinking</div>
-        <div class="workreq" id="workReq"></div>
-        <div class="worketa" id="workEta"></div>
+      <div class="seeds" id="seeds">
+        <button class="seed" data-fill="Bracket to hold an 8 mm rod to a wall">Rod bracket</button>
+        <button class="seed" data-fill="A flat plate 80 by 40 by 6 mm with two 5 mm holes 60 mm apart">Drilled plate</button>
+        <button class="seed" data-fill="An enclosure 100 by 60 by 30 mm with 2.5 mm walls">Enclosure</button>
+        <button class="seed" data-fill="A shelf bracket for a 200 mm shelf, 6 mm thick">Shelf bracket</button>
+        <button class="seed" data-fill="A wall hook 80 mm tall screwed through two 5 mm holes">Wall hook</button>
       </div>
-      <span class="elapsed" id="elapsed">0s</span>
-      <button class="btn ghost small" id="toggleLog">log</button>
+      <p class="note" id="machineNote" hidden></p>
     </div>
-    <div class="track"><div class="track-fill" id="trackFill"></div></div>
-    <pre class="log" id="log" hidden></pre>
-  </section>
 
-  <!-- ── options ──────────────────────────────────────────────────────── -->
-  <section class="panel" id="optionsPanel" hidden>
-    <div class="parthead">
-      <div>
-        <h2>Options</h2>
-        <p class="sub" id="optionsSub">Pick one. Every one of these builds and passes its checks.</p>
+    <!-- working -->
+    <div id="workBlock" hidden>
+      <div class="working">
+        <div class="caliper" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="what">
+          <div class="stagename" id="stageName">Thinking</div>
+          <div class="eta" id="stageEta"></div>
+        </div>
+        <div class="clock" id="clock">0s</div>
       </div>
+      <div class="track"><i id="track"></i></div>
+      <details id="logBox"><summary>What it's doing</summary>
+        <pre class="log" id="log"></pre>
+      </details>
     </div>
-    <div class="grid options" id="options"></div>
-  </section>
 
-  <!-- ── the chosen part ──────────────────────────────────────────────── -->
-  <section class="panel" id="partPanel" hidden>
-    <div class="parthead">
-      <div>
-        <h2 id="partName">—</h2>
-        <p class="sub" id="partMeta"></p>
+    <!-- options -->
+    <div id="optsBlock" hidden>
+      <h2 id="optsTitle">Options</h2>
+      <div class="opts" id="opts"></div>
+    </div>
+
+    <!-- the chosen part -->
+    <div id="partBlock" hidden>
+      <h2 id="partName">Part</h2>
+      <div class="facts" id="facts"></div>
+
+      <div class="row actions">
+        <a class="btn" id="dlStl" download>Export STL</a>
+        <button class="btn quiet" id="moreExports">More</button>
       </div>
-      <span class="verdict" id="verdict"></span>
-    </div>
+      <div class="row wrap" id="exportRow" hidden>
+        <a class="btn quiet" id="dlStep" download hidden>STEP</a>
+        <a class="btn quiet" id="dl3mf" download hidden>3MF</a>
+      </div>
 
-    <div class="viewer" id="viewer">
-      <img id="frame" alt="the part" draggable="false">
-      <div class="spinhint" id="spinhint">drag to spin</div>
-      <a class="btn primary export" id="dlStl" download>
-        <span class="label">Download STL</span>
-      </a>
-    </div>
-
-    <div class="row wrap">
-      <button class="btn ghost" id="showReport">Report</button>
-      <button class="btn ghost" id="showSpec">Spec</button>
-      <a class="btn ghost" id="dlStep" download hidden>STEP</a>
-      <a class="btn ghost" id="dl3mf" download hidden>3MF</a>
-    </div>
-
-    <div class="refine">
-      <span class="tag">not right? say what to change</span>
-      <div class="row">
+      <div class="ask" style="margin-top:14px">
         <input id="refine" type="text" spellcheck="false"
-          placeholder="make it 20 mm taller and move the hole up">
-        <button class="btn primary" id="refineBtn"><span class="label">Apply</span></button>
+          placeholder="Make it 20 mm taller">
+        <button class="btn" id="refineBtn">Apply</button>
       </div>
+
+      <details id="reportBox"><summary>Report</summary>
+        <pre class="doc" id="reportText"></pre>
+      </details>
+      <details id="specBox"><summary>Spec</summary>
+        <pre class="doc" id="specText"></pre>
+      </details>
     </div>
 
-    <details class="doc" id="reportBox"><summary>report</summary>
-      <pre id="reportText"></pre>
-    </details>
-    <details class="doc" id="specBox"><summary>spec.yaml</summary>
-      <pre id="specText"></pre>
-    </details>
-  </section>
-
-  <!-- ── library ──────────────────────────────────────────────────────── -->
-  <section class="panel">
-    <div class="parthead">
+    <!-- library -->
+    <div id="libBlock">
       <h2>Your parts</h2>
-      <input id="search" type="search" placeholder="search" spellcheck="false">
+      <div class="opts" id="library"></div>
     </div>
-    <div class="grid" id="library"></div>
-  </section>
-</main>
 
-<footer>
-  <span>local build · nothing leaves this machine</span>
-  <span id="footPrinter"></span>
-</footer>
+    <div class="row" style="margin-top:16px">
+      <button class="btn quiet" id="flatToggle" style="flex:1">Reduce effects</button>
+    </div>
+  </section>
+</div>
 
 <script src="/static/app.js"></script>
 </body>

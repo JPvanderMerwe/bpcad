@@ -1,0 +1,18 @@
+name: birdhouse_with_feeder_and_water_retainer
+level: 1
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.2
+print_axis: z
+template: enclosure
+params:
+  width_mm: 150
+  depth_mm: 100
+  height_mm: 180
+  wall_mm: 3
+  corner_r_mm: 4
+  entrance_dia_mm: 32
+  roof_overhang_mm: 20
+  roof_thick_mm: 6
+  roof_pitch_deg: 18
+  mount_holes: true

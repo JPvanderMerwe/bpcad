@@ -38,6 +38,20 @@ class Level3NotAllowed(SpecError):
 REVIEW_REQUIRED = "REVIEW REQUIRED: produced by raw CadQuery (level 3), not a validated template"
 
 
+def _count_bodies(solid) -> int:
+    """
+    How many separate solids a scene ended up with.
+
+    `vals()` is not this: a compound of two disjoint solids is ONE val. The
+    solids selector walks into the compound, which is what the exporter and
+    the slicer both see.
+    """
+    try:
+        return max(len(solid.solids().vals()), 1)
+    except Exception:
+        return 1
+
+
 def load_spec(path: str | Path) -> tuple[PartSpec, Path]:
     """
     Read a spec.yaml. Returns the spec and the directory it came from, because
@@ -147,6 +161,21 @@ def compile_spec(
             print_solid=scene.solid,
             features=dict(scene.features),
             log=scene.log,
+            # COUNT THE BODIES, DO NOT ASSUME ONE.
+            #
+            # This defaulted to 1, and the export check compares against it, so
+            # every level-2 part that came out as more than one body was
+            # rejected with "exported 2 separate bodies, expected 1". That
+            # rules out every print-in-place mechanism there is: a hinge, a
+            # captive washer, a spinner, anything with a moving part is TWO
+            # bodies with a gap between them, and being two bodies is the
+            # whole point of it.
+            #
+            # This is not the check being weakened. Its job is to confirm the
+            # EXPORT preserved what the geometry had - it still catches a mesh
+            # that shattered or fused on the way out. A template knows its own
+            # body count; at level 2 the scene is the only thing that knows.
+            body_count_expected=_count_bodies(scene.solid),
         )
 
     if not allow_level_3:

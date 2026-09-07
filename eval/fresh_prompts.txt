@@ -1,0 +1,64 @@
+# Thirty prompts written WITHOUT looking at the corpus.
+#
+# WHY THIS FILE EXISTS. The 22-entry corpus is not a fair test set and cannot
+# be made into one: its specs are hand-written by the same people who wrote the
+# pipeline, and the fidelity checks were tuned until they stopped firing on it.
+# A check that does not fire on 19 parts the pipeline already builds correctly
+# tells you nothing about false rejections anywhere else.
+#
+# So these are phrasings a stranger would type. Nothing here states a
+# dimension unless a person plausibly would, none of them name a template, and
+# several are deliberately vague or slightly wrong in the way real requests are
+# ("a thing to hold", "about 60 degrees", a brand name, a spelling slip).
+#
+# NOTHING MAY BE TUNED ON THIS FILE. It is the false-positive set as well as
+# the coverage set: the moment a threshold is adjusted until these pass, it
+# stops measuring anything, exactly as the corpus did.
+#
+# HOW TO READ A RESULT. There are no known-correct dimensions here, so the
+# harness reports every entry as unmeasurable and the fit rate is not the
+# number to look at. What these measure is:
+#
+#   built at all      did the pipeline produce a verified part, or hand off?
+#   which level       template road or primitives? A router that sends
+#                     everything to level 2 makes the five templates dead
+#                     weight, and one that forces a template on an unrelated
+#                     request is worse.
+#   failure class     ranked, from tools/fitrate.py --prompts
+#   refused by a
+#   fidelity check    each of these is a possible false rejection and has to
+#                     be looked at by eye, not counted.
+#
+#     python tools/fitrate.py --first-try --prompts eval/fresh_prompts.txt \
+#            --checkpoint eval/fresh-runs.jsonl
+
+a phone dock for my desk
+a cable tidy for three cables
+a GoPro mount for a bike handlebar
+a shelf pin for a bookcase
+a spool holder that clamps to a shelf
+a soap dish with drainage
+a pencil cup for a desk
+a stand for my tablet at about 60 degrees
+a wall bracket for a router
+a battery tray for four AA cells
+a lid for a jam jar
+a hose clip for a 20 mm pipe
+a doorstop wedge
+a case for a raspberry pi
+a fan grille 80 mm square
+a keycap puller
+a bin for small screws
+a hook for a towel
+a mount for a camera on a tripod
+a knob for a cooker dial
+a coaster with a lip
+a tray for keys by the front door
+a plant saucer 150 mm across
+a headphone hanger under a desk
+a grommet for a 30 mm desk hole
+a drawer divider 200 mm long
+a stand to hold a phone upright
+a clip to hold a pen to a notebook
+a bracket to hang a bird feeder
+a funnel for filling bottles

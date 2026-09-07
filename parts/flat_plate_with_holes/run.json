@@ -1,0 +1,136 @@
+{
+  "attempts": [
+    {
+      "call": {
+        "gen_tokens": 155,
+        "load_s": 4.533,
+        "mechanism": "json",
+        "prompt_tokens": 2569,
+        "tokens_per_s": 1.07
+      },
+      "elapsed_s": 149.767,
+      "error": "",
+      "index": 1,
+      "level": 2,
+      "model": "qwen2.5-coder:7b",
+      "ok": true,
+      "step": "primary"
+    }
+  ],
+  "budget": {
+    "attempts_per_level": 2,
+    "max_seconds": null
+  },
+  "elapsed_s": 151.06,
+  "handoff": null,
+  "level_reached": 2,
+  "machine": "laptop",
+  "ok": true,
+  "profile": {
+    "host": "http://127.0.0.1:11434",
+    "max_attempts_per_level": 2,
+    "model_primary": "qwen2.5-coder:7b",
+    "model_small": "hermes3:latest",
+    "name": "laptop",
+    "num_ctx": 8192,
+    "timeout_s": 420.0
+  },
+  "report": {
+    "material": "petg",
+    "mesh": {
+      "bbox_min_mm": [
+        -40.0,
+        -20.0,
+        0.0
+      ],
+      "bbox_mm": [
+        80.0,
+        40.0,
+        6.0
+      ],
+      "body_count": 1,
+      "body_sizes": [],
+      "degenerate_faces": 0,
+      "face_count": 3044,
+      "is_volume": true,
+      "path": "/tmp/bpcad-gen-mo7nmvdn/out/flat_plate_with_holes.stl",
+      "problems": [],
+      "vertex_count": 1520,
+      "volume_cm3": 18.959252569617064,
+      "warnings": [],
+      "watertight": true,
+      "winding_consistent": true
+    },
+    "notes": [],
+    "nozzle_mm": 0.4,
+    "ok": true,
+    "overhang": {
+      "bed_area_mm2": 3159.8754282695104,
+      "bridged_area_mm2": 0.0,
+      "downward_area_mm2": 0.373989452550181,
+      "max_bridge_gap_mm": 0.5,
+      "max_deg": 45.0,
+      "max_drop_mm": 0.0,
+      "overhang_area_mm2": 0.0,
+      "overhang_face_count": 0,
+      "overhang_fraction": 0.0,
+      "print_axis": "z",
+      "problems": [],
+      "supports_needed": false,
+      "total_area_mm2": 7937.939672981419,
+      "unsupported_area_mm2": 0.0,
+      "unsupported_face_count": 0,
+      "unsupported_fraction": 0.0,
+      "worst_overhang_deg": 4.6923664472590215e-15
+    },
+    "path": "/tmp/bpcad-gen-mo7nmvdn/out/flat_plate_with_holes.stl",
+    "print_axis": "z",
+    "problems": [],
+    "surface_levels": [
+      {
+        "area_mm2": 3159.8754282695104,
+        "height_mm": 6.000000000000002
+      }
+    ],
+    "verdict": "PASS",
+    "warnings": []
+  },
+  "request": "a flat plate 80 by 40 by 6 mm with two 5 mm holes 60 mm apart",
+  "spec": {
+    "assumptions": [],
+    "layer_mm": 0.2,
+    "level": 2,
+    "material": "petg",
+    "name": "flat_plate_with_holes",
+    "nozzle_mm": 0.4,
+    "ops": [
+      {
+        "corner_r_mm": 1,
+        "depth_mm": 40,
+        "height_mm": 6,
+        "op": "rounded_prism",
+        "width_mm": 80
+      },
+      {
+        "diameter_mm": 5,
+        "height_mm": 8,
+        "mode": "cut",
+        "op": "disc",
+        "x_mm": -30,
+        "z_mm": -2
+      },
+      {
+        "diameter_mm": 5,
+        "height_mm": 8,
+        "mode": "cut",
+        "op": "disc",
+        "x_mm": 30,
+        "z_mm": -2
+      }
+    ],
+    "params": {},
+    "print_axis": "z",
+    "scale_departures": []
+  },
+  "started_at": "2026-09-04T09:28:43.662749+00:00"
+}

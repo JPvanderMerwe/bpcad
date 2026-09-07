@@ -1,0 +1,49 @@
+# A print-in-place mechanism, hand-written, no model. It exists to prove the
+# vocabulary can make something that MOVES, and to be the reference for what
+# the ops order has to be.
+#
+# THE ORDER IS THE WHOLE TRICK. A cut applies to everything built so far and
+# cannot be aimed at one body, so the ring's clearance bore is cut while the
+# post does not exist yet. Written the obvious way - plate, post, ring, bore -
+# the bore is wider than the post and cuts it in half, leaving a stub floating
+# 9 mm in the air. That version builds, exports watertight, and reports three
+# bodies.
+#
+# The 0.30 mm gap is [materials.petg].clearance_mm from config, harvested off a
+# pivot and a print-in-place linkage that printed and worked. It is not a
+# guess and it is not mine.
+name: captive_washer
+level: 2
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.2
+print_axis: z
+
+ops:
+  # 1. THE MOVING BODY, FINISHED FIRST. A 24 mm ring sitting 0.30 mm above
+  #    where the plate will be.
+  - op: disc
+    diameter_mm: 24
+    height_mm: 5
+    z_mm: 4.3
+
+  # 2. Its bore: the 10 mm post plus 0.30 mm each side. Cut now, while there
+  #    is nothing else here to damage.
+  - op: disc
+    diameter_mm: 10.6
+    height_mm: 9
+    z_mm: 3.3
+    mode: cut
+
+  # 3. The base, under the ring but not touching it.
+  - op: rounded_prism
+    width_mm: 40
+    depth_mm: 40
+    height_mm: 4
+    corner_r_mm: 3
+
+  # 4. The post, up through the ring's bore with clearance all round.
+  - op: disc
+    diameter_mm: 10
+    height_mm: 14
+    z_mm: 4

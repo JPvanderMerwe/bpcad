@@ -300,6 +300,47 @@ WORKED_EXAMPLE = """{
 }"""
 
 
+def mechanism_example(clearance_mm: float) -> str:
+    """
+    A complete, working print-in-place mechanism, with the gap filled in.
+
+    THE RULES WERE PROSE AND THE MODEL IGNORED THEM. Told in words that a
+    moving part is two bodies with a %s mm gap, and that the moving body has to
+    be finished before the rest exists, three vague prompts - "a hinge", "a
+    ring that turns on a post", "a spinning top" - came back as ONE fused body
+    every time. Not one of them moved.
+
+    This file already knew why. WORKED_EXAMPLE's own comment says a model given
+    only the catalogue emits ops with no numbers, and that "showing one
+    complete valid answer fixes that far more reliably than any amount of
+    instruction". The moving-parts guidance was the one part of this prompt
+    with no example attached.
+
+    The numbers are DERIVED from the clearance rather than written in, so the
+    example can never contradict rule 1 above it: at 0.20 mm the gaps are
+    0.20 mm. tests/test_agent.py builds this exact example and asserts it comes
+    out as two separate bodies, because a worked example that does not work
+    teaches the wrong thing with authority.
+    """
+    gap = float(clearance_mm)
+    return """{
+  "name": "captive_ring_on_a_post",
+  "ops": [
+    {"op": "disc", "diameter_mm": 24, "height_mm": 5, "z_mm": %(ring_z).2f},
+    {"op": "disc", "diameter_mm": %(bore).2f, "height_mm": 9, "z_mm": %(bore_z).2f,
+     "mode": "cut"},
+    {"op": "rounded_prism", "width_mm": 40, "depth_mm": 40, "height_mm": 4,
+     "corner_r_mm": 3},
+    {"op": "disc", "diameter_mm": 10, "height_mm": 14, "z_mm": 4}
+  ],
+  "print_axis": "z"
+}""" % {
+        "ring_z": 4.0 + gap,          # the ring floats one gap above the plate
+        "bore": 10.0 + 2.0 * gap,     # and clears the 10 mm post by one gap
+        "bore_z": 3.0 + gap,
+    }
+
+
 SECOND_EXAMPLE = """{
   "name": "divided_tray_with_a_drain",
   "ops": [
@@ -401,8 +442,18 @@ def build_dsl_prompt(
     nozzle_mm: float,
     layer_mm: float,
     why_escalated: str = "",
+    clearance_mm: float | None = None,
 ) -> str:
-    """The level-2 task: compose ops, because no template fitted."""
+    """
+    The level-2 task: compose ops, because no template fitted.
+
+    `clearance_mm` is the running-fit gap for this material, read from config
+    where it was harvested off parts that actually printed. It is passed in
+    rather than assumed: PETG's 0.30 mm is proven by a pivot and a
+    print-in-place linkage, TPU's is deliberately UNSET, and a clearance
+    guessed for a flexible material is worse than none. When it is None the
+    moving-parts section is left out entirely - no number, no advice.
+    """
     parts = ["Requested part:", "  %s" % request.strip(), ""]
     if why_escalated:
         parts += [
@@ -425,6 +476,31 @@ def build_dsl_prompt(
         # reliably than any amount of instruction.
         "EVERY op needs its numbers. An op with only its name is rejected.",
         "",
+        # THE TWO RULES A REAL RUN GOT WRONG, STATED IN WORDS.
+        #
+        # Both are already shown correctly in SECOND_EXAMPLE and stated in the
+        # op docstrings, and the model still broke both on the first level-2
+        # part it was asked for: asked for "two 5 mm holes 60 mm apart" in a
+        # 6 mm plate it emitted discs 2 mm long at z 0 - blind pockets opening
+        # downward - one at x -30 and one at x 50, which is off an 80 mm plate
+        # entirely. It shipped with one hole. An example is not an instruction.
+        "WHERE THINGS GO. x_mm and y_mm are measured from the CENTRE of the",
+        "part, not from a corner or an edge, and they may be negative. z_mm 0",
+        "is the bottom face, the one on the bed. So two holes 60 mm apart,",
+        "centred, are at x_mm -30 and x_mm 30 - NOT 0 and 60.",
+        "",
+        "CUTS MUST GO ALL THE WAY THROUGH, and both of these are rejected: a",
+        "cut that lands off the part, and a cut that stops inside it.",
+        "",
+        "  z_mm      = -2",
+        "  height_mm = the part's thickness + 4",
+        "",
+        "For a hole through a 6 mm plate that is z_mm -2 and height_mm 10. Not",
+        "7. The cut has to START below the bottom face and END above the top",
+        "face, so it overshoots at BOTH ends - thickness + 1 still stops",
+        "inside and leaves a blind pocket with a roof over it, and a cut",
+        "exactly as thick as the part leaves two faces lying on each other.",
+        "",
         "Here is a complete, valid answer for a different part - a hollow box",
         "80 mm wide, 60 mm tall and 50 mm deep with a 20 mm recess in the front:",
         "",
@@ -438,6 +514,43 @@ def build_dsl_prompt(
         "",
         "Now do the same for the part requested above. Use whichever operations",
         "fit it - do not copy the shape of these examples.",
+    ]
+
+    if clearance_mm:
+        parts += [
+            "",
+            # THE ORDERING RULE. A cut applies to EVERYTHING built so far, and
+            # there is no way to aim one at a single body. Building a captive
+            # washer the obvious way - plate, post, ring, then bore the ring's
+            # clearance - cuts the post in half, because the bore is wider
+            # than the post and the post is already there. It leaves a stub
+            # floating 9 mm in the air, and it still exports as a watertight
+            # mesh with three bodies.
+            "IF ANYTHING HAS TO MOVE - a hinge, a wheel, a lid that swings, a",
+            "ring that turns - it is TWO SEPARATE BODIES with a gap between",
+            "them, printed where they sit. Two rules make that work:",
+            "",
+            "  1. Leave %.2f mm between them. That is the measured running"
+            % clearance_mm,
+            "     clearance for %s. Less and it welds solid; much more and it" % material,
+            "     rattles.",
+            "  2. FINISH THE MOVING BODY FIRST, before the rest exists. A cut",
+            "     hits everything built up to that point, so a clearance bore",
+            "     placed after the shaft will cut the shaft in half. Emit the",
+            "     moving piece, cut its clearance, and only then add the base",
+            "     and the shaft it turns on.",
+            "",
+            "The gap must be a gap in the geometry. Two shapes that touch are",
+            "one body and nothing moves.",
+            "",
+            "Here is a complete, valid answer that does it - a ring that turns",
+            "on a post, printed in one go. Note the ORDER: the ring and its",
+            "bore come first, while the post does not exist yet.",
+            "",
+            mechanism_example(clearance_mm),
+        ]
+
+    parts += [
         "",
         "Operations available:",
         "",

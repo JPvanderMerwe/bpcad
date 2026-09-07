@@ -140,3 +140,49 @@ def test_section_off_the_part_raises_with_the_range(tmp_path):
 
 def test_level_summary_lines_match_the_levels(keyring):
     assert len(V.level_summary(keyring)) == len(surface_levels(keyring))
+
+
+# ---------------------------------------------------------------------------
+# A part with one surface level. The height map is the primary
+# geometry-verification visual, so it has to be readable for a flat part too.
+# ---------------------------------------------------------------------------
+
+def test_a_one_level_face_renders_as_one_colour():
+    """
+    A drilled plate ray-casts to 6.0 everywhere, give or take float noise, and
+    the old guard (`if hi > lo`) let a 1e-7 span stretch the whole colour map
+    across a tenth of a micron. The top face came out as speckled confetti and
+    the only clue was a scale bar reading 6.00 at both ends.
+    """
+    import numpy as np
+
+    from bpcad.render.views import colourise
+
+    noise = 6.0 + np.random.default_rng(0).normal(0, 1e-7, size=(40, 40))
+    img = colourise(noise)
+
+    hits = img.reshape(-1, 3)
+    assert len(np.unique(hits, axis=0)) == 1, "a flat face rendered more than one colour"
+
+
+def test_a_real_step_is_still_shown():
+    """The flatness guard must not flatten a part that has actual steps."""
+    import numpy as np
+
+    from bpcad.render.views import colourise
+
+    field = np.full((40, 40), 6.0)
+    field[:, 20:] = 5.8          # a 0.2 mm step, one layer
+    img = colourise(field)
+
+    assert len(np.unique(img.reshape(-1, 3), axis=0)) == 2
+
+
+def test_the_flatness_threshold_is_below_anything_printable():
+    """
+    0.001 mm. The export tolerance is 0.005 and a layer is 0.2, so nothing
+    real hides under this - which is the whole argument for the threshold.
+    """
+    from bpcad.render.views import FLAT_MM
+
+    assert FLAT_MM < 0.005

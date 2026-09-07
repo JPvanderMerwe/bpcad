@@ -5,12 +5,17 @@ Not clever. Disciplined:
 
   1. Build context: the request, any measurements, the template catalogue with
      parameter schemas.
-  2. Ask for a PartSpec. Start at level 1.
+  2. Choose the road first, in Python, with no model call: a request that
+     names something a template claims starts at level 1, anything else goes
+     straight to level 2. See agent/route.py for why - a template that cannot
+     make the thing does not FAIL, it returns a confident wrong part, and the
+     escalation below only ever fired on failure.
   3. Validate against Pydantic. On failure, feed the exact error back and retry
      to the cap.
   4. Compile geometry. On exception, feed the traceback back and retry.
   5. Verify mesh, features and overhang. On failure, feed the failing rows back.
-  6. Escalate level 1 -> 2 only when a level is exhausted. Level 3 only with
+  6. Escalate level 1 -> 2 when a level is exhausted, and immediately when the
+     road said no template claims the request. Level 3 only with
      --allow-level-3.
   7. On exhaustion, hand off with an annotated draft. Never fail silently.
   8. Render, write the bundle and the report.
@@ -38,6 +43,7 @@ from pydantic import ValidationError
 
 from bpcad.agent import prompts
 from bpcad.agent.handoff import FieldProblem, problems_from_validation_error
+from bpcad.agent.route import route
 from bpcad.models.selector import Attempt, LadderResult, Profile, run_ladder
 from bpcad.spec.schema import PartSpec
 
@@ -339,6 +345,29 @@ def ask(
     That is what makes a failed BUILD retryable rather than fatal - the model
     gets told the part did not hold up, and why.
     """
+    # WHICH ROAD, BEFORE SPENDING A MODEL CALL ON THE WRONG ONE.
+    #
+    # This sits in ask() rather than in either front end on purpose. The CLI's
+    # `gen` and api.generate() each drive the ladder themselves, so a decision
+    # made in one of them is a decision the other does not make - which is
+    # exactly what happened the first time this was wired: the web app routed
+    # correctly and `bpcad gen` carried on handing drilled plates to the
+    # enclosure template. Declining here means both escalate to level 2
+    # through the path they already have for a decline.
+    #
+    # A decline costs nothing and no model is called. See agent/route.py.
+    road = route(request)
+    if level == 1 and not road.template_road:
+        return AskResult(
+            spec=None,
+            ladder=LadderResult(ok=False),
+            request=request,
+            machine=profile.name,
+            level=level,
+            no_template_fits=True,
+            note=road.why,
+        )
+
     defaults = {"material": material, "nozzle_mm": nozzle_mm, "layer_mm": layer_mm}
     system = prompts.SYSTEM
     base_user = prompts.build_user_prompt(request, material, nozzle_mm, layer_mm, measurements)
@@ -400,6 +429,25 @@ def ask(
     return result
 
 
+def running_clearance_mm(cfg, material: str) -> float | None:
+    """
+    The measured running-fit clearance for a material, or None.
+
+    None means "no measured source", which for a moving part is a real answer:
+    TPU's clearance is deliberately UNSET because it is flexible and none of
+    the reference parts use it, and reading an UNSET value raises rather than
+    substituting a guess (CLAUDE.md 29). The level-2 prompt then leaves the
+    moving-parts advice out entirely instead of quoting a number nobody
+    measured.
+    """
+    from bpcad.config import UnsetConfigError
+
+    try:
+        return float(cfg.material(material)["clearance_mm"])
+    except (UnsetConfigError, KeyError, TypeError, ValueError):
+        return None
+
+
 def ask_level_2(
     request: str,
     profile: Profile,
@@ -409,6 +457,7 @@ def ask_level_2(
     why_escalated: str = "",
     on_attempt: Callable[[Attempt], None] | None = None,
     verify_fn: Callable[[PartSpec], Any] | None = None,
+    clearance_mm: float | None = None,
 ) -> AskResult:
     """
     Level 2: ask for a composition of DSL primitives instead of a template.
@@ -421,7 +470,8 @@ def ask_level_2(
     defaults = {"material": material, "nozzle_mm": nozzle_mm, "layer_mm": layer_mm}
     system = prompts.DSL_SYSTEM
     base_user = prompts.build_dsl_prompt(
-        request, material, nozzle_mm, layer_mm, why_escalated
+        request, material, nozzle_mm, layer_mm, why_escalated,
+        clearance_mm=clearance_mm,
     )
     # JSON MODE, NOT A SCHEMA. See models.ollama.JSON_ONLY: a schema with a
     # discriminated union in it makes this model emit ops with no dimensions,
@@ -476,12 +526,28 @@ def compile_and_verify(
     out_dir: Path,
     allow_level_3: bool = False,
     request: str = "",
+    strict_cuts: bool = False,
 ):
     """
     Compile a spec, export it, and verify the result.
 
     Raises SpecRejected with a structured critique if anything fails, so the
     caller can feed it back to the model rather than giving up.
+
+    `strict_cuts` turns a cut that removed nothing into a failure. It is off by
+    default and the generation paths turn it on, because the two callers of this
+    function want opposite things from the same fact:
+
+      A PERSON'S OWN SPEC. One cut missed and everything else was right.
+      Killing the build loses the part; the note in the report is the right
+      severity, and that is what `bpcad build` gets.
+
+      A MODEL'S SPEC. A cut that removes nothing is a hole that is not there.
+      The part builds, verifies, reports PASS and is wrong, and no check
+      downstream can catch it because none of them knows what was asked for.
+      Asked for two 5 mm holes 60 mm apart, the model put its second hole at
+      x 50 on a plate spanning -40..40 and shipped a plate with one hole. A
+      retry with the numbers in the critique costs one attempt.
 
     `allow_level_3` has to be threaded through rather than defaulted here: a
     level-3 spec the person wrote themselves must be buildable, and hardcoding
@@ -506,6 +572,21 @@ def compile_and_verify(
             hint="- the parameters are individually legal but produce impossible "
                  "geometry together. Try more conservative values.",
         ) from exc
+
+    if strict_cuts:
+        from bpcad.spec.dsl import CUT_FAULT
+
+        faults = [n for n in result.log.notes if CUT_FAULT in n]
+        if faults:
+            raise SpecRejected(
+                "a cut in this spec did not do what a cut was asked to do, so "
+                "a feature that was asked for is not in the part:\n  %s"
+                % "\n  ".join(n.replace(CUT_FAULT, "").strip() for n in faults),
+                stage=STAGE_COMPILE,
+                hint="- a hole goes ALL THE WAY THROUGH: start the cut outside "
+                     "one face and end it outside the other, so its length is "
+                     "greater than the part is thick. Put every cut on the part.",
+            )
 
     # Spec first - somebody asked for it by name. Then the template, which
     # knows whether it makes flat faces or turned ones. Then the config default,
@@ -601,6 +682,45 @@ def compile_and_verify(
 
         intent = check_intent(request, measured)
         report.intent = intent
+
+        # AND IS IT THE SHAPE THAT WAS ASKED FOR? The dimensions above can all
+        # be right on a part that is the wrong shape entirely: asked for "a
+        # round knob 40 mm across", the model emitted a 40 x 40 rounded_prism
+        # and every check agreed, because 40 across is 40 across whichever way
+        # you square it. Only the plan view tells them apart.
+        #
+        # The mesh, not result.solid: a cylinder's B-rep has two vertices and
+        # the hull of those is nothing, which scored a correct knob as flat.
+        from bpcad.verify.intent import check_hole_counts, check_roundness
+
+        try:
+            not_round = check_roundness(request, mesh.vertices)
+        except Exception:
+            not_round = None
+        if not_round:
+            intent.problems.append(not_round)
+
+        # AS MANY HOLES AS WERE ASKED FOR. Nothing compared these before, so a
+        # request for "two countersunk screw holes" that came back as one
+        # conical dimple with no bore at all passed every check there was.
+        try:
+            wrong_holes = check_hole_counts(request, result.solid)
+        except Exception:
+            wrong_holes = None
+        if wrong_holes:
+            intent.problems.append(wrong_holes)
+
+        # AND DOES IT HOLD ANYTHING? Asked for a plant pot, the model returned
+        # a solid 100 x 100 x 20 slab with one hole in it. Watertight, one
+        # body, every check green, and a coaster.
+        from bpcad.verify.intent import check_hollowness
+
+        try:
+            solid_lump = check_hollowness(request, mesh)
+        except Exception:
+            solid_lump = None
+        if solid_lump:
+            intent.problems.append(solid_lump)
         if intent.problems:
             raise SpecRejected(
                 intent.problems[0],

@@ -1,0 +1,38 @@
+{
+  "name": "3d bowl",
+  "prompt": "create a unique bowl",
+  "image": "/home/jp-van-der-merwe/Downloads/3dprintbowl.jpg",
+  "measurements": "PartMeasurement(source='/home/jp-van-der-merwe/Downloads/3dprintbowl.jpg', silhouette=Box(left=32, right=767, top=120, bottom=471), scale_mm_per_px=None, view='front', items=[Measurement(name='overall_width', value=736, units='px', confidence='measured', evidence='silhouette, columns 32 to 767'), Measurement(name='overall_height', value=352, units='px', confidence='measured', evidence='silhouette, rows 120 to 471'), Measurement(name='aspect', value=2.090909090909091, units='fraction', confidence='measured', evidence=''), Measurement(name='entrance_diameter', value=109.78326076070195, units='px', confidence='fitted', evidence='circle fit, residual 2.60 px over 20 points'), Measurement(name='entrance_height', value=291.1606247447411, units='px', confidence='fitted', evidence='centre at row 179.8, body bottom at row 471'), Measurement(name='entrance_from_left', value=479.4853847964143, units='px', confidence='fitted', evidence='')], notes=['no scale stated, so proportions only. An image cannot give absolute size.', 'a front view looks along the roof slope, so the pitch is not measurable from it - photograph the side for that'])",
+  "versions": [
+    {
+      "index": 0,
+      "instruction": "",
+      "note": "",
+      "changes": [],
+      "ok": true,
+      "error": "",
+      "elapsed_s": 30.41,
+      "attempts": 1,
+      "spec": {
+        "name": "bowl",
+        "level": 1,
+        "material": "petg",
+        "nozzle_mm": 0.4,
+        "layer_mm": 0.2,
+        "print_axis": "z",
+        "template": "enclosure",
+        "params": {
+          "width_mm": 150,
+          "depth_mm": 150,
+          "height_mm": 100,
+          "wall_mm": 3,
+          "corner_r_mm": 8,
+          "roof": false
+        },
+        "ops": [],
+        "assumptions": [],
+        "scale_departures": []
+      }
+    }
+  ]
+}

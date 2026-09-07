@@ -1,0 +1,90 @@
+{
+  "attempts": [
+    {
+      "call": {
+        "gen_tokens": 276,
+        "load_s": 0.235,
+        "mechanism": "json",
+        "prompt_tokens": 2958,
+        "tokens_per_s": 1.15
+      },
+      "elapsed_s": 240.375,
+      "error": "op 0 ('rounded_prism') failed: _makeExpressionGrammar.<locals>.atom_callback() missing 1 required positional argument: 'res'",
+      "index": 1,
+      "level": 2,
+      "model": "qwen2.5-coder:7b",
+      "ok": false,
+      "step": "primary"
+    },
+    {
+      "call": {
+        "gen_tokens": 0,
+        "load_s": 0.0,
+        "mechanism": "json",
+        "prompt_tokens": 0,
+        "tokens_per_s": 0.0
+      },
+      "elapsed_s": 420.105,
+      "error": "qwen2.5-coder:7b did not answer within 420s. On a CPU-only machine this usually means the model is simply slow rather than broken - raise timeout_s for this machine profile, or drop to the smaller model.",
+      "index": 2,
+      "level": 2,
+      "model": "qwen2.5-coder:7b",
+      "ok": false,
+      "step": "primary"
+    },
+    {
+      "call": {
+        "gen_tokens": 314,
+        "load_s": 0.162,
+        "mechanism": "json",
+        "prompt_tokens": 801,
+        "tokens_per_s": 3.27
+      },
+      "elapsed_s": 96.271,
+      "error": "ops[3] is invalid: op 'arc_rod' is invalid:\n  arc_rod.rotate_axis\n      problem : Input should be 'x', 'y' or 'z'\n      given   : 'Y'",
+      "index": 3,
+      "level": 2,
+      "model": "hermes3:latest",
+      "ok": false,
+      "step": "small"
+    },
+    {
+      "call": {
+        "gen_tokens": 0,
+        "load_s": 0.0,
+        "mechanism": "json",
+        "prompt_tokens": 0,
+        "tokens_per_s": 0.0
+      },
+      "elapsed_s": 420.106,
+      "error": "hermes3:latest did not answer within 420s. On a CPU-only machine this usually means the model is simply slow rather than broken - raise timeout_s for this machine profile, or drop to the smaller model.",
+      "index": 4,
+      "level": 2,
+      "model": "hermes3:latest",
+      "ok": false,
+      "step": "small"
+    }
+  ],
+  "budget": {
+    "attempts_per_level": 2,
+    "max_seconds": null
+  },
+  "elapsed_s": 1176.9,
+  "handoff": "parts/an_iphone_holder/spec.draft.yaml",
+  "level_reached": 2,
+  "machine": "laptop",
+  "ok": false,
+  "profile": {
+    "host": "http://127.0.0.1:11434",
+    "max_attempts_per_level": 2,
+    "model_primary": "qwen2.5-coder:7b",
+    "model_small": "hermes3:latest",
+    "name": "laptop",
+    "num_ctx": 8192,
+    "timeout_s": 420.0
+  },
+  "report": null,
+  "request": "an iPhone holder",
+  "spec": null,
+  "started_at": "2026-09-07T08:11:00.620305+00:00"
+}

@@ -97,6 +97,13 @@ def standard_views(
     return out
 
 
+# Below this, a height difference is not geometry. STL export tolerance is
+# 0.005 mm (CLAUDE.md 24) and a layer is 0.2 mm, so a span of a micron across a
+# whole face is ray-cast noise and nothing else. Judging flatness by an exact
+# float comparison instead is what produced a confetti height map for a plate.
+FLAT_MM = 0.001
+
+
 def colourise(
     hmap: np.ndarray,
     cmap_name: str = "inferno",
@@ -112,9 +119,23 @@ def colourise(
     if finite.any():
         vals = hmap[finite]
         lo, hi = float(vals.min()), float(vals.max())
-        span = hi - lo if hi > lo else 1.0
-        norm = (vals - lo) / span
-        img[finite] = colormaps[cmap_name](norm)[:, :3]
+        if hi - lo < FLAT_MM:
+            # A ONE-LEVEL PART IS NOT A ZERO-SPAN PART, and the guard used to
+            # be `if hi > lo`, which only catches an exactly equal pair.
+            #
+            # A flat plate ray-casts to 6.0 everywhere give or take float
+            # noise, so hi - lo came out around 1e-7 - greater than lo, so the
+            # whole colour map got stretched across a tenth of a micron and
+            # the top face rendered as speckled confetti. The scale bar read
+            # 6.00 at both ends, which was the only clue.
+            #
+            # This is the PRIMARY geometry-verification visual (CLAUDE.md 27),
+            # so a face that is all one height has to look like one. Mid-tone,
+            # not the bottom of the ramp: at the bottom the part is near-black
+            # on a near-black ground and the silhouette disappears too.
+            img[finite] = colormaps[cmap_name](0.5)[:3]
+        else:
+            img[finite] = colormaps[cmap_name]((vals - lo) / (hi - lo))[:, :3]
 
     return (np.flipud(img) * 255.0 + 0.5).astype(np.uint8)
 
@@ -149,9 +170,17 @@ def _scale_strip(
     pil = Image.fromarray(out)
     draw = ImageDraw.Draw(pil)
     x = w + bar_w + 4
-    draw.text((x, top - 6), "%.2f" % hi, fill=(230, 232, 236))
-    draw.text((x, bot - 6), "%.2f" % lo, fill=(230, 232, 236))
-    draw.text((x, (top + bot) // 2 - 6), "mm", fill=(150, 154, 160))
+    if hi - lo < FLAT_MM:
+        # One number, once. Printing 6.00 at both ends of a gradient bar reads
+        # as a range that happens to be labelled twice, which is how a
+        # degenerate scale went unnoticed.
+        draw.text((x, (top + bot) // 2 - 16), "%.2f mm" % hi, fill=(230, 232, 236))
+        draw.text((x, (top + bot) // 2 - 2), "all one", fill=(150, 154, 160))
+        draw.text((x, (top + bot) // 2 + 10), "level", fill=(150, 154, 160))
+    else:
+        draw.text((x, top - 6), "%.2f" % hi, fill=(230, 232, 236))
+        draw.text((x, bot - 6), "%.2f" % lo, fill=(230, 232, 236))
+        draw.text((x, (top + bot) // 2 - 6), "mm", fill=(150, 154, 160))
     return np.asarray(pil)
 
 

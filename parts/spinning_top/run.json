@@ -1,0 +1,159 @@
+{
+  "attempts": [
+    {
+      "call": {
+        "gen_tokens": 197,
+        "load_s": 0.159,
+        "mechanism": "json",
+        "prompt_tokens": 2734,
+        "tokens_per_s": 1.18
+      },
+      "elapsed_s": 168.117,
+      "error": "a cut in this spec did not do what a cut was asked to do, so a feature that was asked for is not in the part:\n  disc in cut mode enters the bottom face and stops 42.00 mm short of the top, so it is a blind pocket opening DOWNWARD, not a hole through the part. It leaves a roof that has to print over air. The part spans z 0.00..50.00 and the cut spans -2.00..8.00. For a hole through it, the cut must clear both faces. Set z_mm to -2.00 and height_mm to 54.00, which spans -2.00..52.00 and clears both faces by 2 mm. Change BOTH: moving z_mm down on its own only moves the same short cut further away. If a recess on the underside really was wanted, put it on the top face instead.\n  disc in cut mode enters the bottom face and stops 42.00 mm short of the top, so it is a blind pocket opening DOWNWARD, not a hole through the part. It leaves a roof that has to print over air. The part spans z -0.00..50.00 and the cut spans -2.00..8.00. For a hole through it, the cut must clear both faces. Set z_mm to -2.00 and height_mm to 54.00, which spans -2.00..52.00 and clears both faces by 2 mm. Change BOTH: moving z_mm down on its own only moves the same short cut further away. If a recess on the underside really was wanted, put it on the top face instead.",
+      "index": 1,
+      "level": 2,
+      "model": "qwen2.5-coder:7b",
+      "ok": false,
+      "step": "primary"
+    },
+    {
+      "call": {
+        "gen_tokens": 197,
+        "load_s": 0.097,
+        "mechanism": "json",
+        "prompt_tokens": 1120,
+        "tokens_per_s": 2.25
+      },
+      "elapsed_s": 87.944,
+      "error": "",
+      "index": 2,
+      "level": 2,
+      "model": "qwen2.5-coder:7b",
+      "ok": true,
+      "step": "primary"
+    }
+  ],
+  "budget": {
+    "attempts_per_level": 2,
+    "max_seconds": null
+  },
+  "elapsed_s": 257.27,
+  "handoff": null,
+  "level_reached": 2,
+  "machine": "laptop",
+  "ok": true,
+  "profile": {
+    "host": "http://127.0.0.1:11434",
+    "max_attempts_per_level": 2,
+    "model_primary": "qwen2.5-coder:7b",
+    "model_small": "hermes3:latest",
+    "name": "laptop",
+    "num_ctx": 8192,
+    "timeout_s": 420.0
+  },
+  "report": {
+    "material": "petg",
+    "mesh": {
+      "bbox_min_mm": [
+        -24.748737335205078,
+        -24.748737335205078,
+        0.0
+      ],
+      "bbox_mm": [
+        49.497474670410156,
+        49.497474670410156,
+        50.0
+      ],
+      "body_count": 1,
+      "body_sizes": [],
+      "degenerate_faces": 0,
+      "face_count": 2148,
+      "is_volume": true,
+      "path": "/tmp/bpcad-gen-vdcaamvh/out/spinning_top.stl",
+      "problems": [],
+      "vertex_count": 1074,
+      "volume_cm3": 22.08639843233125,
+      "warnings": [],
+      "watertight": true,
+      "winding_consistent": true
+    },
+    "notes": [],
+    "nozzle_mm": 0.4,
+    "ok": true,
+    "overhang": {
+      "bed_area_mm2": 921.4837814447584,
+      "bridged_area_mm2": 0.0,
+      "downward_area_mm2": 933.297336793708,
+      "max_bridge_gap_mm": 0.5,
+      "max_deg": 45.0,
+      "max_drop_mm": 0.0,
+      "overhang_area_mm2": 0.0,
+      "overhang_face_count": 0,
+      "overhang_fraction": 0.0,
+      "print_axis": "z",
+      "problems": [],
+      "supports_needed": false,
+      "total_area_mm2": 7828.495815796063,
+      "unsupported_area_mm2": 0.0,
+      "unsupported_face_count": 0,
+      "unsupported_fraction": 0.0,
+      "worst_overhang_deg": 0.0015703585461697975
+    },
+    "path": "/tmp/bpcad-gen-vdcaamvh/out/spinning_top.stl",
+    "print_axis": "z",
+    "problems": [],
+    "surface_levels": [
+      {
+        "area_mm2": 236.1095076489308,
+        "height_mm": 50.0
+      }
+    ],
+    "verdict": "PASS",
+    "warnings": []
+  },
+  "request": "a spinning top",
+  "spec": {
+    "assumptions": [],
+    "layer_mm": 0.2,
+    "level": 2,
+    "material": "petg",
+    "name": "spinning_top",
+    "nozzle_mm": 0.4,
+    "ops": [
+      {
+        "corner_r_mm": 10,
+        "depth_mm": 20,
+        "height_mm": 50,
+        "op": "rounded_prism",
+        "width_mm": 20
+      },
+      {
+        "diameter_mm": 10,
+        "height_mm": 54,
+        "mode": "cut",
+        "op": "disc",
+        "z_mm": -2
+      },
+      {
+        "depth_mm": 50,
+        "height_mm": 30,
+        "op": "wedge",
+        "rotate_deg": 45,
+        "width_mm": 20,
+        "x_mm": 0,
+        "y_mm": 0
+      },
+      {
+        "diameter_mm": 10,
+        "height_mm": 54,
+        "mode": "cut",
+        "op": "disc",
+        "z_mm": -2
+      }
+    ],
+    "params": {},
+    "print_axis": "z",
+    "scale_departures": []
+  },
+  "started_at": "2026-09-04T10:13:58.162067+00:00"
+}

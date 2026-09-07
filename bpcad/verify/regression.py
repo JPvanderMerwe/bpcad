@@ -35,6 +35,16 @@ class Signature:
     volume_cm3: float
     bbox_mm: list[float]
     face_count: int
+    # HOW MANY SEPARATE PIECES, because for a mechanism that is the whole
+    # question. A print-in-place hinge is two bodies with a measured gap; the
+    # way it fails is by FUSING into one, and a fused hinge has almost the same
+    # volume, the same envelope and a similar face count. Every field above it
+    # would have said "match" while the thing stopped moving.
+    #
+    # Optional, and compared only when both sides have it: baselines written
+    # before this existed have no such field, and inventing a number for them
+    # would report a regression that never happened.
+    body_count: int | None = None
 
     def digest(self) -> str:
         payload = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
@@ -60,6 +70,7 @@ def signature_of(report: MeshReport) -> Signature:
         volume_cm3=round(report.volume_cm3, VOLUME_DP),
         bbox_mm=[round(v, BBOX_DP) for v in report.bbox_mm],
         face_count=report.face_count,
+        body_count=int(getattr(report, "body_count", 0)) or None,
     )
 
 
@@ -88,6 +99,7 @@ def load_baseline(path: str | Path) -> Signature | None:
         volume_cm3=float(data["volume_cm3"]),
         bbox_mm=[float(v) for v in data["bbox_mm"]],
         face_count=int(data["face_count"]),
+        body_count=int(data["body_count"]) if data.get("body_count") else None,
     )
 
 
@@ -132,8 +144,30 @@ def check_regression(
         diffs.append("face count %d -> %d (%+d)"
                      % (baseline.face_count, sig.face_count,
                         sig.face_count - baseline.face_count))
+    if (baseline.body_count is not None and sig.body_count is not None
+            and sig.body_count != baseline.body_count):
+        diffs.append(
+            "separate bodies %d -> %d (%+d)%s"
+            % (baseline.body_count, sig.body_count,
+               sig.body_count - baseline.body_count,
+               " - a mechanism that was two pieces is now one, so nothing in "
+               "it moves" if sig.body_count < baseline.body_count else "")
+        )
 
     if not diffs:
+        # UPGRADE A BASELINE THAT PREDATES A FIELD. Nothing about the geometry
+        # changed, so this is a match - but the stored file has no body count
+        # and would never gain one, because a baseline is only rewritten when
+        # something differs. It would then sit there unable to catch the very
+        # regression the field was added for, and its recorded digest would
+        # disagree with the signature printed beside it.
+        if baseline.body_count is None and sig.body_count is not None:
+            save_baseline(path, sig)
+            return RegressionResult(
+                "match", sig, baseline, str(path),
+                ["baseline had no body count; recorded %d without changing "
+                 "anything else" % sig.body_count],
+            )
         return RegressionResult("match", sig, baseline, str(path))
 
     if update:

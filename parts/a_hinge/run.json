@@ -1,0 +1,90 @@
+{
+  "attempts": [
+    {
+      "call": {
+        "gen_tokens": 250,
+        "load_s": 5.824,
+        "mechanism": "json",
+        "prompt_tokens": 2957,
+        "tokens_per_s": 0.71
+      },
+      "elapsed_s": 358.401,
+      "error": "a cut in this spec did not do what a cut was asked to do, so a feature that was asked for is not in the part:\n  disc in cut mode removed nothing - it does not touch the part. It sits at (20.0, 0.0, -2.0) and the part spans x -20.0..15.0, y -5.0..5.0, z -2.0..3.0. Set z_mm to -4.00 and height_mm to 9.00, which spans -4.00..5.00 and clears both faces by 2 mm. Change BOTH: moving z_mm down on its own only moves the same short cut further away.",
+      "index": 1,
+      "level": 2,
+      "model": "qwen2.5-coder:7b",
+      "ok": false,
+      "step": "primary"
+    },
+    {
+      "call": {
+        "gen_tokens": 250,
+        "load_s": 0.093,
+        "mechanism": "json",
+        "prompt_tokens": 956,
+        "tokens_per_s": 4.12
+      },
+      "elapsed_s": 60.867,
+      "error": "a cut in this spec did not do what a cut was asked to do, so a feature that was asked for is not in the part:\n  disc in cut mode removed nothing - it does not touch the part. It sits at (20.0, 0.0, -4.0) and the part spans x -20.0..15.0, y -5.0..5.0, z -4.0..1.0. Set z_mm to -6.00 and height_mm to 9.00, which spans -6.00..3.00 and clears both faces by 2 mm. Change BOTH: moving z_mm down on its own only moves the same short cut further away.",
+      "index": 2,
+      "level": 2,
+      "model": "qwen2.5-coder:7b",
+      "ok": false,
+      "step": "primary"
+    },
+    {
+      "call": {
+        "gen_tokens": 244,
+        "load_s": 5.692,
+        "mechanism": "json",
+        "prompt_tokens": 944,
+        "tokens_per_s": 2.34
+      },
+      "elapsed_s": 110.174,
+      "error": "a cut in this spec did not do what a cut was asked to do, so a feature that was asked for is not in the part:\n  disc in cut mode removed nothing - it does not touch the part. It sits at (20.0, 0.0, -6.0) and the part spans x -20.0..15.0, y -5.0..5.0, z -6.0..-1.0. Set z_mm to -8.00 and height_mm to 9.00, which spans -8.00..1.00 and clears both faces by 2 mm. Change BOTH: moving z_mm down on its own only moves the same short cut further away.",
+      "index": 3,
+      "level": 2,
+      "model": "hermes3:latest",
+      "ok": false,
+      "step": "small"
+    },
+    {
+      "call": {
+        "gen_tokens": 230,
+        "load_s": 0.123,
+        "mechanism": "json",
+        "prompt_tokens": 945,
+        "tokens_per_s": 3.43
+      },
+      "elapsed_s": 67.329,
+      "error": "a cut in this spec did not do what a cut was asked to do, so a feature that was asked for is not in the part:\n  disc in cut mode removed nothing - it does not touch the part. It sits at (0.0, 0.0, -8.0) and the part spans x -20.0..15.0, y -5.0..5.0, z -8.0..-3.0. Set z_mm to -10.00 and height_mm to 9.00, which spans -10.00..-1.00 and clears both faces by 2 mm. Change BOTH: moving z_mm down on its own only moves the same short cut further away.",
+      "index": 4,
+      "level": 2,
+      "model": "hermes3:latest",
+      "ok": false,
+      "step": "small"
+    }
+  ],
+  "budget": {
+    "attempts_per_level": 2,
+    "max_seconds": null
+  },
+  "elapsed_s": 597.65,
+  "handoff": "parts/a_hinge/spec.draft.yaml",
+  "level_reached": 2,
+  "machine": "laptop",
+  "ok": false,
+  "profile": {
+    "host": "http://127.0.0.1:11434",
+    "max_attempts_per_level": 2,
+    "model_primary": "qwen2.5-coder:7b",
+    "model_small": "hermes3:latest",
+    "name": "laptop",
+    "num_ctx": 8192,
+    "timeout_s": 420.0
+  },
+  "report": null,
+  "request": "a hinge",
+  "spec": null,
+  "started_at": "2026-09-04T11:19:28.000845+00:00"
+}

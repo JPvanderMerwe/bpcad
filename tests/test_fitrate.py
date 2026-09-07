@@ -27,16 +27,28 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import fitrate  # noqa: E402
 
-# Measured 2026-09-03: 16 of 18 measurable entries.
+# Measured 2026-09-04: 19 of 19 measurable entries. Raised from 16 in the same
+# change that earned it, as the header above requires.
 #
-# The two that fail, and why they are allowed to:
-#   plant_pot_drained  120 mm asked, 119.441 delivered - the vessel template's
-#                      1.2 mm rim fillet eats 0.56 mm off its own stated
-#                      diameter. A real defect, left visible.
-#   rod_clamp_8mm      no vocabulary expresses a split clamp with a bore and a
-#                      flange. A real gap, left visible.
-FLOOR_FITTED = 16
-FLOOR_MEASURABLE = 18
+# WHAT MOVED, AND WHY.
+#
+#   plant_pot_drained  was failing because the vessel delivered 119.441 mm for
+#                      the 120.0 it was asked for: on a cone the widest point
+#                      IS the rim, and the 1.2 mm rim rounding ate 0.56 mm off
+#                      it. The template now measures its own widest point and
+#                      corrects, reporting the factor and the residual. That
+#                      turned up a second one no entry covered: the belly
+#                      profile used outer_dia_mm/2 as a Bezier CONTROL point,
+#                      so a belly asked for 120 mm across delivered 99.8.
+#   rod_clamp_8mm      was STALE, not unreachable. Its comment - "nothing in
+#                      the vocabulary makes a split clamp with a bore and a
+#                      flange" - was true when `disc` could only add material
+#                      and no op could be rotated. Both arrived later and
+#                      nobody revisited it.
+#   snap_over_cable_clip  added on the evidence of the coverage test at the
+#                      bottom of this file, not to move the number.
+FLOOR_FITTED = 19
+FLOOR_MEASURABLE = 19
 
 
 @pytest.fixture(scope="module")
@@ -83,17 +95,56 @@ def test_every_assertion_kind_in_the_corpus_is_understood(measured):
         assert not unknown, "%s asserts unknown keys: %s" % (entry["id"], unknown)
 
 
-def test_a_part_that_is_wrong_is_reported_wrong(measured):
+def test_a_part_that_is_wrong_is_reported_wrong(tmp_path):
     """
-    The harness must be able to FAIL. A gate that cannot fail is not a gate,
-    and the plant pot is the standing proof that this one can.
+    The harness must be able to FAIL. A gate that cannot fail is not a gate.
+
+    This used to lean on the plant pot: a real outstanding defect served as
+    the standing proof that the assertions bite. Fixing the pot took the last
+    failing entry with it and this test went red - correctly, because the gate
+    had lost its evidence. Leaning on a live bug means the proof disappears
+    the day the bug is fixed, and re-breaking a part to keep a test honest is
+    not a trade anybody should take.
+
+    So the proof is a negative control instead: a spec that really does build
+    an 80 mm plate, asserted to be 95 mm. It must build, and it must not fit.
     """
-    failing = [o for o in measured if o.measurable and o.built and not o.fits]
-    assert failing, (
-        "every measurable entry passed, so this gate has not been shown to "
-        "detect anything. Either the corpus needs a harder entry or the "
-        "assertions are not being run."
-    )
+    entry = {
+        "id": "negative_control",
+        "request": "a plate whose stated width is deliberately wrong",
+        "expect": {"extent_x_mm": 95.0, "extent_y_mm": 40.0, "bodies": 1},
+        "spec": {
+            "level": 2,
+            "ops": [{"op": "rounded_prism", "width_mm": 80.0,
+                     "depth_mm": 40.0, "height_mm": 6.0}],
+        },
+    }
+    outcome = fitrate.run_reachable(entry, tmp_path)
+
+    assert outcome.built, "the control must build, or it proves nothing"
+    assert outcome.measurable
+    assert not outcome.fits, "an 80 mm plate asserted at 95 mm was reported as fitting"
+    assert any("95" in line for line in outcome.lines)
+
+
+def test_the_negative_control_passes_when_it_is_told_the_truth(tmp_path):
+    """
+    The other half of the control. If `fits` were hardcoded False the test
+    above would pass for the wrong reason, so the same spec with the right
+    number has to come back fitting.
+    """
+    entry = {
+        "id": "positive_control",
+        "request": "a plate whose stated width is right",
+        "expect": {"extent_x_mm": 80.0, "extent_y_mm": 40.0, "bodies": 1},
+        "spec": {
+            "level": 2,
+            "ops": [{"op": "rounded_prism", "width_mm": 80.0,
+                     "depth_mm": 40.0, "height_mm": 6.0}],
+        },
+    }
+    outcome = fitrate.run_reachable(entry, tmp_path)
+    assert outcome.built and outcome.fits, outcome.lines
 
 
 def test_an_unmeasurable_entry_is_not_counted_either_way(measured):
@@ -108,3 +159,55 @@ def test_an_unmeasurable_entry_is_not_counted_either_way(measured):
         assert not outcome.fits, (
             "%s counted as a fit on a trivial assertion" % outcome.id
         )
+
+
+def test_the_corpus_exercises_the_geometry_that_makes_a_part_look_designed():
+    """
+    THE NUMBER ABOVE IS ONLY WORTH WHAT THE CORPUS ASKS FOR.
+
+    Nine of the fifteen level-2 ops were never exercised by any entry:
+    arc_rod, blend_edges, profile_extrude, pattern_polar, mirror, pocket,
+    sphere, emboss_polygon, emboss_text. Every one of them is a curve, a
+    blend, a sweep or a pattern - the things that separate a designed part
+    from a block with holes. A reachable rate of 100% against a corpus of
+    prisms and discs says nothing about whether this program can make
+    something that looks made.
+
+    Compared side by side with Prusa's Extruder-cable-clip, which ships on
+    every MK3S: 874 triangles, watertight, an arched snap-over section blended
+    into a mounting foot. bpcad's mesh quality beat it comfortably - finer
+    tessellation, no slivers - and the SHAPE was a rectangular block.
+
+    This floor rises as entries are added. It is deliberately not a demand for
+    all fifteen: emboss_text needs a font and the two embosses belong to a
+    logo-tracing workflow the corpus does not cover.
+    """
+    import yaml
+
+    from bpcad.spec.dsl import OP_NAMES
+
+    def ops_in(obj, seen):
+        if isinstance(obj, dict):
+            if "op" in obj:
+                seen.add(obj["op"])
+            for value in obj.values():
+                ops_in(value, seen)
+        elif isinstance(obj, list):
+            for value in obj:
+                ops_in(value, seen)
+
+    entries = fitrate.load_corpus()
+    used = set()
+    for entry in entries:
+        ops_in(entry.get("spec") or {}, used)
+
+    shaping = {"arc_rod", "blend_edges"}
+    missing = shaping - used
+    assert not missing, (
+        "the corpus no longer exercises %s, so nothing measures whether this "
+        "program can make a curved or blended part" % ", ".join(sorted(missing))
+    )
+    assert len(used & set(OP_NAMES)) >= 8, (
+        "only %d of %d ops are exercised: %s"
+        % (len(used), len(OP_NAMES), ", ".join(sorted(used)))
+    )

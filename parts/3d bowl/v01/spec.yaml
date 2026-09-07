@@ -1,0 +1,14 @@
+name: bowl
+level: 1
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.2
+print_axis: z
+template: enclosure
+params:
+  width_mm: 150
+  depth_mm: 150
+  height_mm: 100
+  wall_mm: 3
+  corner_r_mm: 8
+  roof: false

@@ -31,6 +31,28 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# PHOTO TO MESH. Deliberately optional and deliberately large: torch plus
+# TripoSR's weights is about 2.5 GB, and bpcad has to install and run on a
+# machine that has neither - every part in parts/ rebuilds from its spec.yaml
+# with this absent. Turn it on in config: [reconstruct] backend = "triposr".
+#
+# tsr (the TripoSR model code) is not published as a wheel, so it comes from
+# the repository. Pinned to a commit rather than a branch: a reconstruction
+# model that silently changes under a product is a part that silently changes
+# shape.
+reconstruct = [
+    "torch",
+    "torchvision",
+    "transformers",
+    "einops",
+    "omegaconf",
+    "huggingface-hub",
+    # Background removal. Without it a photograph shot on a worktop
+    # reconstructs the worktop as part of the object.
+    "rembg",
+    "onnxruntime",
+]
+
 # The desktop app. Kept optional so the pipeline still installs on a headless
 # box - the CLI, and everything it drives, needs none of this.
 # VTK is not listed: it arrives with cadquery, and pinning it separately would

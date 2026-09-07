@@ -116,9 +116,25 @@ def test_a_part_resolves_by_both_of_its_names(base_url):
             "%r did not resolve" % name
 
 
-def test_a_part_carries_its_spec_and_its_measured_size(base_url):
+def _first_built(base_url: str) -> dict:
+    """
+    A part that actually has geometry behind it.
+
+    NOT parts[0]. The library is newest-first and it lists DRAFTS too - a run
+    that failed hands off a spec.draft.yaml with no mesh, which is right, it
+    is something you started. So the newest entry is whatever was attempted
+    last, and taking it on faith made this test pass or fail depending on
+    what had been generated that afternoon. It failed the first time a failed
+    generate happened to be the most recent thing in the library.
+    """
     parts = get_json(base_url + "/api/parts")["parts"]
-    data = get_json("%s/api/part/%s" % (base_url, parts[0]["name"]))
+    built = [p for p in parts if p.get("built") is not False]
+    assert built, "the library has no built part to ask about"
+    return built[0]
+
+
+def test_a_part_carries_its_spec_and_its_measured_size(base_url):
+    data = get_json("%s/api/part/%s" % (base_url, _first_built(base_url)["name"]))
 
     # load_spec returns (PartSpec, base_dir). Handing the tuple to the
     # serialiser produced "{}" and a Spec tab that looked empty.
@@ -127,14 +143,31 @@ def test_a_part_carries_its_spec_and_its_measured_size(base_url):
     assert data.get("size_mm"), "no size"
 
 
+def test_a_draft_says_it_has_no_mesh_rather_than_looking_broken(base_url):
+    """
+    The other half of the same fact, and a real bug on the phone: the app
+    asked a draft for a render, got a guaranteed 404, and showed a broken
+    card. The library payload has always said `built`, so a client never has
+    to guess - and a draft must not claim an STL it does not have.
+    """
+    parts = get_json(base_url + "/api/parts")["parts"]
+    drafts = [p for p in parts if p.get("built") is False]
+    if not drafts:
+        pytest.skip("no draft in the library to check")
+
+    data = get_json("%s/api/part/%s" % (base_url, drafts[0]["name"]))
+    assert data.get("has_stl") is not True, (
+        "a draft reported an STL; a client will ask for a render and get a 404"
+    )
+
+
 def test_a_stored_part_claims_no_verdict(base_url):
     """
     Nothing on disk records the verdict, and re-verifying costs as much as
     rebuilding. Inventing a PASS because the files exist is precisely the
     failure this program is built to avoid.
     """
-    parts = get_json(base_url + "/api/parts")["parts"]
-    data = get_json("%s/api/part/%s" % (base_url, parts[0]["name"]))
+    data = get_json("%s/api/part/%s" % (base_url, _first_built(base_url)["name"]))
     assert "verdict" not in data
 
 

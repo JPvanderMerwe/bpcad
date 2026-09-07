@@ -1,0 +1,25 @@
+# bpcad handoff - the model could not produce a valid spec.
+#
+# Requested:
+#   a hinge
+#
+# Tried 4 attempt(s) across qwen2.5-coder:7b then hermes3:latest on machine 'laptop', 597.6s total.
+# Below is the closest attempt, with every problem marked inline.
+#
+# No field-level problems were recorded - see the error below.
+#
+# WHEN YOU HAVE FIXED IT:
+#   bpcad build parts/a_hinge/spec.yaml
+#
+# Useful while editing:
+#   bpcad spec list                 # what templates exist
+#   bpcad spec ops                  # level-2 operations and anchors
+
+name: hinge
+print_axis: z
+
+params: {}
+
+# The full error was:
+#   a cut in this spec did not do what a cut was asked to do, so a feature that was asked for is not in the part:
+#     disc in cut mode removed nothing - it does not touch the part. It sits at (0.0, 0.0, -8.0) and the part spans x -20.0..15.0, y -5.0..5.0, z -8.0..-3.0. Set z_mm to -10.00 and height_mm to 9.00, which spans -10.00..-1.00 and clears both faces by 2 mm. Change BOTH: moving z_mm down on its own only moves the same short cut further away.

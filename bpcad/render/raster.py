@@ -250,10 +250,22 @@ def to_image(
     shade: np.ndarray,
     colour: tuple[float, float, float],
     background: tuple[float, float, float],
+    alpha: bool = False,
 ) -> np.ndarray:
     """
-    Compose depth, face index and per-face shading into an (H, W, 3) uint8
-    image, flipped so row 0 is the TOP of the picture.
+    Compose depth, face index and per-face shading into a uint8 image, flipped
+    so row 0 is the TOP of the picture.
+
+    `alpha` returns (H, W, 4) with the background fully transparent instead of
+    (H, W, 3) with the background painted in. `index >= 0` already IS the
+    coverage mask, so this costs one array.
+
+    It exists because a flat-backed render dropped into a page that has a
+    build-plate grid behind it reads as a hard rectangle around the part - the
+    grid stops where the picture starts. Transparent, the part sits ON the
+    plate, which is what brief 11.1 asks for. The silhouette is hard-edged
+    because this rasteriser does not anti-alias; that is the existing
+    behaviour and not something introduced here.
     """
     h, w = depth.shape
     img = np.empty((h, w, 3), dtype=float)
@@ -264,7 +276,11 @@ def to_image(
         s = shade[index[hit]][:, None]
         img[hit] = np.clip(np.asarray(colour, dtype=float)[None, :] * s, 0.0, 1.0)
 
-    return (np.flipud(img) * 255.0 + 0.5).astype(np.uint8)
+    rgb = (np.flipud(img) * 255.0 + 0.5).astype(np.uint8)
+    if not alpha:
+        return rgb
+    a = (np.flipud(hit).astype(np.uint8)) * 255
+    return np.dstack([rgb, a])
 
 
 def render(
@@ -276,7 +292,8 @@ def render(
     elev_deg: float = 25.0,
     azim_deg: float = 315.0,
     colour: tuple[float, float, float] = (0.62, 0.66, 0.72),
-    background: tuple[float, float, float] = (0.035, 0.035, 0.043),
+    background: tuple[float, float, float] = (0.063, 0.090, 0.125),
+    alpha: bool = False,
     light_dir: np.ndarray | None = None,
     ambient: float = 0.32,
     margin: float = 0.06,
@@ -299,4 +316,4 @@ def render(
         light_dir = 0.62 * view + 0.55 * up - 0.36 * right
     shade = shade_lambert(face_normals, light_dir, view, ambient=ambient)
 
-    return to_image(depth, index, shade, colour, background)
+    return to_image(depth, index, shade, colour, background, alpha=alpha)

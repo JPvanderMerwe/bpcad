@@ -388,220 +388,101 @@ def gen_cmd(
     Generate, validate, build, verify, render, write the bundle. On failure it
     hands off with an annotated spec.draft.yaml rather than just reporting an
     error - everything downstream of a spec works with no model at all.
-    """
-    import time
-    from datetime import datetime, timezone
 
-    from bpcad.agent import bundle as bundle_mod
-    from bpcad.agent.handoff import next_steps, no_model_steps, write_handoff
-    from bpcad.agent.loop import (
-        RunRecord,
-        SpecRejected,
-        attempt_to_dict,
-        ask as run_ask,
-        compile_and_verify,
-    )
-    from bpcad.models.base import NonLocalEndpointError
-    from bpcad.models.selector import ProfileError, load_profile
+    THIS COMMAND OWNS NO PIPELINE LOGIC. It reads options, prints progress and
+    prints results; api.generate does the work.
+
+    It used to drive its own copy of the escalation ladder - its own level-1
+    call, its own escalation to level 2, its own budget check, its own run
+    record. That is how a fix lands in one place and not the other: the
+    deterministic router was wired into api.generate first and `bpcad gen`
+    carried on handing drilled plates to the enclosure template, correctly,
+    for as long as it took to notice. tests/test_cli.py asserts this file
+    cannot reach past bpcad.api into the agent or the build layer.
+    """
+    from bpcad import api
 
     cfg = _load_config_or_fail()
 
-    if material.strip().lower() not in cfg.data["materials"]:
-        _fail("unknown material %r. Configured: %s."
-              % (material, ", ".join(cfg.material_names)))
-
-    try:
-        profile = load_profile(cfg, machine)
-    except NonLocalEndpointError as exc:
-        _fail(str(exc))
-        return
-    except ProfileError as exc:
-        _fail(str(exc))
-        return
-
-    nozzle_mm = nozzle if nozzle is not None else float(cfg.print_settings["nozzle_mm"])
-    layer_mm = layer if layer is not None else float(cfg.print_settings["layer_mm"])
-
-    measurements = None
+    facts = None
     if image is not None:
         if not image.is_file():
             _fail("no image at %s" % image)
-        measurements = _measure_reference(image)
+        facts = _measure_reference(image)
         typer.echo("measured %s:" % image)
-        for k, v in measurements.items():
-            typer.echo("   %-24s %s" % (k, v))
+        for key, value in facts.items():
+            typer.echo("   %-24s %s" % (key, value))
         typer.echo("")
 
-    typer.echo(profile.describe())
     if max_seconds:
         typer.echo("wall-clock budget %.0fs" % max_seconds)
-    typer.echo("")
 
-    started = time.monotonic()
-    started_at = datetime.now(timezone.utc).isoformat()
-    staging = Path(out) if out is not None else None
+    def on_event(kind: str, payload: Any) -> None:
+        # The same progress the ladder used to print, driven by the events
+        # api.generate already emits for the GUI.
+        if kind == "profile":
+            typer.echo(payload.describe())
+            typer.echo("")
+        elif kind == "attempt":
+            typer.echo("  " + payload.summary())
+        elif kind == "escalate":
+            typer.echo("")
+            typer.echo("level 1 exhausted - escalating to level 2 (DSL primitives)")
+            typer.echo("")
+        elif kind == "measured":
+            typer.echo("  applied from the image: %s" % payload)
 
-    def report_attempt(attempt) -> None:
-        typer.echo("  " + attempt.summary())
-
-    # The scratch directory for a candidate build. A part only reaches its final
-    # home once it has verified, so a failed attempt cannot leave a broken STL
-    # sitting where a good one used to be.
-    import tempfile
-
-    scratch = Path(tempfile.mkdtemp(prefix="bpcad-gen-"))
-    holder: dict[str, Any] = {}
-
-    def verify_candidate(spec) -> None:
-        if max_seconds and (time.monotonic() - started) > max_seconds:
-            raise SpecRejected(
-                "the wall-clock budget of %.0fs is spent" % max_seconds,
-                stage="budget",
-            )
-        result, report, stl = compile_and_verify(
-            spec, cfg, None, scratch / "out", allow_level_3=allow_level_3
-        )
-        holder["result"] = result
-        holder["report"] = report
-        holder["stl"] = stl
-
-    result = run_ask(
-        request=request,
-        profile=profile,
-        material=material,
-        nozzle_mm=nozzle_mm,
-        layer_mm=layer_mm,
-        measurements=measurements,
-        on_attempt=report_attempt,
-        verify_fn=verify_candidate,
-    )
-
-    # Escalate 1 -> 2 ONLY when level 1 is exhausted, and only if a model was
-    # actually reached. Composing DSL primitives is a harder task than filling
-    # a form, so this is a step down in reliability - worth taking when no
-    # template fits, pointless when the daemon is simply not running.
-    if (
-        not result.ok
-        and not result.ladder.never_reached_a_model
-        and not (max_seconds and (time.monotonic() - started) > max_seconds)
-    ):
-        from bpcad.agent.loop import ask_level_2
-
-        typer.echo("")
-        typer.echo("level 1 exhausted - escalating to level 2 (DSL primitives)")
-        typer.echo("")
-        level_1 = result
-        result = ask_level_2(
+    try:
+        result = api.generate(
             request=request,
-            profile=profile,
+            machine=machine,
             material=material,
-            nozzle_mm=nozzle_mm,
-            layer_mm=layer_mm,
-            why_escalated=level_1.ladder.last_error,
-            on_attempt=report_attempt,
-            verify_fn=verify_candidate,
+            nozzle_mm=nozzle,
+            layer_mm=layer,
+            out_dir=str(out) if out is not None else None,
+            cfg=cfg,
+            allow_level_3=allow_level_3,
+            render=render,
+            facts=facts,
+            max_seconds=max_seconds,
+            on_event=on_event,
         )
-        # Keep the whole history, both levels, in the order it happened.
-        result.ladder.attempts = level_1.ladder.attempts + result.ladder.attempts
-        if not result.ok and not result.problems:
-            result.problems = level_1.problems
-            result.best_attempt_data = result.best_attempt_data or level_1.best_attempt_data
+    except api.ApiError as exc:
+        _fail(str(exc))
+        return
 
-    elapsed = time.monotonic() - started
     typer.echo("")
-    typer.echo("%d attempt(s), %.1fs total" % (len(result.ladder.attempts), elapsed))
+    typer.echo("%d attempt(s), %.1fs total" % (len(result.attempts), result.elapsed_s))
     typer.echo("")
-
-    record = RunRecord(
-        request=request,
-        machine=profile.name,
-        started_at=started_at,
-        elapsed_s=round(elapsed, 2),
-        ok=result.ok,
-        level_reached=result.level,
-        profile={
-            "name": profile.name,
-            "host": profile.host,
-            "model_primary": profile.model_primary,
-            "model_small": profile.model_small,
-            "num_ctx": profile.num_ctx,
-            "timeout_s": profile.timeout_s,
-            "max_attempts_per_level": profile.max_attempts_per_level,
-        },
-        attempts=[attempt_to_dict(a, result.level) for a in result.ladder.attempts],
-        budget={"max_seconds": max_seconds,
-                "attempts_per_level": profile.max_attempts_per_level},
-    )
 
     if not result.ok:
-        if result.ladder.never_reached_a_model:
-            typer.echo(no_model_steps(profile.host, profile.models()))
-            target = staging or Path("parts") / _slug(request)
-            record.handoff = "no model reachable"
-            record.write(target / "run.json")
-            raise typer.Exit(code=1)
+        typer.echo(result.message)
+        if result.draft_path:
+            from bpcad.agent.handoff import next_steps
 
-        target = staging or Path("parts") / _slug(request)
-        draft = write_handoff(
-            out_dir=target,
-            request=request,
-            attempt=result.best_attempt_data,
-            problems=result.problems,
-            machine=result.machine,
-            attempts_made=len(result.ladder.attempts),
-            elapsed_s=elapsed,
-            models_tried=result.models_tried,
-            raw_error=result.ladder.last_error,
-        )
-        record.handoff = str(draft)
-        record.write(target / "run.json")
-        typer.echo(next_steps(draft))
-        typer.echo("")
-        typer.echo("Full history: %s" % (target / "run.json"))
+            typer.echo("")
+            typer.echo(next_steps(Path(result.draft_path)))
+        if result.run_record:
+            typer.echo("")
+            typer.echo("Full history: %s" % result.run_record)
         raise typer.Exit(code=1)
 
-    spec = result.spec
-    target = staging or Path("parts") / spec.name
-    model_used = next(
-        (a.model for a in reversed(result.ladder.attempts) if a.ok), ""
-    )
-
-    import shutil
-
-    (target / "out").mkdir(parents=True, exist_ok=True)
-    final_stl = target / "out" / ("%s.stl" % spec.name)
-    shutil.copy2(holder["stl"], final_stl)
-
-    written = bundle_mod.write_bundle(
-        spec=spec,
-        result=holder["result"],
-        report=holder["report"],
-        stl=final_stl,
-        part_dir=target,
-        model_used=model_used,
-        machine=profile.name,
-        attempts=len(result.ladder.attempts),
-        elapsed_s=elapsed,
-        render=render,
-    )
-
-    record.spec = spec.model_dump(exclude_none=True)
-    record.report = holder["report"].to_dict()
-    record.write(target / "run.json")
-
-    rep = holder["report"]
+    part = result.part
+    rep = part.report
     typer.echo("%s   %.2f x %.2f x %.2f mm   %.3f cm3   %d body(s)"
-               % (spec.name, *rep.mesh.bbox_mm, rep.mesh.volume_cm3, rep.mesh.body_count))
+               % (part.name, *rep.mesh.bbox_mm, rep.mesh.volume_cm3,
+                  rep.mesh.body_count))
     typer.echo("supports needed: %s" % ("YES" if rep.overhang.supports_needed else "no"))
     typer.echo("")
     for key in ("spec", "model_py", "stl", "step", "3mf", "preview", "heightmap",
                 "section", "report", "regression"):
-        if key in written:
-            typer.echo("  %s" % written[key])
-    typer.echo("  %s" % (target / "run.json"))
+        if key in part.files:
+            typer.echo("  %s" % part.files[key])
+    if result.run_record:
+        typer.echo("  %s" % result.run_record)
     typer.echo("")
     typer.echo("Look at the height map before printing: %s"
-               % written.get("heightmap", "(not rendered)"))
+               % part.files.get("heightmap", "(not rendered)"))
 
 
 def _measure_reference(image: Path) -> dict[str, Any]:
@@ -1202,8 +1083,6 @@ def render_cmd(
             typer.echo("   %8.3f mm   %10.2f mm2" % (lv.height_mm, lv.area_mm2))
 
 
-if __name__ == "__main__":
-    app()
 
 
 @app.command("web")
@@ -1230,3 +1109,15 @@ def web_cmd(
     from bpcad.web.server import serve
 
     serve("0.0.0.0" if lan else host, port)
+
+
+# THE ENTRY POINT GOES LAST, AFTER EVERY @app.command.
+#
+# It used to sit above the `web` command's registration, and this block runs at
+# import time: `python -m bpcad.cli web` therefore called app() before the
+# decorator below had executed, and answered "No such command 'web'". The
+# installed `bpcad` console script imports the module fully before calling
+# app(), so it worked there and only there, which is the worst place for a
+# difference like this to hide.
+if __name__ == "__main__":
+    app()

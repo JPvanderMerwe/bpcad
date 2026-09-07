@@ -1,0 +1,158 @@
+{
+  "attempts": [
+    {
+      "call": {
+        "gen_tokens": 174,
+        "load_s": 0.092,
+        "mechanism": "json",
+        "prompt_tokens": 2962,
+        "tokens_per_s": 0.52
+      },
+      "elapsed_s": 332.843,
+      "error": "",
+      "index": 1,
+      "level": 2,
+      "model": "qwen2.5-coder:7b",
+      "ok": true,
+      "step": "primary"
+    }
+  ],
+  "budget": {
+    "attempts_per_level": 2,
+    "max_seconds": null
+  },
+  "elapsed_s": 333.74,
+  "handoff": null,
+  "level_reached": 2,
+  "machine": "laptop",
+  "ok": true,
+  "profile": {
+    "host": "http://127.0.0.1:11434",
+    "max_attempts_per_level": 2,
+    "model_primary": "qwen2.5-coder:7b",
+    "model_small": "hermes3:latest",
+    "name": "laptop",
+    "num_ctx": 8192,
+    "timeout_s": 420.0
+  },
+  "report": {
+    "material": "petg",
+    "mesh": {
+      "bbox_min_mm": [
+        -20.0,
+        -20.0,
+        0.0
+      ],
+      "bbox_mm": [
+        40.0,
+        40.0,
+        18.0
+      ],
+      "body_count": 2,
+      "body_sizes": [
+        [
+          40.0,
+          40.0,
+          18.0
+        ],
+        [
+          24.0,
+          24.0,
+          5.0
+        ]
+      ],
+      "degenerate_faces": 0,
+      "face_count": 4044,
+      "is_volume": true,
+      "path": "/tmp/bpcad-gen-e2j046sk/out/ring_on_a_post.stl",
+      "problems": [],
+      "vertex_count": 2024,
+      "volume_cm3": 9.289050491541913,
+      "warnings": [],
+      "watertight": true,
+      "winding_consistent": true
+    },
+    "notes": [],
+    "nozzle_mm": 0.4,
+    "ok": true,
+    "overhang": {
+      "bed_area_mm2": 1592.2714049885617,
+      "bridged_area_mm2": 364.1042738075111,
+      "downward_area_mm2": 364.1042738075111,
+      "max_bridge_gap_mm": 0.5,
+      "max_deg": 45.0,
+      "max_drop_mm": 0.3000001907348637,
+      "overhang_area_mm2": 364.1042738075111,
+      "overhang_face_count": 504,
+      "overhang_fraction": 0.06601544576874463,
+      "print_axis": "z",
+      "problems": [],
+      "supports_needed": false,
+      "total_area_mm2": 5515.44066040221,
+      "unsupported_area_mm2": 0.0,
+      "unsupported_face_count": 0,
+      "unsupported_fraction": 0.0,
+      "worst_overhang_deg": 90.0
+    },
+    "path": "/tmp/bpcad-gen-e2j046sk/out/ring_on_a_post.stl",
+    "print_axis": "z",
+    "problems": [],
+    "surface_levels": [
+      {
+        "area_mm2": 78.53167875357934,
+        "height_mm": 18.0
+      },
+      {
+        "area_mm2": 364.1042738075111,
+        "height_mm": 9.300000190734862
+      },
+      {
+        "area_mm2": 1513.7397262349823,
+        "height_mm": 4.0
+      }
+    ],
+    "verdict": "PASS",
+    "warnings": []
+  },
+  "request": "a ring that turns on a post",
+  "spec": {
+    "assumptions": [],
+    "layer_mm": 0.2,
+    "level": 2,
+    "material": "petg",
+    "name": "ring_on_a_post",
+    "nozzle_mm": 0.4,
+    "ops": [
+      {
+        "diameter_mm": 24,
+        "height_mm": 5,
+        "op": "disc",
+        "z_mm": 4.3
+      },
+      {
+        "diameter_mm": 10.6,
+        "height_mm": 9,
+        "mode": "cut",
+        "op": "disc",
+        "z_mm": 3.3
+      },
+      {
+        "corner_r_mm": 3,
+        "depth_mm": 40,
+        "height_mm": 4,
+        "op": "rounded_prism",
+        "width_mm": 40
+      },
+      {
+        "diameter_mm": 10,
+        "height_mm": 14,
+        "op": "disc",
+        "z_mm": 4
+      }
+    ],
+    "params": {},
+    "print_axis": "z",
+    "scale_departures": []
+  },
+  "started_at": "2026-09-04T11:29:27.169605+00:00"
+}

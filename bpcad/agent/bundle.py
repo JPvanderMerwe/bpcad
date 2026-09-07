@@ -140,6 +140,57 @@ def slicer_settings(spec, report, template_notes: tuple[str, ...] = (),
     return out
 
 
+def _unmeasured_dimensions(spec, report, mesh) -> list[str]:
+    """
+    The Assumptions section when the builder declared none.
+
+    IT USED TO SAY, FLATLY, "None - every dimension in this part was measured
+    or specified." Asked for "a hinge" - three words, no numbers at all - the
+    report said exactly that, about a part in which the model had chosen every
+    single dimension. CLAUDE.md 14 requires the opposite: what could not be
+    measured is named and marked, under a heading that says so.
+
+    The claim is only true when a PERSON wrote the numbers. A hand-written
+    spec.yaml built with `bpcad build` has no intent record, because there was
+    no request to compare against, and "specified" is the honest word for it -
+    somebody typed them. A generated part has an intent record, and it knows
+    which figures the request actually stated.
+
+    Listing all thirty numbers of the hinge was the alternative and it is
+    worse: a wall of figures nobody reads, most of them consequences of each
+    other rather than independent choices. One paragraph that says where the
+    dimensions came from, with the envelope named, is the thing a person needs
+    before printing it.
+    """
+    intent = getattr(report, "intent", None)
+    if intent is None:
+        # Nobody's request to compare against: a person wrote this spec.
+        return ["None - every dimension in this part was measured or specified.",
+                ""]
+
+    stated = list(getattr(intent, "stated_mm", []) or [])
+    out: list[str] = []
+    if stated:
+        out.append("The request stated %s. Those are accounted for by the"
+                   % ", ".join("%g mm" % v for v in stated))
+        out.append("envelope above. **Every other dimension in this part was")
+        out.append("chosen by the model, not measured** - wall thicknesses,")
+        out.append("clearances, fillet radii and anything the request did not")
+        out.append("name.")
+    else:
+        out.append("**The request gave no dimensions, so every number in this")
+        out.append("part was chosen by the model.** Nothing here was measured")
+        out.append("and nothing was specified.")
+        out.append("")
+        out.append("What it settled on: %.2f x %.2f x %.2f mm, %.3f cm3."
+                   % (mesh.bbox_mm + (mesh.volume_cm3,)))
+        out.append("Check those against what you actually need before printing")
+        out.append("it - they are a starting point, and the spec is there to be")
+        out.append("edited.")
+    out.append("")
+    return out
+
+
 def write_report(
     spec,
     result,
@@ -247,8 +298,7 @@ def write_report(
             L.append("  %s" % a.why)
         L.append("")
     else:
-        L.append("None - every dimension in this part was measured or specified.")
-        L.append("")
+        L.extend(_unmeasured_dimensions(spec, report, m))
 
     # 6. deliberate departures from true scale
     L.append("## Departures from true scale")

@@ -8,6 +8,8 @@ the thing under test, not the model's competence.
 
 from pathlib import Path
 
+import math
+
 import pytest
 import yaml
 
@@ -256,6 +258,72 @@ def test_a_part_needing_supports_is_not_a_failure(cfg, tmp_path):
     _, report, _ = compile_and_verify(spec, cfg, base, tmp_path / "out")
     assert report.overhang.supports_needed
     # No exception raised - that is the assertion.
+
+
+# ---------------------------------------------------------------------------
+# A cut that removes nothing: a note for a person, a failure for the model.
+# The two callers of compile_and_verify want opposite things from one fact.
+# ---------------------------------------------------------------------------
+
+PLATE_WITH_A_MISSED_HOLE = dict(
+    name="plate", level=2, material="petg", nozzle_mm=0.4, layer_mm=0.2,
+    ops=[
+        {"op": "rounded_prism", "width_mm": 80, "depth_mm": 40, "height_mm": 6},
+        {"op": "disc", "diameter_mm": 5, "height_mm": 10, "x_mm": -30,
+         "z_mm": -2, "mode": "cut"},
+        # x 50 on a plate spanning -40..40. This is the real reply from the
+        # first level-2 run: the part shipped with one hole out of two.
+        {"op": "disc", "diameter_mm": 5, "height_mm": 10, "x_mm": 50,
+         "z_mm": -2, "mode": "cut"},
+    ],
+)
+
+
+def test_a_missed_cut_is_only_a_note_for_a_hand_written_build(cfg, tmp_path):
+    """
+    `bpcad build` must not lose a whole part over one cut that missed. The
+    report says so and the build stands - see
+    test_a_cut_that_misses_is_reported_but_not_fatal in test_dsl_coverage.
+    """
+    spec = PartSpec(**PLATE_WITH_A_MISSED_HOLE)
+    result, report, stl = compile_and_verify(spec, cfg, None, tmp_path / "out")
+    assert stl.is_file()
+    assert any("removed nothing" in n for n in result.log.notes)
+
+
+def test_a_missed_cut_fails_a_generated_spec(cfg, tmp_path):
+    """
+    The generation paths pass strict_cuts=True. A hole that is not there is not
+    a note, it is the wrong part, and nothing downstream can catch it because
+    nothing downstream knows what was asked for.
+    """
+    spec = PartSpec(**PLATE_WITH_A_MISSED_HOLE)
+    with pytest.raises(SpecRejected) as exc:
+        compile_and_verify(spec, cfg, None, tmp_path / "out", strict_cuts=True)
+
+    assert exc.value.stage == STAGE_COMPILE
+    text = str(exc.value)
+    # The critique has to carry the numbers, or a small model has nothing to
+    # change. Position and the part's extent both appear.
+    assert "50.0" in text
+    assert "-40.0..40.0" in text
+    assert exc.value.hint
+
+
+def test_a_spec_whose_cuts_all_land_passes_strict_cuts(cfg, tmp_path):
+    """strict_cuts must not fail a part that is right."""
+    ops = list(PLATE_WITH_A_MISSED_HOLE["ops"])
+    ops[2] = dict(ops[2], x_mm=30)
+    spec = PartSpec(**{**PLATE_WITH_A_MISSED_HOLE, "ops": ops})
+
+    _, report, stl = compile_and_verify(
+        spec, cfg, None, tmp_path / "out", strict_cuts=True
+    )
+    assert stl.is_file()
+    assert report.mesh.watertight
+    # Both holes are really there: 80 x 40 x 6 less two 5 mm bores.
+    expected_cm3 = (80 * 40 * 6 - 2 * math.pi * 2.5 ** 2 * 6) / 1000.0
+    assert abs(report.mesh.volume_cm3 - expected_cm3) < 0.001
 
 
 def test_geometry_that_cannot_be_built_comes_back_as_a_rejection(cfg, tmp_path):
@@ -526,3 +594,191 @@ def test_the_dsl_schema_constrains_op_names():
 
     enum = prompts.dsl_schema()["properties"]["ops"]["items"]["properties"]["op"]["enum"]
     assert "rounded_prism" in enum and "pocket" in enum
+
+
+PLATE_WITH_BLIND_HOLES = dict(
+    name="plate", level=2, material="petg", nozzle_mm=0.4, layer_mm=0.2,
+    ops=[
+        {"op": "rounded_prism", "width_mm": 80, "depth_mm": 40,
+         "height_mm": 6, "corner_r_mm": 1},
+        # The real second reply: -2..5 through a 0..6 plate. One millimetre
+        # short at the top, twice, and it reads as deliberate.
+        {"op": "disc", "diameter_mm": 5, "height_mm": 7, "x_mm": -30,
+         "z_mm": -2, "mode": "cut"},
+        {"op": "disc", "diameter_mm": 5, "height_mm": 7, "x_mm": 30,
+         "z_mm": -2, "mode": "cut"},
+    ],
+)
+
+
+def test_a_hole_that_stops_short_fails_a_generated_spec(cfg, tmp_path):
+    """
+    Two 5 mm holes were asked for and two 5 mm blind pockets were delivered,
+    opening downward, with a roof to print over air. It verified, reported
+    39.3 mm2 of downward-facing area - exactly the two roofs - and passed,
+    because needing support is not a failure on its own.
+    """
+    spec = PartSpec(**PLATE_WITH_BLIND_HOLES)
+    with pytest.raises(SpecRejected) as exc:
+        compile_and_verify(spec, cfg, None, tmp_path / "out", strict_cuts=True)
+
+    text = str(exc.value)
+    assert exc.value.stage == STAGE_COMPILE
+    assert "1.00 mm short" in text
+    assert "0.00..6.00" in text
+
+
+def test_a_hole_that_stops_short_is_only_a_note_by_hand(cfg, tmp_path):
+    """Same severity split as a cut that misses: a person keeps their build."""
+    spec = PartSpec(**PLATE_WITH_BLIND_HOLES)
+    result, _, stl = compile_and_verify(spec, cfg, None, tmp_path / "out")
+    assert stl.is_file()
+    assert any("stops" in n for n in result.log.notes)
+
+
+def test_a_recess_cut_down_from_the_top_is_not_flagged(cfg, tmp_path):
+    """
+    The common, correct case: a pocket cut from above opens upward and needs
+    no support. Flagging it would make the check useless.
+    """
+    spec = PartSpec(
+        name="tray", level=2, material="petg", nozzle_mm=0.4, layer_mm=0.2,
+        ops=[
+            {"op": "rounded_prism", "width_mm": 60, "depth_mm": 60,
+             "height_mm": 20, "corner_r_mm": 2},
+            {"op": "rounded_prism", "width_mm": 50, "depth_mm": 50,
+             "height_mm": 16, "z_mm": 6, "corner_r_mm": 2, "mode": "cut"},
+        ],
+    )
+    result, _, stl = compile_and_verify(
+        spec, cfg, None, tmp_path / "out", strict_cuts=True
+    )
+    assert stl.is_file()
+    assert not [n for n in result.log.notes if "cut fault" in n]
+
+
+# ---------------------------------------------------------------------------
+# The Assumptions section, which used to lie.
+# ---------------------------------------------------------------------------
+
+# A spec of its own, NOT a part out of parts/. The first version of these
+# tests loaded parts/hinge/spec.yaml, which is generated output: the next run
+# that regenerated the hinge deleted the directory and took three tests with
+# it. A test may not depend on something a run can remove.
+ASSUMPTIONS_SPEC = dict(
+    name="hinge_like", level=2, material="petg", nozzle_mm=0.4, layer_mm=0.2,
+    ops=[
+        {"op": "rounded_prism", "width_mm": 40, "depth_mm": 40,
+         "height_mm": 5, "corner_r_mm": 2},
+        {"op": "disc", "diameter_mm": 4, "height_mm": 9, "x_mm": -12,
+         "z_mm": -2, "mode": "cut"},
+    ],
+)
+
+
+def _assumptions_section(cfg, tmp_path, request, tag):
+    from bpcad.agent.bundle import write_report
+
+    spec = PartSpec(**ASSUMPTIONS_SPEC)
+    result, report, _ = compile_and_verify(spec, cfg, None, tmp_path / tag,
+                                           request=request)
+    out = write_report(spec, result, report, tmp_path / ("r_%s.md" % tag))
+    return out.read_text().split("## Assumptions")[1].split("##")[0].strip()
+
+
+def test_a_vague_prompt_does_not_claim_its_numbers_were_specified(cfg, tmp_path):
+    """
+    Asked for "a hinge" - three words, no numbers - the report said "None -
+    every dimension in this part was measured or specified", about a part in
+    which the model chose all thirty of them. CLAUDE.md 14 asks for the
+    opposite: what could not be measured is named, under a heading that says
+    so.
+    """
+    text = _assumptions_section(cfg, tmp_path, "a hinge", "vague")
+    assert "chosen by the model" in text
+    assert "measured or specified" not in text
+    # The figures it settled on are named, because that is what a person needs
+    # to check before printing it.
+    assert "40.00 x 40.00 x 5.00 mm" in text
+
+
+def test_a_prompt_with_numbers_says_which_ones_were_honoured(cfg, tmp_path):
+    text = _assumptions_section(cfg, tmp_path, "a hinge 40 mm wide", "stated")
+    assert "stated 40 mm" in text
+    assert "Every other dimension" in text
+
+
+def test_a_hand_written_spec_still_says_specified(cfg, tmp_path):
+    """
+    With no request there is nobody to have failed to specify anything - a
+    person typed the numbers, and "specified" is the honest word. This is the
+    `bpcad build` path and it must not be told off for its own spec.
+    """
+    text = _assumptions_section(cfg, tmp_path, "", "hand")
+    assert text.startswith("None - every dimension")
+
+
+# ---------------------------------------------------------------------------
+# The prompt's own worked examples have to be correct. One that does not work
+# teaches the wrong thing, with authority, on every request.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("clearance_mm", [0.20, 0.30])
+def test_the_mechanism_example_really_is_two_bodies(clearance_mm):
+    """
+    The moving-parts guidance was prose, and three vague prompts came back as
+    one fused body each. This file's own WORKED_EXAMPLE comment already said
+    why: a complete valid answer beats any amount of instruction. So the
+    guidance now carries an example - and the example is only worth having if
+    it is true.
+
+    Both configured clearances are checked because the numbers are derived
+    from the material's gap, so PLA's 0.20 mm has to work as well as PETG's
+    0.30 mm.
+    """
+    import json
+
+    from bpcad.agent.prompts import mechanism_example
+    from bpcad.spec.dsl import run_ops
+
+    ops = json.loads(mechanism_example(clearance_mm))["ops"]
+    scene = run_ops(ops)
+
+    assert len(scene.solid.solids().vals()) == 2, (
+        "the example the model is shown does not come out as two bodies"
+    )
+    assert not [n for n in scene.log.notes if "cut fault" in n]
+
+
+def test_the_mechanism_example_needs_no_support(cfg, tmp_path):
+    """
+    A print-in-place mechanism whose gap cannot be bridged is not printable,
+    and the example must not be teaching one. The 0.30 mm gap should read as a
+    bridge, exactly as the hand-built captive washer does.
+    """
+    import json
+
+    from bpcad.agent.prompts import mechanism_example
+
+    ops = json.loads(mechanism_example(0.30))["ops"]
+    spec = PartSpec(name="example", level=2, material="petg", nozzle_mm=0.4,
+                    layer_mm=0.2, ops=ops)
+    result, report, _ = compile_and_verify(spec, cfg, None, tmp_path / "out",
+                                           strict_cuts=True)
+    assert result.body_count_expected == 2
+    assert not report.overhang.supports_needed
+    assert report.mesh.watertight
+
+
+def test_the_example_gap_matches_the_rule_stated_above_it():
+    """
+    The prompt states the gap as a number and then shows an example. If the
+    example were hard-coded it could contradict the sentence directly above
+    it the moment a material with a different clearance was used.
+    """
+    from bpcad.agent.prompts import build_dsl_prompt
+
+    text = build_dsl_prompt("a hinge", "pla", 0.4, 0.2, clearance_mm=0.20)
+    assert "Leave 0.20 mm between them" in text
+    # 10 mm post plus 0.20 either side.
+    assert "10.40" in text

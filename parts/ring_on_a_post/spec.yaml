@@ -1,0 +1,25 @@
+name: ring_on_a_post
+level: 2
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.2
+print_axis: z
+ops:
+- op: disc
+  diameter_mm: 24
+  height_mm: 5
+  z_mm: 4.3
+- op: disc
+  diameter_mm: 10.6
+  height_mm: 9
+  z_mm: 3.3
+  mode: cut
+- op: rounded_prism
+  width_mm: 40
+  depth_mm: 40
+  height_mm: 4
+  corner_r_mm: 3
+- op: disc
+  diameter_mm: 10
+  height_mm: 14
+  z_mm: 4

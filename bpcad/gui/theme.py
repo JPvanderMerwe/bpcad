@@ -20,8 +20,11 @@ be lying about it.
 
 from __future__ import annotations
 
-# Matches render.raster's background, deliberately. #09090b as floats.
-VIEWPORT_BG = (0.035, 0.035, 0.043)
+# Matches render.raster's background, deliberately. Brief 11.2's --bp-bed,
+# #101720, as floats. Change one and you must change the other: a render on a
+# different ground from the page it sits in shows as a hard rectangle around
+# the part, which is exactly what it looked like before this was fixed.
+VIEWPORT_BG = (0.063, 0.090, 0.125)
 
 # bitprimitive.com's ground. Near-black rather than grey: a render is the
 # brightest thing on screen and should stay that way.

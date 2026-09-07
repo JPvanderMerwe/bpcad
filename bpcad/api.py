@@ -82,6 +82,7 @@ class GenerateResult:
     draft_path: Path | None = None
     problems: list[Any] = field(default_factory=list)
     message: str = ""
+    run_record: Path | None = None                  # run.json, always written
     note: str = ""                                  # a refinement's own words
     changes: list[str] = field(default_factory=list)  # read off the specs
 
@@ -511,6 +512,177 @@ def import_spec(path: str | Path, into: str | Path = "parts"):
         raise ApiError(str(exc)) from exc
 
 
+def import_stl(source: str | Path, data: bytes | None = None,
+               tags: list[str] | None = None, note: str = "") -> dict[str, Any]:
+    """
+    Take an STL in from outside, measure it, and try to recover a spec.
+
+    THE ENGINE FOR THIS HAS EXISTED AND HAD NO DOOR. bpcad/imports.py measures
+    an incoming mesh, offers it to the revolve fitter and the prism fitter, and
+    stores what it learned - and nothing anywhere called it. It even takes
+    `data` as bytes so an upload need not touch a temp file first, which says
+    plainly what it was written for.
+
+    `data` is the file's bytes when they arrived over the wire; `source` is
+    then used only for its name.
+
+    Recovering a spec is what makes an import EDITABLE: a surface of
+    revolution - a bowl, pot, vase, cup or knob - is fully described by its
+    2D profile, and that can be read back off a mesh. When the fit takes, the
+    import behaves like anything else bpcad built, variants included. When it
+    does not, that is said plainly and the file is kept as the triangle soup
+    it is.
+    """
+    from bpcad import imports
+
+    try:
+        part = imports.take_in(source, data=data, tags=tags or [], note=note)
+    except imports.ImportError_ as exc:
+        raise ApiError(str(exc)) from exc
+    return part.to_json()
+
+
+def model_from_photo(
+    image: str | Path,
+    known_mm: float | None = None,
+    axis: str = "longest",
+    cfg: Config | None = None,
+    backend: str | None = None,
+    into_library: bool = True,
+) -> dict[str, Any]:
+    """
+    A photograph to a mesh, and then to something bpcad can work with.
+
+    THE WHOLE CHAIN, AND WHERE EACH PART'S HONESTY LIVES:
+
+        photo  -> mesh    neural, approximate, dimensionless, the unseen half
+                          inferred. bpcad/reconstruct.
+        mesh   -> scale   from ONE real dimension supplied by a person. No
+                          photograph contains absolute size.
+        mesh   -> spec    the revolve and prism fitters in bpcad/imports, with
+                          a residual either way. This is the step that makes
+                          it parametric and editable - and it does not always
+                          take, which is reported rather than papered over.
+        spec   -> part    deterministic Python, exactly as for anything else.
+
+    `known_mm` is the measured dimension - calipers on the widest point, or
+    the bore the thing has to fit. Without it the result is a shape with no
+    size, which is said plainly and is still worth having: the fit can be
+    inspected and the number supplied afterwards.
+
+    Returns the reconstruction's own record plus, when it landed in the
+    library, what the fitters made of it.
+    """
+    from bpcad.reconstruct import make_reconstructor, scale_to_mm
+    from bpcad.reconstruct.base import ReconstructionError
+
+    cfg = cfg or config()
+    image = Path(image)
+    scratch = Path(tempfile.mkdtemp(prefix="bpcad-photo-"))
+
+    try:
+        reconstructor = make_reconstructor(cfg, backend=backend)
+        result = reconstructor.reconstruct(image, scratch)
+    except ReconstructionError as exc:
+        raise ApiError(str(exc)) from exc
+
+    if known_mm is not None:
+        try:
+            scale_to_mm(result, known_mm, axis=axis)
+        except ReconstructionError as exc:
+            raise ApiError(str(exc)) from exc
+
+    payload = result.to_json()
+
+    if not into_library:
+        return payload
+
+    # INTO THE SAME LIBRARY AS EVERYTHING ELSE, by the same door an uploaded
+    # STL comes through - which is where the fitters live. A reconstruction is
+    # an import: origin `imported`, editable only if a profile was recovered
+    # from it, and never mistaken for a part that had a spec first.
+    mesh_path = Path(result.mesh_path)
+    imported_record = import_stl(
+        mesh_path,
+        data=mesh_path.read_bytes(),
+        tags=["photo", result.backend],
+        note="reconstructed from %s" % image.name,
+    )
+    payload["imported"] = imported_record
+    payload["editable"] = bool(imported_record.get("editable"))
+    payload["fit_note"] = imported_record.get("fit_note", "")
+    return payload
+
+
+def imported(root: str | Path | None = None) -> list[dict[str, Any]]:
+    """Everything taken in from outside, newest first."""
+    from bpcad import imports
+
+    base = Path(root) if root is not None else Path(imports.IMPORT_ROOT)
+    if not base.is_dir():
+        return []
+    out = []
+    for directory in sorted(base.iterdir()):
+        meta = imports.read_meta(directory) if directory.is_dir() else None
+        if meta is not None:
+            out.append(meta.to_json())
+    return sorted(out, key=lambda d: d.get("imported_at") or 0, reverse=True)
+
+
+def variants_of(name: str, count: int = 4, cfg: Config | None = None,
+                on_event=None) -> list[dict[str, Any]]:
+    """
+    More versions of a part that already exists, built from its own spec.
+
+    Needs a spec with a TEMPLATE behind it: varying a part means varying named
+    parameters, and a level-2 composition has ops rather than parameters -
+    there is no "wall thickness" to nudge in a list of primitives. An import
+    that the revolve fitter recovered has a template and works; a raw mesh
+    that recovered nothing does not, and says so rather than returning an
+    empty list that looks like a failure.
+    """
+    cfg = cfg or config()
+    spec_path = _spec_path_for(name)
+    if spec_path is None:
+        raise ApiError(
+            "no part called %r, or it has no spec.yaml to vary. An imported "
+            "mesh only becomes variable once a spec has been recovered from "
+            "it." % name
+        )
+    spec = load_spec(spec_path)
+    spec = spec[0] if isinstance(spec, tuple) else spec
+    # A part with a template varies by its named parameters; one with ops has
+    # no such names and varies by SIZE. An imported mesh is always the second
+    # kind - the fitter recovers an outline, not a wall thickness - so this is
+    # the path that makes "more versions of what I uploaded" mean anything.
+    if getattr(spec, "template", None):
+        from bpcad.agent.variations import build_variants as _build
+
+        made = _build(spec, cfg, count=count, on_event=on_event)
+    else:
+        from bpcad.agent.variations import build_scale_variants as _build
+
+        made = _build(spec, cfg, count=count, on_event=on_event)
+
+    return [
+        {"name": v.name, "label": v.label, "changed": dict(v.changed or {}),
+         "volume_cm3": v.volume_cm3, "envelope_mm": list(v.envelope_mm),
+         "verdict": v.verdict, "ok": v.ok}
+        for v in made
+    ]
+
+
+def _spec_path_for(name: str) -> Path | None:
+    """Where a part's spec lives, whether it was built here or imported."""
+    from bpcad import imports
+
+    for base in (Path("parts"), Path(imports.IMPORT_ROOT)):
+        candidate = base / name / "spec.yaml"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def parts(root: str | Path = "parts") -> list[PartEntry]:
     """Everything under parts/, including drafts that failed and need editing."""
     base = Path(root)
@@ -722,6 +894,8 @@ def generate(
     escalate: bool = True,
     render: bool = True,
     measurement=None,
+    facts: dict[str, Any] | None = None,
+    max_seconds: float | None = None,
     on_event: Callable[[str, Any], None] | None = None,
 ) -> GenerateResult:
     """
@@ -731,22 +905,41 @@ def generate(
     "escalate", "building", "done" - so a caller can show progress during a run
     that takes minutes. It is the only way a GUI stays honest about what is
     happening.
+
+    `measurement` is a measurement OBJECT, whose values are applied to the
+    matching parameters after the build. `facts` is a plain dict of things
+    measured off a reference that cannot be mapped to parameters - pixel
+    extents, aspect ratios - and reaches the model as context only. The CLI's
+    --image produces the second kind deliberately: asserting which template
+    parameter a pixel measurement corresponds to would be a guess, and a wrong
+    mapping is worse than no mapping.
+
+    `max_seconds` is a hard wall-clock budget for the whole run, checked before
+    each candidate is built. It lived only in the CLI, which is part of why the
+    CLI had its own copy of the ladder; a budget is a pipeline concern and a
+    web request wants one too.
     """
     return _run(request, machine, material, nozzle_mm, layer_mm, cfg,
                 on_event, build_it=True, out_dir=out_dir,
                 allow_level_3=allow_level_3, escalate=escalate, render=render,
-                measurement=measurement)
+                measurement=measurement, facts=facts, max_seconds=max_seconds)
 
 
 def _run(
     request, machine, material, nozzle_mm, layer_mm, cfg, on_event,
     build_it, out_dir, allow_level_3, escalate, render, measurement=None,
+    facts=None, max_seconds=None,
 ) -> GenerateResult:
     """The shared body of ask() and generate()."""
     import time
 
+    from datetime import datetime, timezone
+
     from bpcad.agent.handoff import write_handoff
-    from bpcad.agent.loop import SpecRejected, ask as run_ask, ask_level_2, compile_and_verify
+    from bpcad.agent.loop import (
+        RunRecord, SpecRejected, ask as run_ask, ask_level_2,
+        attempt_to_dict, compile_and_verify, running_clearance_mm,
+    )
     from bpcad.models.base import NonLocalEndpointError
     from bpcad.models.selector import ProfileError, load_profile
 
@@ -769,25 +962,36 @@ def _run(
     emit = on_event or (lambda kind, payload: None)
     emit("profile", profile)
 
-    facts = measurement.as_facts() if measurement is not None else None
+    measured_facts = measurement.as_facts() if measurement is not None else facts
     scratch = Path(tempfile.mkdtemp(prefix="bpcad-api-"))
     holder: dict[str, Any] = {}
     started = time.monotonic()
+    started_at = datetime.now(timezone.utc).isoformat()
+
+    def over_budget() -> bool:
+        return bool(max_seconds) and (time.monotonic() - started) > max_seconds
 
     def verify_candidate(spec):
         if not build_it:
             return None
+        if over_budget():
+            # Stage "budget" rather than a build failure: nothing is wrong with
+            # the spec, the run ran out of the time it was given.
+            raise SpecRejected(
+                "the wall-clock budget of %.0fs is spent" % max_seconds,
+                stage="budget",
+            )
         emit("building", spec)
         result, report, stl = compile_and_verify(
             spec, cfg, None, scratch / "out",
-            allow_level_3=allow_level_3, request=request,
+            allow_level_3=allow_level_3, request=request, strict_cuts=True,
         )
         holder["result"], holder["report"], holder["stl"] = result, report, stl
         return None
 
     result = run_ask(
         request=request, profile=profile, material=material,
-        nozzle_mm=nozzle, layer_mm=layer, measurements=facts,
+        nozzle_mm=nozzle, layer_mm=layer, measurements=measured_facts,
         on_attempt=lambda a: emit("attempt", a),
         verify_fn=verify_candidate if build_it else None,
     )
@@ -815,7 +1019,8 @@ def _run(
                 # model chose rather than losing a part that works.
                 emit("measurement_rejected", differing)
 
-    if (escalate and not result.ok and not result.ladder.never_reached_a_model):
+    if (escalate and not result.ok and not result.ladder.never_reached_a_model
+            and not over_budget()):
         emit("escalate", result.ladder.last_error)
         level_1 = result
         result = ask_level_2(
@@ -824,6 +1029,7 @@ def _run(
             why_escalated=level_1.ladder.last_error,
             on_attempt=lambda a: emit("attempt", a),
             verify_fn=verify_candidate if build_it else None,
+            clearance_mm=running_clearance_mm(cfg, material),
         )
         result.ladder.attempts = level_1.ladder.attempts + result.ladder.attempts
         if not result.ok and not result.problems:
@@ -831,6 +1037,33 @@ def _run(
             result.best_attempt_data = result.best_attempt_data or level_1.best_attempt_data
 
     elapsed = time.monotonic() - started
+
+    # THE RUN RECORD LIVED ONLY IN THE CLI, so a part made through the web app
+    # or the desktop app had no run.json at all - no attempt history, no model
+    # named, no timings, nothing to audit a bad part with. It belongs here,
+    # where every front end passes through, and it is written on every exit
+    # path including the failures: a run that produced nothing is exactly the
+    # one somebody needs the history of.
+    record = RunRecord(
+        request=request,
+        machine=profile.name,
+        started_at=started_at,
+        elapsed_s=round(elapsed, 2),
+        ok=result.ok,
+        level_reached=result.level,
+        profile={
+            "name": profile.name,
+            "host": profile.host,
+            "model_primary": profile.model_primary,
+            "model_small": profile.model_small,
+            "num_ctx": profile.num_ctx,
+            "timeout_s": profile.timeout_s,
+            "max_attempts_per_level": profile.max_attempts_per_level,
+        },
+        attempts=[attempt_to_dict(a, result.level) for a in result.ladder.attempts],
+        budget={"max_seconds": max_seconds,
+                "attempts_per_level": profile.max_attempts_per_level},
+    )
 
     out = GenerateResult(
         ok=result.ok, spec=result.spec, attempts=list(result.ladder.attempts),
@@ -846,6 +1079,7 @@ def _run(
                 "design - start the daemon, or write a spec by hand and build it."
                 % profile.host
             )
+            record.handoff = "no model reachable"
         else:
             out.draft_path = write_handoff(
                 out_dir=target, request=request, attempt=result.best_attempt_data,
@@ -857,6 +1091,9 @@ def _run(
                 "The model could not produce a valid spec. Every problem is "
                 "marked inline in %s." % out.draft_path
             )
+            record.handoff = str(out.draft_path)
+        record.write(target / "run.json")
+        out.run_record = target / "run.json"
         emit("done", out)
         return out
 
@@ -879,6 +1116,11 @@ def _run(
         machine=profile.name, attempts=len(result.ladder.attempts),
         elapsed_s=elapsed, render=render,
     )
+
+    record.spec = spec.model_dump(exclude_none=True)
+    record.report = holder["report"].to_dict()
+    record.write(target / "run.json")
+    out.run_record = target / "run.json"
 
     out.part = PartResult(
         name=spec.name, spec=spec, build=holder["result"], report=holder["report"],
@@ -1218,7 +1460,9 @@ def refine(
         if not build_it:
             return None
         emit("building", candidate)
-        result, rep, stl = compile_and_verify(candidate, cfg, None, scratch / "out")
+        result, rep, stl = compile_and_verify(
+            candidate, cfg, None, scratch / "out", strict_cuts=True
+        )
         holder["result"], holder["report"], holder["stl"] = result, rep, stl
         return None
 

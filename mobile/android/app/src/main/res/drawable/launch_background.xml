@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The window the OS paints before Flutter's first frame. It is `case`
+     #0B0F0D, the same ground the app itself opens on: the template's white
+     showed as a flash of the wrong colour on every cold start.
+
+     The mark is centred rather than full-bleed because the Android 12+ splash
+     API crops to a circle, so anything outside the middle two thirds is lost.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/bp_case" />
+    <item>
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/splash_logo" />
+    </item>
+</layer-list>

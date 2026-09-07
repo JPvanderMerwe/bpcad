@@ -1,0 +1,19 @@
+Archivo, Space Grotesk and JetBrains Mono are distributed under the
+SIL Open Font License, Version 1.1.
+
+The full licence text is published with each project:
+
+  Archivo         https://github.com/Omnibus-Type/Archivo
+  Space Grotesk   https://github.com/floriankarsten/space-grotesk
+  JetBrains Mono  https://github.com/JetBrains/JetBrainsMono
+
+The font files in this directory were fetched from Google Fonts and are
+served from this repository so the apps render with no network access
+(brief 11.3).
+
+VERIFY BEFORE A STORE BUILD. The licence above is stated from each
+project's own published terms and has not been re-checked against these
+particular files. OFL 1.1 permits bundling in an application, including a
+commercial one, and requires the licence to travel with the fonts - which
+is what this file is for - but confirm it rather than taking this note's
+word for it.

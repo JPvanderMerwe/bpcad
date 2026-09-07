@@ -292,3 +292,74 @@ def test_a_thumbnail_is_rendered_on_the_cpu(tmp_path):
     """
     out = api.thumbnail(REF_VENT, tmp_path / "t.png", size=200)
     assert out.is_file() and out.stat().st_size > 500
+
+
+# ---------------------------------------------------------------------------
+# The run record. It lived only in the CLI, so a part made through the web app
+# or the desktop app had no run.json at all: no attempt history, no model
+# named, no timings, nothing to audit a bad part with. It is also, deliberately,
+# the same data a metered product needs to count against a quota.
+# ---------------------------------------------------------------------------
+
+def _unreachable_config():
+    """
+    A config whose machine points at a port nothing listens on.
+
+    This reaches the no-model exit path in under a second, so the record can be
+    tested without waiting minutes for inference - and it exercises the branch
+    where write_handoff is NOT called, which is the one that would break if
+    RunRecord.write stopped creating its own parent directory.
+    """
+    cfg = api.config(ROOT / "config" / "default.toml")
+    for machine in cfg.data["machines"].values():
+        machine["host"] = "http://127.0.0.1:1"
+    return cfg
+
+
+def test_a_run_writes_its_record_even_when_no_model_answers(tmp_path):
+    import json
+
+    result = api.generate("a flat plate 80 by 40 by 6 mm",
+                          cfg=_unreachable_config(), out_dir=str(tmp_path),
+                          render=False, max_seconds=30)
+
+    assert not result.ok
+    assert result.run_record is not None, "no run.json was written"
+    record = json.loads(Path(result.run_record).read_text())
+
+    assert record["ok"] is False
+    assert record["handoff"] == "no model reachable"
+    assert record["machine"]
+    assert record["elapsed_s"] >= 0
+    # What a meter and an audit both need.
+    assert record["budget"]["max_seconds"] == 30
+    assert record["profile"]["model_primary"]
+    assert "attempts" in record
+
+
+def test_the_budget_is_part_of_the_api_not_a_cli_flag():
+    """
+    `--max-seconds` was enforced inside the CLI's own verify callback, which is
+    half the reason a second copy of the ladder existed. A web request wants a
+    budget too.
+    """
+    import inspect
+
+    assert "max_seconds" in inspect.signature(api.generate).parameters
+
+
+def test_image_facts_reach_the_model_without_being_mapped_to_parameters():
+    """
+    Two different measurement inputs, kept apart on purpose.
+
+    `measurement` is an object whose values are APPLIED to matching parameters.
+    `facts` is what the CLI's --image produces: pixel extents and ratios that
+    cannot honestly be mapped to a named parameter, handed over as context
+    only. Collapsing them would mean asserting that a silhouette width IS some
+    template's width_mm, which is a guess, and a wrong mapping is worse than
+    no mapping.
+    """
+    import inspect
+
+    params = inspect.signature(api.generate).parameters
+    assert "facts" in params and "measurement" in params

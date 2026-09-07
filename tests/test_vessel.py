@@ -158,3 +158,98 @@ def test_drainage_holes_too_big_for_the_base_are_refused():
     with pytest.raises(ValueError) as exc:
         VesselParams(outer_dia_mm=60, drain_holes=4, drain_dia_mm=40.0)
     assert "will not fit" in str(exc.value)
+
+
+# ---------------------------------------------------------------------------
+# THE NUMBER ASKED FOR IS THE NUMBER DELIVERED.
+#
+# nominal_mm claims (outer_dia_mm, outer_dia_mm, height_mm) and check_intent
+# compares the REQUEST against that claim - never against the solid. So a
+# template could under-deliver its own stated diameter and every layer above
+# would agree the part was right. Two profiles did:
+#
+#   straight   119.465 for 120 asked - the 1.2 mm cosmetic rim rounding ate
+#              the widest point, which on a cone IS the rim
+#   belly       99.817 for 120 asked - outer_dia_mm/2 was used as a Bezier
+#              CONTROL point, and a Bezier does not pass through its control
+#              point, so the waist landed 17% short
+#
+# The first was visible in the corpus (plant_pot_drained, kept failing on
+# purpose). The second was invisible: no corpus entry uses belly.
+# ---------------------------------------------------------------------------
+
+def widest_dia(body):
+    bb = body.val().BoundingBox()
+    return max(bb.xmax - bb.xmin, bb.ymax - bb.ymin)
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+def test_every_profile_delivers_the_diameter_it_was_asked_for(profile):
+    _, body = core(profile=profile, outer_dia_mm=120.0, height_mm=110.0,
+                   wall_mm=2.4)
+    got = widest_dia(body)
+    assert abs(got - 120.0) <= 0.05, (
+        "%s delivered %.3f mm across for 120.0 asked" % (profile, got)
+    )
+
+
+def test_the_belly_waist_reaches_the_stated_diameter():
+    """The 20 mm error, pinned. It was 99.817 for 120 asked."""
+    _, body = core(profile="belly", outer_dia_mm=120.0, height_mm=110.0,
+                   wall_mm=2.4)
+    assert widest_dia(body) > 119.5
+
+
+def test_the_bezier_control_point_puts_the_peak_where_it_was_asked():
+    """Exact, not iterated - so this is an equality assertion, not a band."""
+    from bpcad.build.templates.vessel import _bezier_control_for_peak
+
+    for base_r, rim_r, peak_r in ((34.8, 43.2, 60.0), (20.0, 30.0, 45.0),
+                                  (5.0, 5.0, 25.0)):
+        u = _bezier_control_for_peak(base_r, rim_r, peak_r)
+        a = base_r - 2.0 * u + rim_r
+        b = 2.0 * (u - base_r)
+        assert a < 0, "no maximum between the ends"
+        peak = base_r - b * b / (4.0 * a)
+        assert peak == pytest.approx(peak_r, abs=1e-9)
+
+
+def test_an_unreachable_peak_falls_back_rather_than_raising():
+    """
+    A waist narrower than one of the ends has no maximum between them. The
+    plain control point is the honest answer there, not an exception.
+    """
+    from bpcad.build.templates.vessel import _bezier_control_for_peak
+
+    assert _bezier_control_for_peak(60.0, 50.0, 40.0) == 40.0
+
+
+def test_the_rim_correction_reports_its_own_factor():
+    """
+    CLAUDE.md 15: every deliberate departure from true scale is reported with
+    its numeric factor. A silent correction is the same class of problem as
+    the silent shortfall it fixes.
+    """
+    log = BuildLog()
+    p = VesselParams(profile="straight", outer_dia_mm=120.0, height_mm=110.0,
+                     wall_mm=2.4)
+    build_core(p, log)
+    widened = [n for n in log.notes if "rim widened" in n]
+    assert widened, "the rim was corrected without saying so"
+    assert "Residual after correction" in widened[0]
+
+
+@pytest.mark.parametrize("profile", ("cylinder", "flared"))
+def test_a_profile_that_is_already_right_is_not_rebuilt(profile):
+    """
+    The correction costs a whole second build, so it must fire only when it is
+    needed. A cylinder loses nothing to the rim rounding, and flared loses
+    0.032 mm - under the floor, and deliberately left alone so existing bowls
+    keep their geometry to the micron.
+    """
+    log = BuildLog()
+    core(profile=profile, outer_dia_mm=120.0, height_mm=110.0, wall_mm=2.4)
+    p = VesselParams(profile=profile, outer_dia_mm=120.0, height_mm=110.0,
+                     wall_mm=2.4)
+    build_core(p, log)
+    assert not [n for n in log.notes if "rim widened" in n]

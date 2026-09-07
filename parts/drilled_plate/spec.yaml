@@ -1,0 +1,33 @@
+# Written by hand, no model involved. This part exists to prove one thing:
+# the general path needs no template. A drilled plate is a prism and a
+# patterned cut, and the level-2 DSL has both already.
+name: drilled_plate
+level: 2
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.2
+print_axis: z
+
+ops:
+  # The plate. 80 x 40 x 6, as asked for.
+  - op: rounded_prism
+    width_mm: 80
+    depth_mm: 40
+    height_mm: 6
+    corner_r_mm: 3
+
+  # Two 5 mm holes, 60 mm apart. The disc STANDS ON its placement point, so
+  # z_mm -2 with a 10 mm length spans -2..8 and cuts clean through a plate
+  # that occupies 0..6. A disc exactly 6 long from z 0 leaves coincident
+  # faces at both ends, which is how you get a boolean that reports valid
+  # and then fails.
+  - op: pattern_linear
+    count: 2
+    dx_mm: 60
+    step:
+      op: disc
+      diameter_mm: 5
+      height_mm: 10
+      x_mm: -30
+      z_mm: -2
+      mode: cut

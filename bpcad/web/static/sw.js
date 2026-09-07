@@ -28,6 +28,12 @@ const SHELL_FILES = [
   '/static/app.css',
   '/static/app.js',
   '/static/manifest.webmanifest',
+  // Fonts are SHELL. Brief 11.3: the apps must render offline, and a font that
+  // fails to load silently reflows every dimension figure into a different
+  // column - which on a measuring instrument is not a cosmetic failure.
+  '/static/fonts/fonts.css',
+  '/static/fonts/archivo-latin.woff2',
+  '/static/fonts/jetbrainsmono-latin.woff2',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',
 ];

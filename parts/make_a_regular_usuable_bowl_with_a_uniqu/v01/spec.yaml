@@ -1,0 +1,15 @@
+name: bowl
+level: 1
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.2
+print_axis: z
+template: vessel
+params:
+  outer_dia_mm: 150
+  height_mm: 60
+  wall_mm: 3
+  floor_mm: 2
+  profile: flared
+  rim_dia_mm: 140
+  base_dia_mm: 120

@@ -277,3 +277,189 @@ def test_every_creator_can_cut_as_well_as_add():
             "%r in cut mode removed only %.3f mm3 - it is not cutting"
             % (cutter["op"], whole - after)
         )
+
+
+# ---------------------------------------------------------------------------
+# A cut that opens downward: a blind hole is a fault, a channel is a shape.
+# ---------------------------------------------------------------------------
+
+SADDLE_CLAMP = [
+    {"op": "rounded_prism", "width_mm": 40, "depth_mm": 34, "height_mm": 12,
+     "corner_r_mm": 3},
+    # The groove goes OVER the rod, so it opens downward by necessity, and it
+    # runs out through both end faces.
+    {"op": "disc", "diameter_mm": 8, "height_mm": 60, "y_mm": -30, "z_mm": 0,
+     "rotate_axis": "x", "rotate_deg": -90, "mode": "cut"},
+    {"op": "pattern_linear", "count": 2, "dx_mm": 28,
+     "step": {"op": "disc", "diameter_mm": 4, "height_mm": 20, "x_mm": -14,
+              "z_mm": -2, "mode": "cut"}},
+]
+
+
+def test_a_channel_that_opens_downward_is_not_a_cut_fault():
+    """
+    The saddle clamp is the case that narrowed this check. A rod groove has to
+    open downward - that is what makes it a saddle - and the first version of
+    the blind-hole lint flagged it, which would have made the corpus's
+    rod_clamp_8mm unbuildable through the agent.
+
+    The discriminator is whether the cut also leaves through a side face. A
+    blind hole sits wholly inside the footprint; a channel runs out of the
+    part.
+    """
+    scene = run_ops(SADDLE_CLAMP)
+    assert not [n for n in scene.log.notes if "cut fault" in n]
+
+
+def test_the_saddle_clamp_is_one_sound_body():
+    """It is a corpus entry now, so it has to hold up as geometry."""
+    scene = run_ops(SADDLE_CLAMP)
+    assert probe(scene.solid)
+
+
+def test_a_blind_hole_inside_the_footprint_is_still_a_fault():
+    """The narrowing must not have switched the check off altogether."""
+    scene = run_ops([
+        {"op": "rounded_prism", "width_mm": 80, "depth_mm": 40,
+         "height_mm": 6, "corner_r_mm": 1},
+        {"op": "disc", "diameter_mm": 5, "height_mm": 7, "x_mm": -30,
+         "z_mm": -2, "mode": "cut"},
+    ])
+    faults = [n for n in scene.log.notes if "cut fault" in n]
+    assert faults and "1.00 mm short" in faults[0]
+
+
+# ---------------------------------------------------------------------------
+# PRINT-IN-PLACE. A moving part is two bodies with a gap, which the level-2
+# path could not produce at all: BuildResult defaulted to one expected body,
+# so the export check rejected every mechanism with "exported 2 separate
+# bodies, expected 1". Being two bodies is the entire point of a hinge.
+# ---------------------------------------------------------------------------
+
+GAP = 0.30          # config/default.toml, [materials.petg], measured not guessed
+
+CAPTIVE_WASHER = [
+    # THE MOVING BODY IS FINISHED FIRST. A cut applies to everything built so
+    # far and cannot be aimed at one body, so the ring's clearance bore has to
+    # be cut while the post does not exist yet. Ordered the obvious way -
+    # plate, post, ring, bore - the bore is wider than the post and cuts it in
+    # half, leaving a stub floating 9 mm up. That still exports as a
+    # watertight mesh, in three bodies.
+    {"op": "disc", "diameter_mm": 24, "height_mm": 5, "z_mm": 4 + GAP},
+    {"op": "disc", "diameter_mm": 10 + 2 * GAP, "height_mm": 9,
+     "z_mm": 4 + GAP - 1, "mode": "cut"},
+    {"op": "rounded_prism", "width_mm": 40, "depth_mm": 40, "height_mm": 4,
+     "corner_r_mm": 3},
+    {"op": "disc", "diameter_mm": 10, "height_mm": 14, "z_mm": 4},
+]
+
+SEVERED_POST = [
+    {"op": "rounded_prism", "width_mm": 40, "depth_mm": 40, "height_mm": 4,
+     "corner_r_mm": 3},
+    {"op": "disc", "diameter_mm": 10, "height_mm": 14, "z_mm": 4},
+    {"op": "disc", "diameter_mm": 24, "height_mm": 5, "z_mm": 4 + GAP},
+    {"op": "disc", "diameter_mm": 10 + 2 * GAP, "height_mm": 9,
+     "z_mm": 4 + GAP - 1, "mode": "cut"},
+]
+
+
+def _bodies(scene):
+    return len(scene.solid.solids().vals())
+
+
+def test_a_mechanism_can_be_two_separate_bodies():
+    """A ring that turns on a post, printed where it sits."""
+    scene = run_ops(CAPTIVE_WASHER)
+    assert _bodies(scene) == 2
+    assert probe(scene.solid)
+
+
+def test_the_ops_order_is_what_makes_it_work():
+    """
+    The same four shapes in the obvious order sever the post. This is not a
+    style point: it is the difference between a mechanism and a part with a
+    lump floating inside it, and both build.
+    """
+    assert _bodies(run_ops(SEVERED_POST)) == 3
+
+
+def test_the_clearance_gap_is_not_a_fused_joint():
+    """
+    Two bodies means they really are separate. Fusing them is the failure
+    that looks like success - it builds, it is one sound body, and nothing
+    turns.
+    """
+    fused = list(CAPTIVE_WASHER)
+    fused[0] = {"op": "disc", "diameter_mm": 24, "height_mm": 5, "z_mm": 4}
+    assert _bodies(run_ops(fused)) == 1
+
+
+def test_a_cut_fault_names_the_two_numbers_to_change():
+    """
+    A principle is not a critique. The first version of this said "start it
+    below the bottom face and make it longer than the part is thick", and two
+    different models responded by moving z_mm from -2 to -42 on a 50 mm part
+    with height_mm untouched - turning a blind pocket into a cut that misses
+    the part entirely. Four attempts went that way before it handed off.
+
+    So the note computes the two values off the measured part and states them.
+    """
+    scene = run_ops([
+        {"op": "disc", "diameter_mm": 20, "height_mm": 50},
+        {"op": "disc", "diameter_mm": 6, "height_mm": 10, "z_mm": -42,
+         "mode": "cut"},
+    ])
+    note = [n for n in scene.log.notes if "cut fault" in n][0]
+    assert "z_mm to -2.00" in note
+    assert "height_mm to 54.00" in note
+    assert "Change BOTH" in note
+
+
+def test_a_rotated_cut_is_not_given_z_advice():
+    """
+    z_mm is the cut's base only while the cut is upright. On a rotated one the
+    placement fields do not line up with the print axis, and naming them would
+    be worse than saying nothing.
+    """
+    scene = run_ops([
+        {"op": "rounded_prism", "width_mm": 20, "depth_mm": 20, "height_mm": 20},
+        {"op": "disc", "diameter_mm": 4, "height_mm": 5, "x_mm": 400,
+         "rotate_axis": "y", "rotate_deg": 90, "mode": "cut"},
+    ])
+    note = [n for n in scene.log.notes if "cut fault" in n][0]
+    assert "Set z_mm" not in note
+
+
+def test_a_cut_that_misses_sideways_is_told_about_the_right_axis():
+    """
+    Asked for "a hinge" the model put a bore at x_mm 20 on a part 30 mm wide -
+    four attempts, two models, the same mistake - and the critique answered
+    with "set z_mm to -2 and height_mm to 54". True of a cut that is too
+    SHORT, useless for one in the wrong PLACE. It handed off having never been
+    told what was actually wrong.
+    """
+    scene = run_ops([
+        {"op": "rounded_prism", "width_mm": 30, "depth_mm": 16, "height_mm": 5},
+        {"op": "disc", "diameter_mm": 4, "height_mm": 12, "x_mm": 20,
+         "z_mm": -2, "mode": "cut"},
+    ])
+    note = [n for n in scene.log.notes if "cut fault" in n][0]
+    assert "misses along x" in note
+    assert "Set x_mm to 0.00" in note
+    assert "height_mm to" not in note, "length advice does not fix a placement error"
+
+
+def test_a_miss_along_the_print_axis_still_gets_the_through_cut_numbers():
+    """
+    Centring is the wrong correction along the print axis: it turns a cut that
+    misses into a sealed void inside the part. That axis keeps the two-number
+    through-hole advice.
+    """
+    scene = run_ops([
+        {"op": "disc", "diameter_mm": 20, "height_mm": 50},
+        {"op": "disc", "diameter_mm": 6, "height_mm": 10, "z_mm": -42,
+         "mode": "cut"},
+    ])
+    note = [n for n in scene.log.notes if "cut fault" in n][0]
+    assert "z_mm to -2.00" in note and "height_mm to 54.00" in note
+    assert "centre it" not in note

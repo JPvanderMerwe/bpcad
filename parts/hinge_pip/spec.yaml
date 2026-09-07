@@ -1,0 +1,60 @@
+# A print-in-place hinge, hand-written, no model. Two leaves and a pin, printed
+# in one go, and it turns.
+#
+# IT TOOK THREE ATTEMPTS BY HAND, and the two failures are the interesting part
+# because a model will make both.
+#
+#   1. Leaves that meet at the barrel. Each leaf was a plain plate reaching to
+#      the centre line, and the OTHER leaf's knuckles poke into that plate -
+#      A's knuckles sit at y -4..4 and B's plate crossed the same band. One
+#      fused body, watertight, verdict PASS, nothing moves.
+#   2. A clearance bore cut after the pin exists. Global cuts hit everything
+#      built so far, so it bored the pin as well.
+#
+# The shape that works: each leaf's plate stops clear of the barrel at
+# y = 4.3, and joins its OWN knuckle through a web that spans only that
+# knuckle's x range. Then no part of one leaf ever occupies the other's space.
+#
+# THREE SEPARATE CLEARANCES, all 0.30 mm, all [materials.petg].clearance_mm:
+#   radial   the 4.6 bore over the 4.0 pin
+#   axial    B's knuckle 9.4 long between A's knuckles starting at +/-5
+#   web      A's webs stop at x -5 where B's knuckle ends at -4.7
+#
+# SUPPORT. It needs it as oriented: 27.9 mm2 of underside past 45 degrees with
+# a worst drop of 1.12 mm, which is the barrel's lower curve and the arch over
+# the bore. That is real and the report says so. Printed as-is the barrel
+# underside droops slightly against the bed, which is how these are usually
+# printed; a teardrop barrel would remove it and is not attempted here.
+name: hinge_pip
+level: 2
+material: petg
+nozzle_mm: 0.4
+layer_mm: 0.2
+print_axis: z
+
+ops:
+  # ---- LEAF B, the moving one, FINISHED FIRST ---------------------------
+  # Its knuckle: 9.4 long, so it sits between A's with 0.30 either side.
+  - {op: disc, diameter_mm: 8, height_mm: 9.4, x_mm: -4.7, z_mm: 4,
+     rotate_axis: y, rotate_deg: 90}
+  # Its plate, stopping clear of the barrel at y 4.3.
+  - {op: rounded_prism, width_mm: 30, depth_mm: 11.7, height_mm: 3,
+     y_mm: 10.15, corner_r_mm: 2}
+  # The web joining plate to knuckle, only as wide as its own knuckle.
+  - {op: rounded_prism, width_mm: 9.4, depth_mm: 4.5, height_mm: 3, y_mm: 2.25}
+  # The bore, cut while the pin does not exist yet. 4.0 pin + 0.30 each side.
+  - {op: disc, diameter_mm: 4.6, height_mm: 14, x_mm: -7, z_mm: 4,
+     rotate_axis: y, rotate_deg: 90, mode: cut}
+
+  # ---- LEAF A: two knuckles, the pin through all three, plate and webs ---
+  - {op: disc, diameter_mm: 8, height_mm: 8, x_mm: -13, z_mm: 4,
+     rotate_axis: y, rotate_deg: 90}
+  - {op: disc, diameter_mm: 8, height_mm: 8, x_mm: 5, z_mm: 4,
+     rotate_axis: y, rotate_deg: 90}
+  - {op: disc, diameter_mm: 4, height_mm: 26, x_mm: -13, z_mm: 4,
+     rotate_axis: y, rotate_deg: 90}
+  - {op: rounded_prism, width_mm: 26, depth_mm: 11.7, height_mm: 3,
+     y_mm: -10.15, corner_r_mm: 2}
+  - {op: pattern_linear, count: 2, dx_mm: 18,
+     step: {op: rounded_prism, width_mm: 8, depth_mm: 4.5, height_mm: 3,
+            x_mm: -9, y_mm: -2.25}}

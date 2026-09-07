@@ -89,9 +89,29 @@ entries:
       hole_dia_mm: 8.0
       extent_any_mm: 40.0
       bodies: 1
-    # No spec: nothing in the vocabulary makes a split clamp with a bore and a
-    # flange. This is the shape of request the brief is built around and it is
-    # the most valuable failure in the corpus.
+    # THIS COMMENT WAS TRUE AND STOPPED BEING TRUE. It read: "nothing in the
+    # vocabulary makes a split clamp with a bore and a flange", and it was
+    # right when `disc` could only ADD material and no op could be rotated.
+    # Both arrived later, nobody came back here, and the corpus went on
+    # reporting the vocabulary's most valuable failure after the vocabulary had
+    # grown past it.
+    #
+    # A saddle is the shape the request actually describes: a block with a
+    # half-round groove that goes OVER the rod and holds it down against the
+    # surface, screwed either side. The groove is centred ON the base face, so
+    # exactly half the rod is enclosed - put its centre above the face and the
+    # cut sits tangent to it, which builds a solid that reports one body and
+    # is not watertight.
+    spec:
+      level: 2
+      ops:
+        - {op: rounded_prism, width_mm: 40, depth_mm: 34, height_mm: 12,
+           corner_r_mm: 3}
+        - {op: disc, diameter_mm: 8, height_mm: 60, y_mm: -30, z_mm: 0,
+           rotate_axis: x, rotate_deg: -90, mode: cut}
+        - {op: pattern_linear, count: 2, dx_mm: 28,
+           step: {op: disc, diameter_mm: 4, height_mm: 20, x_mm: -14,
+                  z_mm: -2, mode: cut}}
 
   - id: right_angle_gusset
     request: an L bracket 60 by 60 mm, 5 mm thick, 40 mm wide, with a gusset
@@ -242,6 +262,43 @@ entries:
            step: {op: disc, diameter_mm: 5, height_mm: 20, x_mm: -8, z_mm: 5,
                   rotate_axis: x, rotate_deg: 90, y_mm: 10, mode: cut}}
         - {op: disc, diameter_mm: 4, height_mm: 14, z_mm: -2, mode: cut}
+
+  - id: snap_over_cable_clip
+    request: a clip that snaps over a 10 mm cable and screws to a surface
+    # WHY THIS ENTRY EXISTS. Nine of the fifteen level-2 ops were never
+    # exercised by this corpus - arc_rod, blend_edges, profile_extrude,
+    # pattern_polar, mirror, pocket, sphere and both embosses - which are
+    # exactly the ones that produce curved, blended and swept geometry. So a
+    # reachable rate of 100% meant "100% of a corpus that only ever asks for
+    # blocks with holes", and the parts looked like it.
+    #
+    # Compared against Prusa's own Extruder-cable-clip, which ships on every
+    # MK3S: that part is an arched snap-over clip with a blended foot. The
+    # corpus's other cable_clip entry is a block with two through-holes -
+    # a fair reading of its own request, and nothing like a designed part.
+    #
+    # hole_dia_mm 11.0 is the assertion that matters: it is the arc's inner
+    # cylindrical face, so it can only pass if the C-section is really there.
+    # A block with a hole cannot fake it.
+    expect:
+      extent_x_mm: 26.0
+      extent_z_mm: 12.0
+      hole_dia_mm: 11.0
+      bodies: 1
+    spec:
+      level: 2
+      ops:
+        # The C-section. arc_r_mm is the CENTRELINE radius, so a 3 mm rod at
+        # radius 7 leaves an 11 mm bore - the cable's clearance.
+        - {op: arc_rod, arc_r_mm: 7.0, rod_d_mm: 3.0, thickness_mm: 12,
+           trim_below_y_mm: -3.0}
+        # The foot. It has to reach y -3 to MEET the arc: at -1.5 it left a
+        # 0.5 mm gap and the clip came out as two bodies.
+        - {op: rounded_prism, width_mm: 26, depth_mm: 10, height_mm: 3,
+           y_mm: -6.5, corner_r_mm: 2}
+        - {op: disc, diameter_mm: 3.5, height_mm: 10, x_mm: -9, y_mm: -6.5,
+           z_mm: -2, mode: cut}
+        - {op: blend_edges, group: vertical, amount_mm: 0.8}
 
   - id: spacer_ring
     request: a spacer ring 30 mm across with a 12 mm bore, 5 mm thick

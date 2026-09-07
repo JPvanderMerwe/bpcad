@@ -66,9 +66,31 @@ EXTRA_TYPES = {
 # continuous when you drag it and is cheap enough to render on demand.
 TURNTABLE_STEPS = 24
 
+# RENDER VERSION, AND WHY AN IMMUTABLE CACHE NEEDS ONE.
+#
+# Frames are served `immutable, max-age=604800` because a built part's geometry
+# never changes - a refinement writes a new part. That is true of the GEOMETRY
+# and not of the PICTURE. Changing the renderer changes every frame's content
+# without changing any frame's URL, so every browser that has been here keeps
+# showing the old ones for a week and no amount of reloading helps.
+#
+# It bit immediately: the renderer went from opaque RGB to transparent RGBA and
+# the page kept drawing the old flat-backed frames, which was the exact
+# rectangle-around-the-part the change was meant to remove.
+#
+# BUMP THIS whenever the renderer's output changes - background, alpha,
+# shading, camera, size. The client appends it to every frame URL.
+RENDER_VERSION = 2
+
 # Renders are cached by (part, step, size) and never invalidated, because a
 # built part's geometry does not change - a refinement writes a NEW part.
 _RENDER_CACHE: dict[tuple, bytes] = {}
+
+# GLB, for the front ends that render on their own GPU rather than being sent
+# pictures. Cached by part for the same reason the frames are: a built part's
+# geometry does not change, a refinement writes a NEW part. The conversion is
+# a mesh walk and costs real time on a 40 000-face bowl.
+_GLB_CACHE: dict[str, bytes] = {}
 _RENDER_LOCK = threading.Lock()
 
 SAFE_NAME = re.compile(r"^[A-Za-z0-9._-]{1,120}$")
@@ -427,16 +449,20 @@ def _render_turntable_frame(name: str, step: int, width: int, height: int,
         mesh = _assembled_mesh(name)
 
     azim = 360.0 * (step % TURNTABLE_STEPS) / TURNTABLE_STEPS
+    # TRANSPARENT. The page draws a build-plate grid (brief 11.1) and a flat
+    # backed render dropped on top of it reads as a hard rectangle around the
+    # part, because the grid stops where the picture starts. With alpha the
+    # part sits ON the plate.
     img = render(
         np.asarray(mesh.vertices, dtype=float),
         np.asarray(mesh.faces),
         np.asarray(mesh.face_normals, dtype=float),
         width=width, height=height, elev_deg=26.0, azim_deg=azim,
-        background=theme.VIEWPORT_BG,
+        background=theme.VIEWPORT_BG, alpha=True,
     )
     arr = img if img.dtype == np.uint8 else (np.clip(img, 0, 1) * 255).astype(np.uint8)
     buf = io.BytesIO()
-    Image.fromarray(arr[:, :, :3]).save(buf, format="PNG", optimize=False)
+    Image.fromarray(arr, mode="RGBA").save(buf, format="PNG", optimize=False)
     data = buf.getvalue()
 
     with _RENDER_LOCK:
@@ -475,6 +501,32 @@ def _library_payload() -> list[dict]:
     return out
 
 
+def _part_glb(name: str) -> bytes:
+    """
+    The part as GLB, for a real 3D viewer.
+
+    WHY GLB AND NOT THE STL IT ALREADY HAS. Both front ends want to orbit a
+    part with their own GPU - a phone especially, where a server round trip per
+    frame is the difference between turning a part and waiting for one. STL
+    carries triangles and nothing else: no units, no orientation convention,
+    no material, and every viewer guesses differently. glTF/GLB is the format
+    those viewers actually take, one binary file, and trimesh already writes
+    it - no new dependency for something this central.
+    """
+    cached = _GLB_CACHE.get(name)
+    if cached is not None:
+        return cached
+
+    mesh = _assembled_mesh(name)
+    data = mesh.export(file_type="glb")
+    if isinstance(data, str):
+        data = data.encode("utf-8")
+
+    with _RENDER_LOCK:
+        _GLB_CACHE[name] = data
+    return data
+
+
 def _health() -> dict:
     from bpcad import api
 
@@ -494,6 +546,7 @@ def _health() -> dict:
     return {
         "model": status,
         "capability": cap,
+        "render_version": RENDER_VERSION,
         "printer": cfg.data.get("printer", {}),
         "bed": cfg.data.get("bed", {}),
         "materials": list(cfg.material_names),
@@ -609,6 +662,10 @@ class Handler(BaseHTTPRequestHandler):
         if m:
             return self._send_stl(m.group(1))
 
+        m = re.fullmatch(r"/api/part/([^/]+)/glb", path)
+        if m:
+            return self._send_glb(m.group(1))
+
         m = re.fullmatch(r"/api/part/([^/]+)/file/([a-z0-9]{1,6})", path)
         if m:
             return self._send_file(m.group(1), m.group(2))
@@ -639,8 +696,27 @@ class Handler(BaseHTTPRequestHandler):
 
         raise HttpError(404, "no route for %s" % path)
 
+    # WHAT MAY BE UPLOADED AS A REFERENCE PHOTO. An allow-list, and checked
+    # against the file's own magic bytes rather than its name: an extension is
+    # a claim made by whoever named the file.
+    IMAGE_MAGIC = {
+        b"\xff\xd8\xff": ("jpg", "image/jpeg"),
+        b"\x89PNG\r\n\x1a\n": ("png", "image/png"),
+        b"RIFF": ("webp", "image/webp"),
+    }
+
+    # A phone camera photo is a few megabytes. Ten is generous and stops a
+    # mistake - or a stray POST - from filling the disk.
+    MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+
     def _route_post(self):
         path = urlparse(self.path).path
+
+        # BEFORE _body(). An upload is raw bytes, and _body() would try to
+        # parse a JPEG as JSON.
+        if path == "/api/upload":
+            return self._receive_image()
+
         body = self._body()
 
         if path == "/api/generate":
@@ -663,6 +739,87 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"job": job.id})
 
         raise HttpError(404, "no route for %s" % path)
+
+    def _receive_image(self):
+        """
+        Take a reference photo and say where it landed.
+
+        The client posts the raw bytes and gets back a path it can hand to
+        /api/generate as `image_path`. That endpoint has always accepted a
+        path and there was never a way to put a file at one - so image-to-model
+        worked from the command line and nowhere else, which on a phone is the
+        one device with a camera.
+
+        THE FILE IS NOT TRUSTED. Its declared name is discarded except for an
+        extension check, the real type comes from the magic bytes, and the
+        name it is saved under is generated here. A filename that arrives over
+        the wire is somebody else's string.
+        """
+        length = int(self.headers.get("Content-Length") or 0)
+        if length <= 0:
+            raise HttpError(400, "no image in the body")
+        if length > self.MAX_UPLOAD_BYTES:
+            raise HttpError(
+                413, "that image is %.1f MB and the limit is %d MB"
+                % (length / 1048576.0, self.MAX_UPLOAD_BYTES // 1048576))
+
+        payload = self.rfile.read(length)
+        kind = next(
+            ((ext, mime) for magic, (ext, mime) in self.IMAGE_MAGIC.items()
+             if payload.startswith(magic)),
+            None,
+        )
+        if kind is None:
+            raise HttpError(
+                400, "that is not a JPEG, PNG or WebP - the first bytes say "
+                     "otherwise, whatever the file is called")
+        ext, mime = kind
+
+        from bpcad.imports import IMPORT_ROOT
+
+        target_dir = Path(IMPORT_ROOT) / "uploads"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        # The name is generated, never taken from the request: a filename off
+        # the wire is where path traversal lives.
+        name = "ref-%d.%s" % (int(time.time() * 1000), ext)
+        target = target_dir / name
+        target.write_bytes(payload)
+
+        # Measure it now, so the client can show what was actually read off
+        # the picture before spending minutes on a generate. A photo that
+        # separated nothing from its background is worth saying so about
+        # immediately.
+        from bpcad import api
+
+        facts: dict[str, Any] = {}
+        note = ""
+        try:
+            # measure_image returns Box objects for the regions it found, which
+            # carry their own repr and do not serialise. Kept as their readable
+            # form rather than exploded into four numbers: the client shows
+            # them to a person, and "L17 R654 T13 B696 (638 x 684 px)" is what
+            # a person wants to read.
+            facts = {
+                key: (value if isinstance(value, (int, float, str, bool, type(None)))
+                      else str(value))
+                for key, value in api.measure_image(target).items()
+            }
+        except Exception as exc:
+            note = str(exc)[:200]
+
+        return self._json({
+            "path": str(target),
+            "name": name,
+            "bytes": len(payload),
+            "type": mime,
+            "measured": facts,
+            "note": note,
+            # THE HONEST CAVEAT, carried with the measurement rather than left
+            # for the UI to remember: every figure above is in PIXELS. Nothing
+            # here can become a millimetre without one real dimension from the
+            # person holding the object.
+            "needs_scale": bool(facts),
+        })
 
     # -- helpers -----------------------------------------------------------
 
@@ -720,6 +877,13 @@ class Handler(BaseHTTPRequestHandler):
                     payload["size_mm"] = [round(float(v), 1) for v in data["bbox_mm"]]
                 if data.get("volume_cm3") is not None:
                     payload["volume_cm3"] = round(float(data["volume_cm3"]), 1)
+                # PIECES. For anything with a moving part this is the fact that
+                # decides whether it works: two bodies turn, one body is fused
+                # solid. The app had no way to show it for a part opened from
+                # the library, which is the only way you ever look at one
+                # again.
+                if data.get("body_count"):
+                    payload["bodies"] = int(data["body_count"])
             except Exception:
                 pass
 
@@ -734,6 +898,23 @@ class Handler(BaseHTTPRequestHandler):
             if f.suffix.lstrip(".").lower() in self.DOWNLOADABLE
         })
         return payload
+
+    def _send_glb(self, name: str):
+        """
+        The part as one GLB. Marked immutable like the render frames: the
+        geometry of a built part never changes, so a viewer may cache it hard.
+        RENDER_VERSION is not in this URL because it is not a picture - the
+        renderer's colours and camera have nothing to do with the mesh.
+        """
+        self._check_name(name)
+        try:
+            data = _part_glb(name)
+        except FileNotFoundError as exc:
+            raise HttpError(404, str(exc))
+        self._send(200, data, "model/gltf-binary", {
+            "Cache-Control": "public, max-age=604800, immutable",
+            "Content-Disposition": 'inline; filename="%s.glb"' % name,
+        })
 
     def _send_stl(self, name: str):
         self._check_name(name)

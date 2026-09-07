@@ -324,6 +324,39 @@ class VesselParams(TemplateParams):
         return worst
 
 
+def _bezier_control_for_peak(base_r: float, rim_r: float, peak_r: float) -> float:
+    """
+    The control point that makes a quadratic Bezier PEAK at `peak_r`.
+
+    For B(t) = (1-t)^2 P0 + 2(1-t)t U + t^2 P2 the maximum is at the vertex of
+    a parabola, and solving B(t*) = R for U gives
+
+        U = R +/- sqrt(R^2 - P0^2 + (P0 - R)(P0 + P2))
+
+    Take the root whose vertex falls inside the curve; if neither does, the
+    peak is unreachable between these ends and the widest end wins, which is
+    what the plain control point already did.
+
+    Exact, so no build-measure-correct loop: the peak lands on the number that
+    was asked for the first time.
+    """
+    if peak_r <= max(base_r, rim_r):
+        return peak_r
+
+    under = peak_r ** 2 - base_r ** 2 + (base_r - peak_r) * (base_r + rim_r)
+    if under < 0:
+        return peak_r
+
+    for candidate in (peak_r + math.sqrt(under), peak_r - math.sqrt(under)):
+        denominator = base_r - 2.0 * candidate + rim_r
+        if abs(denominator) < 1e-12:
+            continue
+        t_star = (base_r - candidate) / denominator
+        if 0.0 < t_star < 1.0:
+            return candidate
+    return peak_r
+
+
 def _outer_profile(p: VesselParams) -> list[tuple[float, float]]:
     """
     (radius, z) stations up the outside of the body, foot excluded.
@@ -335,6 +368,12 @@ def _outer_profile(p: VesselParams) -> list[tuple[float, float]]:
     """
     base_r, rim_r = p.base() / 2.0, p.rim() / 2.0
     wide_r = p.outer_dia_mm / 2.0
+    # A BEZIER DOES NOT PASS THROUGH ITS CONTROL POINT, and this used
+    # outer_dia_mm/2 as one - so a belly asked for 120 mm across came out
+    # 99.8, which is 17% under a stated dimension, with nominal_mm still
+    # claiming 120. The comment below has always said "widest at the waist";
+    # the curve just never went there.
+    control_r = _bezier_control_for_peak(base_r, rim_r, wide_r)
     h = p.body_height_mm
     z0 = p.foot_mm
 
@@ -374,7 +413,8 @@ def _outer_profile(p: VesselParams) -> list[tuple[float, float]]:
             r = base_r + (rim_r - base_r) * math.sin(t * math.pi / 2.0)
         else:                                 # belly
             # Quadratic Bezier: base -> widest at the waist -> rim.
-            r = ((1 - t) ** 2 * base_r + 2 * (1 - t) * t * wide_r + t ** 2 * rim_r)
+            r = ((1 - t) ** 2 * base_r + 2 * (1 - t) * t * control_r
+                 + t ** 2 * rim_r)
         out.append((max(r, 0.4), z0 + h * t))
     return out
 
@@ -423,8 +463,76 @@ def _loft_circles(stations: list[tuple[float, float]]) -> cq.Workplane:
     return wp.loft(ruled=True, clean=False)
 
 
+# How far the delivered widest point may fall short of the stated one before
+# the rim is compensated. 0.05 mm is the harness's own hole tolerance and ten
+# times the STL export tolerance, so anything above it is a real discrepancy
+# between a parameter and a part; anything below it cannot be measured off the
+# exported mesh anyway. Correcting below this line would rebuild every bowl to
+# chase a number thinner than the file it is written to.
+RIM_COMPENSATION_FLOOR_MM = 0.05
+
+
 def build_core(p: VesselParams, log: BuildLog) -> cq.Workplane:
-    """The vessel, upright, open at the top. Print and assembled are the same."""
+    """
+    The vessel, upright, open at the top. Print and assembled are the same.
+
+    Built at most twice: once as asked, and once more with the rim widened
+    when the cosmetic rim rounding has eaten the widest point. See
+    _compensate_rim.
+    """
+    body = _build_body(p, log)
+
+    bump = _rim_deficit(p, body)
+    if bump > RIM_COMPENSATION_FLOOR_MM:
+        # MEASURE, THEN CORRECT. The bite the fillet takes out of the widest
+        # point depends on the wall's local lean and on how OCC chose to build
+        # the torus, so it is measured off the solid rather than predicted.
+        # One correction lands it: the second-order change in lean from a
+        # 0.5 mm wider rim is far below the floor above, and the residual is
+        # logged either way rather than assumed.
+        widened = p.model_copy(update={"rim_dia_mm": p.rim() + 2.0 * bump})
+        second = _build_body(widened, log)
+        residual = _rim_deficit(p, second)
+        log.notes.append(
+            "rim widened %.3f mm so the widest point delivers the %.2f mm "
+            "asked for - the %.2f mm rim rounding had taken %.3f mm off it. "
+            "Residual after correction %.3f mm"
+            % (2.0 * bump, p.outer_dia_mm, p.rim_round_mm, 2.0 * bump, residual)
+        )
+        if abs(residual) <= abs(2.0 * bump):
+            body = second
+    return body
+
+
+def _widest_stated_dia(p: VesselParams) -> float:
+    """
+    The diameter the parameters SAY is the widest point of the body.
+
+    Not the bounding box and not nominal_mm: the number a person reading the
+    spec would expect to measure across the widest part of the finished pot.
+    """
+    stations = _outer_profile(p)
+    return 2.0 * max(r for r, _z in stations)
+
+
+def _rim_deficit(p: VesselParams, body: cq.Workplane) -> float:
+    """
+    Half the shortfall between the stated widest diameter and the built one.
+
+    Half, because it is applied to a radius. Returns 0.0 when the part is at
+    or over size, and when the measurement cannot be taken - a compensation
+    that fires on a failed measurement is worse than none.
+    """
+    try:
+        bb = body.val().BoundingBox()
+    except Exception:
+        return 0.0
+    got = max(bb.xmax - bb.xmin, bb.ymax - bb.ymin)
+    return max(_widest_stated_dia(p) - got, 0.0) / 2.0
+
+
+def _build_body(p: VesselParams, log: BuildLog) -> cq.Workplane:
+    """One pass of the geometry, exactly as it was before compensation."""
     outer_stations = _outer_profile(p)
     body = _loft_circles(outer_stations)
 
@@ -634,7 +742,13 @@ register(Template(
         # is not a shape word. "bin" is not here - a bin is usually square.
         "container", "round container", "pen pot", "pencil pot", "utensil pot",
         "ramekin",
-        "trinket dish", "catch-all", "saucer", "plate", "tray round",
+        # "plate" WAS BARE HERE, and a bare shape word you only half make
+        # is the pot/planter mistake in enclosure.py all over again: every
+        # request for a flat drilled plate matched this, chose the vessel or
+        # the enclosure, and got a part that was not a plate. Qualified, it
+        # claims the round one it actually turns; a rectangular plate is a
+        # prism and a pattern of cuts, which primitives already build.
+        "trinket dish", "catch-all", "saucer", "round plate", "tray round",
         # What people call the cellular version.
         "voronoi bowl", "cell bowl", "cellular bowl", "lattice bowl",
         "fruit basket", "openwork bowl", "mesh bowl", "generative bowl",
