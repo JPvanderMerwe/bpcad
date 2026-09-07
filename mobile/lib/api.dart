@@ -22,6 +22,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:http/http.dart' as http;
 
 class BpcadApi {
@@ -73,12 +74,32 @@ class BpcadApi {
 
   /// The part as one GLB, for a viewer that draws on the phone's own GPU.
   ///
-  /// No render version in this URL: GLB is the MESH, not a picture of it, and
-  /// the renderer's colours and camera have nothing to do with it. The server
-  /// marks it immutable because a built part's geometry never changes - a
-  /// refinement writes a new part - so the phone may cache it hard and a
-  /// second look costs nothing.
-  Uri glb(String name) => _uri('/api/part/${Uri.encodeComponent(name)}/glb');
+  /// `meshVersion` is here for the same reason `renderVersion` is on [frame].
+  /// The server serves this immutable for a week, which is right for one part
+  /// at one mesh version and wrong across a change to what the file holds:
+  /// baking the part's grey into the GLB changed every file's content without
+  /// changing any file's URL, and a phone that had already fetched the
+  /// colourless one kept drawing a white silhouette. The server reports its
+  /// own `mesh_version` in /api/state.
+  Uri glb(String name, {int meshVersion = 1}) =>
+      _uri('/api/part/${Uri.encodeComponent(name)}/glb?mv=$meshVersion');
+
+  /// bpcad's own 3D viewer page, for a WebView.
+  ///
+  /// The page is served by bpcad and used by BOTH clients, which is the only
+  /// way the phone and the browser show a part the same way rather than nearly
+  /// the same way. It reads the mesh version from /api/state itself, so this
+  /// URL carries only the part.
+  ///
+  /// In a DEBUG build the page is asked for its camera readout. There is no
+  /// console on a phone, and a viewer that draws the wrong thing on a device
+  /// while drawing the right thing in a desktop browser has now cost two long
+  /// detours of staring at screenshots and guessing what the camera was
+  /// doing. Four numbers on screen is the difference between measuring and
+  /// estimating, and it is off in every release build.
+  Uri viewer(String name) => _uri(
+      '/static/viewer.html?part=${Uri.encodeComponent(name)}'
+      '${kDebugMode ? '&debug=1' : ''}');
 
   /// Start a generate. Returns the job id; progress arrives on [events].
   Future<String> generate(String request, {String material = 'petg'}) async {

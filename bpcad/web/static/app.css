@@ -152,6 +152,35 @@ html, body {
 .stage img { max-width: 100%; max-height: 100%; display: block;
              -webkit-user-drag: none; }
 
+/* THE 3D VIEW. Fills the stage, and it is the page the phone loads - not a
+   second renderer, so the two clients cannot drift. `background: transparent`
+   matters: the page paints its own ground and a default white iframe flashes
+   through for a frame on every open. */
+.stage iframe {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  border: 0; background: transparent; display: block;
+}
+
+/* Which of the two views is on screen. The turntable is PICTURES of the part
+   and the 3D view is the part; a viewport that does not say which is which
+   makes a slow-loading mesh look like a frozen turntable. Bottom right, out
+   of the part's way, and a real tap target - brief 6.3 pins 44px. */
+.viewtoggle {
+  position: absolute; right: 14px; bottom: 14px; z-index: 2;
+  min-width: 44px; height: 32px; padding: 0 12px;
+  font: 500 12px/1 var(--bp-mono, ui-monospace, monospace);
+  letter-spacing: .04em;
+  color: var(--bp-ink-dim); background: rgba(11, 15, 13, .72);
+  border: 1px solid var(--bp-edge, rgba(150, 180, 210, .18));
+  border-radius: 3px; cursor: pointer;
+  backdrop-filter: blur(6px);
+}
+.viewtoggle:hover { color: var(--bp-ink); }
+.viewtoggle[aria-pressed="true"] {
+  color: var(--bp-act, #FFB000);
+  border-color: var(--bp-act, #FFB000);
+}
+
 /* 11.6: ONE orchestrated moment — the part resolving in. Nothing else in the
    interface animates on entry. */
 .stage img.resolving { animation: resolve 620ms cubic-bezier(.2,.8,.2,1); }

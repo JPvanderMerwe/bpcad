@@ -86,6 +86,23 @@ RENDER_VERSION = 2
 # built part's geometry does not change - a refinement writes a NEW part.
 _RENDER_CACHE: dict[tuple, bytes] = {}
 
+# MESH VERSION, for the same reason RENDER_VERSION exists, one layer down.
+#
+# The GLB was first served as `immutable, max-age=604800` on the argument that
+# it is the MESH and not a picture of it, so the renderer's choices could not
+# affect it. That argument was wrong the moment the part's grey was baked into
+# the file: the GLB carries a material as well as triangles, and a viewer that
+# had already fetched the colourless one kept drawing a white silhouette for a
+# week with no way to ask for the new file - which is the identical bug the
+# frames hit, in the identical week-long cache.
+#
+# BUMP THIS whenever the GLB's CONTENT changes for an unchanged part: baked
+# colour, export options, units, orientation. Clients append it to the URL, so
+# a bump is a new URL and the hard cache stays correct instead of stale.
+#
+# 1 -> 2: the part's own grey baked in as face colours.
+MESH_VERSION = 2
+
 # GLB, for the front ends that render on their own GPU rather than being sent
 # pictures. Cached by part for the same reason the frames are: a built part's
 # geometry does not change, a refinement writes a NEW part. The conversion is
@@ -518,6 +535,48 @@ def _part_glb(name: str) -> bytes:
         return cached
 
     mesh = _assembled_mesh(name)
+
+    # THE PART'S OWN COLOUR AND A REAL MATERIAL, BAKED IN.
+    #
+    # A mesh exported straight out of CadQuery carries neither, and glTF's
+    # rule for a primitive with no material is not "pick something sensible":
+    # it is baseColorFactor white, metallicFactor 1.0, roughnessFactor 1.0. A
+    # fully metallic white surface is a mirror, so the part renders as whatever
+    # the viewer's environment map happens to be - which is how this first
+    # looked, a blown-out white silhouette with no readable form, and it looked
+    # enough like a broken viewer to send the search in the wrong direction.
+    #
+    # So the material is declared rather than defaulted: metallic 0 because
+    # this is printed plastic, roughness 0.55 because a matte surface shows
+    # form through shading and a glossy one shows highlights instead, and the
+    # base colour is the grey the turntable frames and the desktop viewport
+    # already draw the part in. The same part must not look like two objects
+    # depending on which of the three views is open.
+    #
+    # Vertex colours are set as well as the material. They are what a viewer
+    # that ignores materials falls back to, and glTF multiplies COLOR_0 by the
+    # base colour factor - both being the same grey means neither path
+    # darkens the part.
+    try:
+        import numpy as np
+        from trimesh.visual import TextureVisuals
+        from trimesh.visual.material import PBRMaterial
+
+        # raster.render's default part colour, as bytes.
+        grey = np.array([158, 168, 184, 255], dtype=np.uint8)
+        mesh.visual = TextureVisuals(material=PBRMaterial(
+            name="bpcad-part",
+            baseColorFactor=(grey / 255.0).tolist(),
+            metallicFactor=0.0,
+            roughnessFactor=0.55,
+            doubleSided=False,
+        ))
+        mesh.visual.vertex_attributes["color"] = np.tile(
+            grey, (len(mesh.vertices), 1))
+    except Exception:
+        # A part that cannot carry a colour is still worth showing.
+        pass
+
     data = mesh.export(file_type="glb")
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -547,6 +606,7 @@ def _health() -> dict:
         "model": status,
         "capability": cap,
         "render_version": RENDER_VERSION,
+        "mesh_version": MESH_VERSION,
         "printer": cfg.data.get("printer", {}),
         "bed": cfg.data.get("bed", {}),
         "materials": list(cfg.material_names),
@@ -571,7 +631,15 @@ class Handler(BaseHTTPRequestHandler):
     # being served the old interface until the hour is up, with no way to tell
     # that is what is happening. That is not a development annoyance, it is a
     # broken upgrade.
-    IMMUTABLE = ("image/png", "model/stl")
+    # CONTENT TYPES WHOSE URLS ARE VERSIONED, AND MAY THEREFORE BE CACHED HARD.
+    #
+    # Every one of these is content whose bytes cannot change for a given URL:
+    # a frame carries RENDER_VERSION, a GLB carries MESH_VERSION, an STL is a
+    # download of a built part's geometry. Anything not listed gets no-cache,
+    # which is the right default for a payload that reflects live state.
+    IMMUTABLE = ("image/png", "model/stl", "model/gltf-binary")
+
+    IMMUTABLE_CACHE = "public, max-age=604800, immutable"
 
     def _send(self, status: int, body: bytes, ctype: str, extra: dict | None = None):
         self.send_response(status)
@@ -583,11 +651,23 @@ class Handler(BaseHTTPRequestHandler):
         # controls nothing.
         if getattr(self, "_sw", False):
             self.send_header("Service-Worker-Allowed", "/")
-        if ctype in self.IMMUTABLE:
-            self.send_header("Cache-Control", "public, max-age=604800, immutable")
-        else:
-            self.send_header("Cache-Control", "no-cache")
-        for k, v in (extra or {}).items():
+
+        # A CALLER'S CACHE-CONTROL REPLACES THIS ONE, IT DOES NOT JOIN IT.
+        #
+        # These used to be two send_header calls, and the GLB route passed its
+        # own - so the response went out carrying BOTH `no-cache` and
+        # `public, max-age=604800, immutable`. A client reads a repeated header
+        # as one comma-joined list, no-cache wins it, and the mesh was
+        # refetched every single look while the code said it was cached for a
+        # week. Nothing failed and nothing logged; it was just slow.
+        headers = dict(extra or {})
+        cache = headers.pop(
+            "Cache-Control",
+            self.IMMUTABLE_CACHE if ctype in self.IMMUTABLE else "no-cache",
+        )
+        self.send_header("Cache-Control", cache)
+
+        for k, v in headers.items():
             self.send_header(k, v)
         self.end_headers()
         if self.command != "HEAD":
@@ -901,18 +981,23 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_glb(self, name: str):
         """
-        The part as one GLB. Marked immutable like the render frames: the
-        geometry of a built part never changes, so a viewer may cache it hard.
-        RENDER_VERSION is not in this URL because it is not a picture - the
-        renderer's colours and camera have nothing to do with the mesh.
+        The part as one GLB. Marked immutable like the render frames: for one
+        part at one MESH_VERSION the bytes never change, so a viewer may cache
+        it hard and a second look costs nothing.
+
+        The version lives in the client's query string rather than in this
+        method, because a hard cache is keyed on the URL: see MESH_VERSION.
+        The parameter is ignored here on purpose - it exists to make the URL
+        different, and nothing about the response depends on reading it.
         """
         self._check_name(name)
         try:
             data = _part_glb(name)
         except FileNotFoundError as exc:
             raise HttpError(404, str(exc))
+        # The immutable header comes from the content type now, not from here:
+        # passing it here sent it twice and no-cache won. See _send.
         self._send(200, data, "model/gltf-binary", {
-            "Cache-Control": "public, max-age=604800, immutable",
             "Content-Disposition": 'inline; filename="%s.glb"' % name,
         })
 

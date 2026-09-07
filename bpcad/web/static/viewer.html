@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>bpcad — 3D viewer</title>
+
+<!--
+  ONE VIEWER PAGE, SERVED BY BPCAD, USED BY BOTH CLIENTS.
+
+  The web app loads this in an iframe or a tab; the phone app loads it in a
+  WebView. Same page, same renderer, same result - which is the only way two
+  clients show a part identically.
+
+  WHY NOT THE FLUTTER PACKAGE. model_viewer_plus spins up its own loopback
+  HTTP server on an ephemeral port inside the app, proxies the model through
+  it, points a WebView at that, and fetches model-viewer's JavaScript from a
+  CDN. On the device the mesh arrived - the server logged the GLB request and
+  served it - and the page still drew nothing, with no error anywhere. Three
+  moving parts nobody controls and a network dependency, to display a file the
+  server was already holding.
+
+  WHY THE SCRIPT IS VENDORED. bpcad works with the network cable out; that is
+  the reason it can be trusted rather than a sentiment about privacy. A viewer
+  that needs unpkg is a viewer that fails in a workshop with no signal, and
+  the fonts were vendored for exactly this reason. model-viewer is Apache-2.0
+  and its licence sits beside it in vendor/.
+-->
+
+<script type="module" src="/static/vendor/model-viewer.min.js"></script>
+
+<style>
+  /* The tokens, by hand rather than by import: this page is loaded inside a
+     WebView with no stylesheet cascade from the app, and one extra request to
+     fetch six colours would be a second thing that can fail offline. The
+     values are design/tokens.json's and tests/test_tokens.py checks them. */
+  :root {
+    --bp-case: #0B0F0D;
+    --bp-screen: #DCE3DC;
+    --bp-dim: #7C8880;
+    --bp-phosphor: #FFB000;
+    --bp-pen-fail: #E8489B;
+  }
+
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bp-case);
+    color: var(--bp-screen);
+    font: 13px/1.5 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
+    overscroll-behavior: none;      /* no pull-to-refresh under a drag */
+  }
+
+  /* EMBEDDED, THE GROUND BELONGS TO WHOEVER EMBEDDED US.
+     Standalone - the phone's WebView, or this page opened directly - the page
+     paints `case`, because there is nothing behind it. Inside the web app's
+     stage there IS something behind it: the build plate and its grid, which
+     every other view in the app sits on. Painting over that puts the part on
+     a different ground depending on which view is open, which is the exact
+     kind of drift the shared page exists to prevent.
+     The class is set by script; a frame cannot be detected in CSS. */
+  html.embedded, html.embedded body { background: transparent; }
+  html.embedded model-viewer { background-color: transparent; }
+
+  model-viewer {
+    width: 100%;
+    height: 100%;
+    display: block;
+    /* The same ground the CPU rasteriser renders on and the same the apps are
+       painted in. A viewport on a different colour reads as a hard rectangle
+       around the part. */
+    --poster-color: transparent;
+    background-color: var(--bp-case);
+  }
+
+  #state {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    text-align: center;
+    color: var(--bp-dim);
+    background: linear-gradient(to top, var(--bp-case), transparent);
+    pointer-events: none;
+  }
+  #state.failed { color: var(--bp-pen-fail); }
+
+  /* THE DEBUG READOUT GOES TO THE TOP. At the bottom it sits behind the
+     phone's navigation bar - env(safe-area-inset-bottom) reports 0 inside a
+     WebView - so the numbers were there and invisible, which is worse than
+     not having them. A diagnostic that system chrome can cover is not a
+     diagnostic. */
+  #state.debug {
+    top: 0; bottom: auto;
+    padding: calc(8px + env(safe-area-inset-top)) 14px 8px;
+    background: linear-gradient(to bottom, var(--bp-case), transparent);
+    color: var(--bp-phosphor);
+    font-size: 11px;
+  }
+</style>
+</head>
+<body>
+
+<!--
+  THE VIEWPOINT MATCHES THE TURNTABLE. Azimuth 315, elevation 26 above the
+  horizon - which model-viewer expresses as a polar angle of 64 from the
+  vertical. A part that opens at a different angle from its own thumbnail
+  reads as a different part.
+
+  Shadow and exposure are set because a part with neither is a white
+  silhouette with no readable form, which is how this looked before the GLB
+  carried the part's colour.
+
+  Orbit stays above the bed: a part is looked at standing on a plate, and
+  letting the camera go underneath it is disorienting rather than useful.
+-->
+<model-viewer
+  id="part"
+  alt="the part"
+  camera-controls
+  touch-action="none"
+  interaction-prompt="none"
+  camera-orbit="315deg 64deg auto"
+  shadow-intensity="0.6"
+  shadow-softness="0.8"
+  exposure="0.85"
+  min-camera-orbit="auto 0deg auto"
+  max-camera-orbit="auto 90deg auto">
+</model-viewer>
+
+<div id="state">loading the mesh…</div>
+
+<script>
+/*
+ * THE PART COMES FROM THE QUERY STRING, and it is validated here rather than
+ * trusted. This page is served to a WebView and to a browser tab, so the
+ * parameter is somebody else's string: it is checked against the same shape
+ * the server's own SAFE_NAME allows before being put in a URL.
+ */
+(function () {
+  /* Set before the first paint so there is no frame of the wrong ground. */
+  try {
+    if (window.self !== window.top) {
+      document.documentElement.classList.add('embedded');
+      /* NO CONTACT SHADOW ON A TRANSPARENT GROUND. The shadow needs a floor
+         to fall on; with the ground removed so the app's build plate shows
+         through, the shadow catcher itself becomes visible - a hard-edged
+         dark rectangle floating beside the part, which reads as a second
+         body rather than a shadow. The material carries the form on its own. */
+      document.getElementById('part').setAttribute('shadow-intensity', '0');
+    }
+  } catch (e) {
+    /* A cross-origin parent throws on window.top. Nothing embeds this page
+       cross-origin today, and guessing wrong here only costs a background. */
+  }
+
+  const state = document.getElementById('state');
+  const viewer = document.getElementById('part');
+
+  const query = new URLSearchParams(location.search);
+  const debug = query.has('debug');
+  const name = query.get('part') || '';
+  if (!/^[A-Za-z0-9._-]{1,80}$/.test(name)) {
+    state.textContent = 'no part named in the address';
+    state.className = 'failed';
+    return;
+  }
+
+  document.title = 'bpcad — ' + name;
+  viewer.alt = name;
+
+  /* THE MESH VERSION COMES FROM THE SERVER, NOT FROM A CONSTANT HERE.
+   *
+   * The GLB is served immutable for a week, which is right for one part at
+   * one mesh version and wrong across a change to what the file contains -
+   * baking the part's grey in changed every GLB's content without changing
+   * any GLB's URL, and a viewer that had already been here kept drawing the
+   * white silhouette. So the version goes in the query string.
+   *
+   * It is fetched rather than written here because a number repeated in two
+   * files is a number that drifts. /api/health is a kilobyte and no-cache,
+   * and if it cannot be reached the server is down - in which case the mesh
+   * was never going to load either, so the failure is honest rather than
+   * new. */
+  function show(meshVersion) {
+    var url = '/api/part/' + encodeURIComponent(name) + '/glb';
+    if (meshVersion) { url += '?mv=' + encodeURIComponent(meshVersion); }
+    viewer.src = url;
+  }
+
+  fetch('/api/health')
+    .then(function (response) { return response.json(); })
+    .then(function (state) { show(state.mesh_version); })
+    .catch(function () {
+      /* Unversioned is still better than nothing: a first-time viewer has no
+       * stale copy to be held back by. */
+      show(null);
+    });
+
+  /* SAY WHAT IS HAPPENING. A 40 000-face bowl is nearly two megabytes and the
+   * server renders it on demand, so there is a real wait here. An empty dark
+   * screen for four seconds is indistinguishable from a broken viewer, which
+   * is exactly how this looked when it was broken. */
+  viewer.addEventListener('progress', function (event) {
+    /* This keeps firing at totalProgress 1 after the load event, so it must
+       not own the line once there is something else on it - it was wiping the
+       debug readout a frame after it was written, which read as the readout
+       never having worked at all. */
+    if (debug) { return; }
+    const done = event.detail.totalProgress;
+    state.textContent = done >= 1
+      ? '' : 'loading the mesh… ' + Math.round(done * 100) + '%';
+  });
+
+  viewer.addEventListener('load', function () {
+    if (debug) { return report(); }
+    state.textContent = 'drag to turn · pinch to zoom';
+    /* Fade the hint out once, rather than leaving furniture on the screen. */
+    setTimeout(function () { state.textContent = ''; }, 4000);
+  });
+
+  /* ?debug - THE CAMERA'S OWN NUMBERS, ON SCREEN.
+   *
+   * There is no console on a phone. Twice now a viewer has been diagnosed by
+   * staring at a screenshot and guessing what the camera was doing, and both
+   * times the guess was wrong and cost a long detour. A WebView cannot be
+   * asked, so the page answers instead - it is four lines, off unless asked
+   * for, and it is the difference between measuring and estimating. */
+  function report() {
+    const orbit = viewer.getCameraOrbit();
+    const size = viewer.getBoundingClientRect();
+    const degrees = (radians) => Math.round(radians * 180 / Math.PI);
+    state.className = 'debug';
+    state.textContent =
+      'orbit ' + degrees(orbit.theta) + '\u00B0 / ' + degrees(orbit.phi)
+      + '\u00B0  r ' + orbit.radius.toFixed(3)
+      + '  fov ' + Math.round(viewer.getFieldOfView())
+      + '\u00B0  view ' + Math.round(size.width) + '\u00D7'
+      + Math.round(size.height);
+  }
+
+  if (debug) {
+    viewer.addEventListener('camera-change', report);
+  }
+
+  viewer.addEventListener('error', function (event) {
+    state.className = 'failed';
+    const why = (event.detail && event.detail.type) || 'unknown';
+    state.textContent = 'could not load this mesh (' + why + ')';
+  });
+})();
+</script>
+
+</body>
+</html>

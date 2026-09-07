@@ -345,12 +345,53 @@ function showPart(part) {
     el.hidden = !(part.files || []).includes(ext);
   }
 
+  // THE 3D VIEW IS OFFERED, NOT LOADED. The mesh is megabytes and most looks
+  // at a part are answered by the turntable, so the iframe gets no src until
+  // somebody asks for it - and it is reset here so the previous part's mesh is
+  // never left on screen beside this part's numbers.
+  show3d(false);
+  $('viewToggle').hidden = false;
+
   $('reportText').textContent = part.report_md || '';
   $('reportBox').hidden = !part.report_md;
   $('specText').textContent = part.spec ? JSON.stringify(part.spec, null, 2) : '';
   $('specBox').hidden = !part.spec;
 
   loadFrames(part.name, part.frames || 24);
+}
+
+/* THE 3D VIEW.
+ *
+ * An iframe of /static/viewer.html - the SAME page the phone loads in its
+ * WebView, rather than a second renderer written for the browser. Two
+ * renderers is how the two clients end up showing a part slightly
+ * differently, and the whole reason the page is served instead of bundled.
+ *
+ * The turntable stays loaded underneath. Toggling back is instant, and a
+ * viewer that fails leaves the pictures rather than an empty plate. */
+function show3d(on) {
+  const frame = $('view3d');
+  const toggle = $('viewToggle');
+  const name = state.part?.name;
+
+  toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
+  toggle.textContent = on ? 'Turntable' : '3D';
+  toggle.title = on
+    ? 'Back to the rendered turntable'
+    : 'Turn the actual mesh, drawn by this machine\u2019s GPU';
+
+  if (!on || !name) {
+    frame.hidden = true;
+    // Dropped rather than hidden: an iframe left with a src keeps a WebGL
+    // context and a megabyte of mesh alive behind a hidden element, and
+    // browsers cap how many contexts a page may hold.
+    frame.removeAttribute('src');
+    $('frame').hidden = !name;
+    return;
+  }
+
+  frame.src = '/static/viewer.html?part=' + encodeURIComponent(name);
+  frame.hidden = false;
 }
 
 /* 11.7: say what the wait is. `null` clears it. */
@@ -519,6 +560,9 @@ $('refineBtn').addEventListener('click', refine);
 $('moreExports').addEventListener('click', () => {
   const row = $('exportRow');
   row.hidden = !row.hidden;
+});
+$('viewToggle').addEventListener('click', () => {
+  show3d($('viewToggle').getAttribute('aria-pressed') !== 'true');
 });
 $('strip').addEventListener('click', () => {
   const box = $('reportBox');

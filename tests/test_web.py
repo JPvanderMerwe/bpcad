@@ -215,6 +215,174 @@ def test_a_turntable_frame_renders_and_is_not_blank(base_url):
 
 
 # ---------------------------------------------------------------------------
+# the 3D viewer, and the cache that once served a white silhouette for a week
+# ---------------------------------------------------------------------------
+
+
+def test_the_viewer_page_is_served_with_its_renderer_beside_it(base_url):
+    """
+    ONE VIEWER PAGE, USED BY BOTH CLIENTS. The phone loads this in a WebView
+    and the browser loads the same URL, which is the only way the two show a
+    part the same way rather than nearly the same way.
+
+    The script is vendored rather than fetched from a CDN because bpcad works
+    with the cable out - a viewer that needs unpkg is a viewer that fails in a
+    workshop with no signal. So the test is that the page is there AND that
+    nothing in it points off this machine.
+    """
+    with get("%s/static/viewer.html" % base_url) as response:
+        assert response.status == 200
+        page = response.read().decode("utf-8")
+
+    assert "<model-viewer" in page
+    assert "/static/vendor/model-viewer.min.js" in page
+    assert "//unpkg.com" not in page and "//cdn." not in page, (
+        "the viewer fetches its renderer off this machine"
+    )
+
+    with get("%s/static/vendor/model-viewer.min.js" % base_url) as response:
+        assert response.status == 200
+        assert response.headers["Content-Type"] == "text/javascript"
+        assert len(response.read()) > 100_000, "that is not the renderer"
+
+    # Apache-2.0 requires the licence to travel with the code.
+    assert status_of("%s/static/vendor/model-viewer-LICENSE.txt"
+                     % base_url) == 200
+
+
+def test_the_glb_carries_a_material_so_it_is_not_a_white_silhouette(base_url):
+    """
+    A mesh exported straight out of CadQuery has no material, so every glTF
+    viewer applies its own default - which is white, and a white part under a
+    neutral environment is a silhouette with no readable form. That is what
+    the first working viewer showed, and it looked enough like a bug in the
+    viewer to send the search in the wrong direction.
+    """
+    built = a_built_part(base_url)
+    with get("%s/api/part/%s/glb" % (base_url, built["name"])) as response:
+        assert response.status == 200
+        data = response.read()
+
+    assert data[:4] == b"glTF", "that is not a GLB"
+
+    # glTF's rule for a primitive with NO material is not "pick something
+    # sensible": it is white, metallicFactor 1.0 - a mirror. So the check is
+    # that a material exists and that it is not metallic, which is the part
+    # that actually made the difference on screen.
+    import struct
+
+    length, = struct.unpack("<I", data[12:16])
+    doc = json.loads(data[20:20 + length])
+
+    materials = doc.get("materials")
+    assert materials, "the GLB declares no material - glTF defaults to a mirror"
+    pbr = materials[0]["pbrMetallicRoughness"]
+    assert pbr["metallicFactor"] == 0.0, "printed plastic is not metal"
+    assert 0.3 <= pbr["roughnessFactor"] <= 0.8, (
+        "a mirror or a chalkboard; neither shows form"
+    )
+
+    # The grey the turntable frames and the desktop viewport already use. The
+    # same part must not look like two objects depending on the view.
+    red, green, blue, alpha = pbr["baseColorFactor"]
+    assert [round(c * 255) for c in (red, green, blue)] == [158, 168, 184]
+    assert alpha == 1.0
+
+    # COLOR_0 as well, for a viewer that ignores materials.
+    attributes = doc["meshes"][0]["primitives"][0]["attributes"]
+    assert "COLOR_0" in attributes
+
+
+def test_the_glb_url_can_be_versioned_so_the_hard_cache_stays_correct(base_url):
+    """
+    THE REGRESSION. The GLB is served `immutable, max-age=604800` on the
+    argument that it is the mesh and not a picture of it. That argument broke
+    the moment the part's grey was baked in: every file's content changed and
+    no file's URL did, so a client that had already fetched the colourless one
+    kept drawing white for a week with no way to ask for the new bytes.
+
+    The fix is the frames' fix one layer down - the version goes in the query
+    string, so a bump is a new URL. The server ignores the parameter on
+    purpose: it exists to make the URL different, and the response must not
+    depend on reading it.
+    """
+    assert web.MESH_VERSION >= 2, (
+        "MESH_VERSION was not bumped when the GLB gained a baked colour"
+    )
+
+    built = a_built_part(base_url)
+    plain = "%s/api/part/%s/glb" % (base_url, built["name"])
+    versioned = "%s?mv=%d" % (plain, web.MESH_VERSION)
+
+    with get(plain) as response:
+        without = response.read()
+        cache = response.headers["Cache-Control"]
+    with get(versioned) as response:
+        with_version = response.read()
+
+    assert with_version == without, "the version changed the response"
+    assert "immutable" in cache, (
+        "the hard cache was given up instead of being versioned"
+    )
+
+    # An unknown parameter must not 404 or 500 the mesh - the whole point is
+    # that a future client can bump the number unilaterally.
+    assert status_of("%s?mv=99" % plain) == 200
+
+
+def test_no_response_carries_two_cache_control_headers(base_url):
+    """
+    A SILENT BUG, WHICH IS WHY IT GETS ITS OWN TEST.
+
+    _send emitted its own Cache-Control and then the caller's, so the GLB went
+    out carrying `no-cache` AND `public, max-age=604800, immutable`. A client
+    reads a repeated header as one comma-joined list, no-cache wins it, and the
+    mesh was refetched on every single look while the code said it was cached
+    for a week. Nothing failed, nothing logged, it was just slow - and the
+    header the source claimed was being sent was not the header in force.
+    """
+    built = a_built_part(base_url)
+    for path in ("/", "/static/app.css", "/api/health", "/api/parts",
+                 "/api/part/%s" % built["name"],
+                 "/api/part/%s/glb" % built["name"],
+                 "/api/part/%s/frame/1?w=240" % built["name"]):
+        with get(base_url + path) as response:
+            values = response.headers.get_all("Cache-Control") or []
+        assert len(values) <= 1, (
+            "%s sends %d Cache-Control headers: %s" % (path, len(values), values)
+        )
+
+
+def test_the_mesh_is_cached_hard_because_its_url_is_versioned(base_url):
+    """
+    The other half: having stopped sending two, the one that is sent has to be
+    the immutable one. A 40 000-face bowl is nearly two megabytes and the
+    server walks the mesh to build it, so a second look at the same part must
+    cost nothing.
+    """
+    built = a_built_part(base_url)
+    with get("%s/api/part/%s/glb" % (base_url, built["name"])) as response:
+        cache = response.headers["Cache-Control"]
+    assert "immutable" in cache, cache
+    assert "no-cache" not in cache, cache
+
+
+def test_the_health_reports_the_mesh_version_so_no_client_repeats_it(base_url):
+    """
+    The viewer page reads this rather than carrying the constant, because a
+    number written in Python and again in JavaScript is a number that drifts -
+    and the drift here is silent: the page keeps asking for a URL that was
+    correct last month.
+    """
+    state = get_json("%s/api/health" % base_url)
+    assert state["mesh_version"] == web.MESH_VERSION
+    # Separate from the frames' version on purpose: a new camera angle must
+    # not throw away every cached mesh, and a new baked colour must not throw
+    # away every cached frame.
+    assert "render_version" in state
+
+
+# ---------------------------------------------------------------------------
 # refusals
 # ---------------------------------------------------------------------------
 

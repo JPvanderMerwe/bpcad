@@ -21,7 +21,12 @@
  * another place for them to go stale.
  */
 
-const SHELL = 'bpcad-shell-v1';
+// BUMP THIS WHENEVER SHELL_FILES CHANGES. `activate` deletes every cache whose
+// name is not this one, so a bump is what guarantees an installed client ends
+// up with the new list rather than the old files plus the new ones.
+//
+// v1 -> v2: the 3D viewer page and its vendored renderer.
+const SHELL = 'bpcad-shell-v2';
 
 const SHELL_FILES = [
   '/',
@@ -36,6 +41,17 @@ const SHELL_FILES = [
   '/static/fonts/jetbrainsmono-latin.woff2',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',
+  // The 3D viewer is SHELL for the same reason the fonts are. A viewer that
+  // needs a CDN is a viewer that fails in a workshop with no signal, which is
+  // why the renderer is vendored rather than linked - and a vendored file that
+  // the worker does not cache is only offline-safe until the tab is closed.
+  //
+  // The MESH is not shell and is not listed: it is megabytes per part and the
+  // server renders it on demand. The viewer failing to find a mesh offline is
+  // an honest empty view; the viewer failing to find its own renderer is a
+  // blank screen with no explanation, which is what this prevents.
+  '/static/viewer.html',
+  '/static/vendor/model-viewer.min.js',
 ];
 
 self.addEventListener('install', (event) => {

@@ -108,7 +108,7 @@ Measured, not estimated. Both numbers come from `tools/fitrate.py`.
 
     reachable fit rate    19 / 19 = 100%    the corpus's own specs, no model
     first-try fit rate    10 / 19 =  53%    prompt through the whole pipeline
-    test suite            759 passed, 1 skipped
+    test suite            765 passed, 1 skipped
 
 The two numbers answer different questions. Reachable tests the geometry
 vocabulary; first-try puts the model on top of it. A low first-try with a high
@@ -150,6 +150,36 @@ Since then:
 Neither contains geometry logic - CadQuery is Python and runs server-side
 only. `tests/test_cli.py` and `tests/test_gui.py` both fail if a front end
 reaches past `bpcad.api` into the pipeline.
+
+### One 3D viewer, served by bpcad
+
+Both clients turn a part in the same page: `/static/viewer.html`, which the
+browser loads in an iframe and the phone loads in a WebView. The mesh is a
+GLB from `/api/part/<name>/glb` and is drawn by the device's own GPU.
+
+It is one page rather than one per client because two renderers is how two
+clients end up showing a part slightly differently, and a viewport that
+disagrees with itself is not much use on a measuring instrument. The renderer
+is Google's `model-viewer`, vendored under `static/vendor/` with its Apache-2.0
+licence - for the same reason the fonts are vendored: a viewer that needs a
+CDN is a viewer that fails in a workshop with no signal.
+
+Three things that had to be got right and were not obvious:
+
+- **The GLB carries a material.** glTF's rule for a primitive with no material
+  is not "pick something sensible" - it is white, `metallicFactor` 1.0, a
+  mirror. The part rendered as a blown-out silhouette until the grey the
+  turntable already uses was baked in as matte plastic.
+- **Its URL carries `MESH_VERSION`.** The file is served `immutable` for a
+  week, which was a lie the moment its contents could change for an unchanged
+  part. Bump the constant and the URL changes with it.
+- **Embedded, the page's ground is transparent** so the app's build plate
+  shows through, and the contact shadow is turned off - with no floor to fall
+  on, the shadow catcher itself becomes a dark rectangle beside the part.
+
+Append `&debug=1` for the camera's own numbers on screen; the phone app does
+this automatically in a debug build. There is no console on a phone, and this
+viewer was twice diagnosed by guessing at screenshots.
 
 ### Design tokens
 

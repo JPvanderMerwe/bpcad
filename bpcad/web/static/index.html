@@ -60,6 +60,20 @@
       <span class="txt" id="stagingText"></span>
     </div>
     <img id="frame" alt="" hidden draggable="false">
+
+    <!-- THE 3D VIEW, IN AN IFRAME OF THE PAGE THE PHONE ALSO LOADS.
+         Not a second renderer written for the browser: the same
+         /static/viewer.html, so the two clients cannot drift into showing a
+         part slightly differently. Loaded only when asked - the mesh is
+         megabytes and the turntable is what most looks at a part need. -->
+    <iframe id="view3d" title="3D view" hidden
+            allow="fullscreen; xr-spatial-tracking"></iframe>
+
+    <!-- The turntable is pictures of the part and this is the part; a viewport
+         has to say which one is on screen. -->
+    <button class="viewtoggle" id="viewToggle" hidden
+            aria-pressed="false">3D</button>
+
     <div class="variants" id="variants" hidden></div>
   </main>
 

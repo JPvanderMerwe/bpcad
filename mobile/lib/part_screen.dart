@@ -38,12 +38,28 @@ class _PartScreenState extends State<PartScreen> {
   int _step = 3;
   double _dragFrom = 0;
   int _stepFrom = 3;
+  bool _warmed = false;
 
   @override
-  void initState() {
-    super.initState();
-    // Warm the frames either side of the first one, so a drag does not stall
-    // on a render the server has not been asked for yet.
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // WARMING BELONGS HERE, NOT IN initState.
+    //
+    // precacheImage reads MediaQuery off the context to decide what to
+    // rasterise for, and an inherited widget cannot be read while initState
+    // is still running. Doing it there threw on every single tap of a library
+    // card - the red screen with "dependOnInheritedWidgetOfExactType
+    // <MediaQuery>() was called before _PartScreenState.initState()
+    // completed", which is Flutter naming both the cause and this fix.
+    //
+    // didChangeDependencies runs immediately after initState and again
+    // whenever a dependency changes, so it is guarded: warming the same four
+    // frames on every theme or orientation change would be pointless work.
+    if (_warmed) return;
+    _warmed = true;
+
+    // The frames either side of the first one, so a drag does not stall on a
+    // render the server has not been asked for yet.
     for (final step in [2, 4, 5, 1]) {
       precacheImage(
         NetworkImage(widget.api
