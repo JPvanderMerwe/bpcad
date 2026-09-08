@@ -28,16 +28,20 @@ import 'composer_screen.dart';
 import 'glass.dart';
 import 'marks.dart';
 import 'result_screen.dart';
+import 'settings.dart';
 import 'theme.dart';
 import 'tokens.dart';
 
 void main() => runApp(const BpcadApp());
 
-/// Over a USB cable with `adb reverse tcp:8765 tcp:8765`, the phone's own
-/// localhost is the laptop. That is the testing path and it exposes nothing to
-/// the network. A hosted address is a decision not yet taken, so this is a
-/// constant in one place rather than an assumption spread through the app.
-const String kDefaultServer = 'http://localhost:8765';
+/// What a fresh install tries first. The real address is a SETTING now - see
+/// settings.dart - because a compile-time constant of localhost works over a
+/// USB cable and nowhere else, and bpcad runs on a computer the phone has to
+/// be told about.
+///
+/// Kept as an alias so the tests and any caller that just wants "the default"
+/// have one name for it rather than two.
+const String kDefaultServer = Settings.defaultServer;
 
 class BpcadApp extends StatelessWidget {
   const BpcadApp({super.key});
@@ -59,7 +63,15 @@ class Shell extends StatefulWidget {
 }
 
 class _ShellState extends State<Shell> {
-  final BpcadApi _api = BpcadApi(kDefaultServer);
+  /// THE CLIENT IS REBUILT WHEN THE ADDRESS CHANGES, not mutated.
+  ///
+  /// BpcadApi holds its base URL, and every screen below takes the instance
+  /// rather than looking one up - so pointing the phone at a different
+  /// computer means a new client and a fresh self-test, and the `key` on the
+  /// tab body is what makes the screens throw away what they read from the
+  /// old one.
+  Settings? _settings;
+  BpcadApi _api = BpcadApi(Settings.defaultServer);
 
   /// Boot runs once. Brief 6.6 allows exactly one boot moment and it must not
   /// repeat on a later screen - which means it cannot live in the tab stack.
@@ -68,9 +80,45 @@ class _ShellState extends State<Shell> {
   int _tab = 0;
 
   @override
+  void initState() {
+    super.initState();
+    _open();
+  }
+
+  Future<void> _open() async {
+    final settings = await Settings.open();
+    if (!mounted) return;
+    setState(() {
+      _settings = settings;
+      _api = BpcadApi(settings.server);
+    });
+  }
+
+  void _useServer(String address) {
+    setState(() {
+      _api = BpcadApi(address);
+      _health = null;
+    });
+    // Re-read the machine straight away, so the panel above the address field
+    // is describing the computer it now points at.
+    _api.health().then((health) {
+      if (mounted) setState(() => _health = health);
+    }).catchError((Object _) {});
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final settings = _settings;
+    // The settings read is a single file open and takes a frame or two. The
+    // boot screen cannot start until the address is known, or it would
+    // self-test against the default and then be told a different one.
+    if (settings == null) {
+      return const Scaffold(body: SizedBox.shrink());
+    }
+
     if (!_booted) {
       return BootScreen(
+        key: ValueKey(_api.baseUrl),
         api: _api,
         onStart: (health) => setState(() {
           _health = health;
@@ -81,14 +129,24 @@ class _ShellState extends State<Shell> {
 
     return Scaffold(
       body: _tab == 0
-          ? LibraryScreen(api: _api, health: _health)
-          : MachineScreen(api: _api, health: _health),
+          ? LibraryScreen(
+              key: ValueKey(_api.baseUrl), api: _api, health: _health)
+          : MachineScreen(
+              api: _api,
+              settings: settings,
+              health: _health,
+              onServerChanged: _useServer,
+            ),
       bottomNavigationBar: _TabBar(
         index: _tab,
         onTab: (index) => setState(() => _tab = index),
         onCompose: () async {
           await Navigator.of(context).push(MaterialPageRoute(
-            builder: (_) => ComposerScreen(api: _api, health: _health),
+            builder: (_) => ComposerScreen(
+              api: _api,
+              health: _health,
+              remembered: settings.material,
+            ),
           ));
           // A build that finished while the composer was open has to show up
           // without a pull-to-refresh: the library is the only place a part
@@ -432,29 +490,11 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       );
 
-  Widget _chip(_Filter filter) {
-    final on = _filter == filter;
-    return InkWell(
-      onTap: () => setState(() => _filter = filter),
-      borderRadius: BorderRadius.circular(BpRadius.control),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 30),
-        padding: const EdgeInsets.symmetric(horizontal: 11),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: on ? GlassTint.active.fill : Colors.transparent,
-          border: Border.all(
-              color: on ? BpCore.phosphor : BpcadColors.edge),
-          borderRadius: BorderRadius.circular(BpRadius.control),
-        ),
-        child: Text(filter.label,
-            style: TextStyle(
-                fontFamily: BpType.mono,
-                fontSize: BpType.label,
-                color: on ? BpCore.phosphor : BpcadColors.inkDim)),
-      ),
-    );
-  }
+  Widget _chip(_Filter filter) => BpChip(
+        label: filter.label,
+        selected: _filter == filter,
+        onTap: () => setState(() => _filter = filter),
+      );
 
   Widget _empty() => Padding(
         padding: const EdgeInsets.all(BpSpace.loose),
@@ -753,21 +793,102 @@ class _DashedBorder extends CustomPainter {
       oldDelegate.colour != colour;
 }
 
-/// The second tab. What the design calls Account, told honestly.
+/// The second tab: the machine, and the settings that change what it does.
 ///
-/// There is no account, no credit ledger and no billing, and the handoff lists
-/// store IAP rules as an open blocker that must not be built against. What
-/// this machine IS doing is a real thing worth a screen: which computer is
-/// answering, what it can do, how long a part takes on it, and the printer
-/// profile every part is checked against.
-class MachineScreen extends StatelessWidget {
-  const MachineScreen({super.key, required this.api, this.health});
+/// The design calls this Account and fills it with a credit balance, a usage
+/// bar and a plan. There is no account system, no credit ledger and no
+/// billing, and the handoff lists store IAP rules as an open blocker not to
+/// be built against - so a balance here would be a fabrication in the middle
+/// of a product whose whole promise is that every figure on screen was
+/// measured.
+///
+/// What belongs here instead is the machine: which computer is answering,
+/// what it can do, and the two settings that decide whether the app works at
+/// all and whether a moving part comes out moving.
+class MachineScreen extends StatefulWidget {
+  const MachineScreen({
+    super.key,
+    required this.api,
+    required this.settings,
+    required this.onServerChanged,
+    this.health,
+  });
 
   final BpcadApi api;
+  final Settings settings;
+
+  /// Handed the new address so the shell can rebuild its client and re-run
+  /// the self-test - the API object holds its base URL, so changing it means
+  /// making a new one.
+  final ValueChanged<String> onServerChanged;
   final Health? health;
 
   @override
+  State<MachineScreen> createState() => _MachineScreenState();
+}
+
+class _MachineScreenState extends State<MachineScreen> {
+  late final TextEditingController _server =
+      TextEditingController(text: widget.settings.server);
+  String? _testing;
+  bool _reachable = false;
+  bool _tested = false;
+
+  @override
+  void dispose() {
+    _server.dispose();
+    super.dispose();
+  }
+
+  /// Try the address BEFORE saving it.
+  ///
+  /// Saving first and letting the app fail against it means an unusable app
+  /// and a settings screen that says everything is fine. This asks the
+  /// address whether anything is there, says what came back, and only then
+  /// offers to keep it.
+  Future<void> _test() async {
+    final address = Settings.normalise(_server.text);
+    setState(() {
+      _testing = 'asking $address';
+      _tested = false;
+    });
+    try {
+      final health = await BpcadApi(address).health();
+      if (!mounted) return;
+      setState(() {
+        _reachable = true;
+        _tested = true;
+        _testing = health.printer.isEmpty
+            ? 'answered — no printer configured'
+            : 'answered — ${health.printer}, model ${health.tier}';
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _reachable = false;
+        _tested = true;
+        // The address is in the message. "Could not connect" with no address
+        // is the least useful sentence an app can print.
+        _testing = error is BpcadUnreachable
+            ? '${error.why} — at $address'
+            : 'nothing answered at $address';
+      });
+    }
+  }
+
+  Future<void> _save() async {
+    final address = Settings.normalise(_server.text);
+    await widget.settings.setServer(address);
+    _server.text = address;
+    widget.onServerChanged(address);
+    if (mounted) {
+      setState(() => _testing = 'using $address');
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final health = widget.health;
     return SafeArea(
       bottom: false,
       child: ListView(
@@ -780,79 +901,294 @@ class MachineScreen extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                   color: BpcadColors.ink)),
           const SizedBox(height: BpSpace.base),
-          GlassSurface(
-            depth: GlassDepth.card,
-            padding: const EdgeInsets.all(BpSpace.base),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _row('server', api.baseUrl),
-                _row('model',
-                    health == null
-                        ? 'not answering'
-                        : health!.modelAvailable
-                            ? health!.tier
-                            : 'none'),
-                if (health != null && health!.promptSeconds > 0)
-                  _row('a part takes',
-                      health!.promptSeconds > 90
-                          ? '~${(health!.promptSeconds / 60).round()} min'
-                          : '~${health!.promptSeconds} s'),
-                _row('printer', health?.printer ?? '—'),
-                if (health?.bedMm != null)
-                  _row('bed',
-                      '${health!.bedMm!.map((v) => v.toStringAsFixed(0)).join(' × ')} mm'),
-                if (health != null && health!.materials.isNotEmpty)
-                  _row('materials', health!.materials.join(', ')),
-              ],
-            ),
-          ),
-          if (health?.headline.isNotEmpty == true) ...[
-            const SizedBox(height: BpSpace.base),
-            GlassSurface(
-              tint: GlassTint.warn,
-              depth: GlassDepth.card,
-              padding: const EdgeInsets.all(BpSpace.base),
-              // THE SERVER'S OWN SENTENCE, not a paraphrase. It measured how
-              // long a part takes on that hardware and the phone did not.
-              child: Text(health!.headline,
-                  style: const TextStyle(
-                      fontFamily: BpType.prose,
-                      fontSize: BpType.label,
-                      height: 1.55,
-                      color: BpcadColors.inkDim)),
-            ),
-          ],
+          _serverPanel(),
           const SizedBox(height: BpSpace.base),
-          GlassSurface(
-            depth: GlassDepth.panel,
-            padding: const EdgeInsets.all(BpSpace.base),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: const [
-                Text('Accounts, credits and plans',
-                    style: TextStyle(
-                        fontFamily: BpType.mono,
-                        fontSize: BpType.label,
-                        color: BpcadColors.ink)),
-                SizedBox(height: BpSpace.tight),
-                Text(
-                    'Not built. bpcad runs on your own computer and every part '
-                    'you make is on its disk — there is nothing to meter yet, '
-                    'and a balance shown here would be a number nobody '
-                    'measured.',
-                    style: TextStyle(
-                        fontFamily: BpType.prose,
-                        fontSize: BpType.label,
-                        height: 1.55,
-                        color: BpcadColors.inkDim)),
-              ],
-            ),
-          ),
+          _statePanel(health),
+          const SizedBox(height: BpSpace.base),
+          _materialPanel(health),
+          const SizedBox(height: BpSpace.base),
+          _effectsPanel(),
+          const SizedBox(height: BpSpace.base),
+          _profilePanel(health),
+          const SizedBox(height: BpSpace.room),
         ],
       ),
     );
   }
+
+  /// THE ONE SETTING WITHOUT WHICH THE APP DOES NOTHING.
+  ///
+  /// It was a compile-time constant of localhost:8765, which works over a USB
+  /// cable with `adb reverse` and nowhere else on earth. bpcad runs on a
+  /// computer and the phone is a window onto it, so the address of that
+  /// computer is not a preference - it is the product's one piece of wiring.
+  Widget _serverPanel() => GlassSurface(
+        depth: GlassDepth.card,
+        padding: const EdgeInsets.all(BpSpace.base),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('the computer running bpcad',
+                style: TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: BpType.micro,
+                    color: BpcadColors.inkDim)),
+            const SizedBox(height: BpSpace.snug),
+            GlassSurface(
+              depth: GlassDepth.well,
+              blur: false,
+              padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
+              child: TextField(
+                controller: _server,
+                autocorrect: false,
+                keyboardType: TextInputType.url,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _test(),
+                style: const TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: BpType.body,
+                    color: BpcadColors.ink),
+                decoration: const InputDecoration(
+                  filled: false,
+                  isDense: true,
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  contentPadding:
+                      EdgeInsets.symmetric(vertical: BpSpace.base),
+                  hintText: '192.168.0.14:8765',
+                  hintStyle: TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.body,
+                      color: BpcadColors.inkFaint),
+                ),
+              ),
+            ),
+            const SizedBox(height: BpSpace.snug),
+            Row(children: [
+              Expanded(
+                child: SizedBox(
+                  height: BpMetric.tap,
+                  child: OutlinedButton(
+                    onPressed: _test,
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: BpcadColors.edge),
+                      shape: RoundedRectangleBorder(
+                          borderRadius:
+                              BorderRadius.circular(BpRadius.control)),
+                    ),
+                    child: const Text('Test',
+                        style: TextStyle(
+                            fontFamily: BpType.mono,
+                            fontSize: BpType.label,
+                            color: BpcadColors.ink)),
+                  ),
+                ),
+              ),
+              const SizedBox(width: BpSpace.snug),
+              Expanded(
+                child: SizedBox(
+                  height: BpMetric.tap,
+                  // ONLY AFTER IT ANSWERED. Saving an address that does not
+                  // work leaves an unusable app and a settings screen that
+                  // says everything is fine.
+                  child: FilledButton(
+                    onPressed: _tested && _reachable ? _save : null,
+                    child: const Text('Use this',
+                        style: TextStyle(
+                            fontFamily: BpType.mono, fontSize: BpType.label)),
+                  ),
+                ),
+              ),
+            ]),
+            if (_testing != null) ...[
+              const SizedBox(height: BpSpace.snug),
+              Text(_testing!,
+                  style: TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.micro,
+                      height: 1.5,
+                      color: !_tested
+                          ? BpcadColors.inkDim
+                          : _reachable
+                              ? BpPen.pass
+                              : BpPen.fail)),
+            ],
+            const SizedBox(height: BpSpace.snug),
+            const Text(
+                'Over a USB cable with `adb reverse tcp:8765 tcp:8765`, '
+                'localhost is the computer. On wifi, use its address and the '
+                'port `bpcad web` opened.',
+                style: TextStyle(
+                    fontFamily: BpType.prose,
+                    fontSize: BpType.micro,
+                    height: 1.55,
+                    color: BpcadColors.inkFaint)),
+          ],
+        ),
+      );
+
+  Widget _statePanel(Health? health) => GlassSurface(
+        depth: GlassDepth.card,
+        padding: const EdgeInsets.all(BpSpace.base),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _row('now using', widget.api.baseUrl),
+            _row('model',
+                health == null
+                    ? 'not answering'
+                    : health.modelAvailable ? health.tier : 'none'),
+            if (health != null && health.promptSeconds > 0)
+              _row('a part takes',
+                  health.promptSeconds > 90
+                      ? '~${(health.promptSeconds / 60).round()} min'
+                      : '~${health.promptSeconds} s'),
+            if (health != null && health.templates.isNotEmpty)
+              _row('templates', '${health.templates.length} known'),
+            if (health?.headline.isNotEmpty == true) ...[
+              const SizedBox(height: BpSpace.snug),
+              // THE SERVER'S OWN SENTENCE, not a paraphrase. It measured how
+              // long a part takes on that hardware and the phone did not.
+              Text(health!.headline,
+                  style: const TextStyle(
+                      fontFamily: BpType.prose,
+                      fontSize: BpType.micro,
+                      height: 1.55,
+                      color: BpCore.phosphor)),
+            ],
+          ],
+        ),
+      );
+
+  /// WHICH MATERIAL A NEW PART IS BUILT IN, and it is not a preference.
+  ///
+  /// The running clearance of a moving joint comes from the material, per
+  /// material, out of config. A hinge built in the wrong one binds or
+  /// rattles - so this is a real setting with a real consequence, and it is
+  /// remembered rather than asked on every part.
+  Widget _materialPanel(Health? health) {
+    final materials = health?.materials ?? const <String>[];
+    if (materials.isEmpty) return const SizedBox.shrink();
+    final chosen = widget.settings.material.isEmpty
+        ? materials.first
+        : widget.settings.material;
+
+    return GlassSurface(
+      depth: GlassDepth.card,
+      padding: const EdgeInsets.all(BpSpace.base),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('material for new parts',
+              style: TextStyle(
+                  fontFamily: BpType.mono,
+                  fontSize: BpType.micro,
+                  color: BpcadColors.inkDim)),
+          const SizedBox(height: BpSpace.snug),
+          Wrap(
+            spacing: 6,
+            children: [
+              for (final name in materials)
+                BpChip(
+                  label: name,
+                  selected: name == chosen,
+                  onTap: () async {
+                    await widget.settings.setMaterial(name);
+                    if (mounted) setState(() {});
+                  },
+                ),
+            ],
+          ),
+          const SizedBox(height: BpSpace.snug),
+          const Text(
+              'The joint clearance of a moving part comes from this, per '
+              'material. It is not a colour preference.',
+              style: TextStyle(
+                  fontFamily: BpType.prose,
+                  fontSize: BpType.micro,
+                  height: 1.55,
+                  color: BpcadColors.inkFaint)),
+        ],
+      ),
+    );
+  }
+
+  Widget _effectsPanel() => GlassSurface(
+        depth: GlassDepth.card,
+        padding: const EdgeInsets.all(BpSpace.base),
+        child: Row(children: [
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('glass and ambient light',
+                    style: TextStyle(
+                        fontFamily: BpType.mono,
+                        fontSize: BpType.label,
+                        color: BpcadColors.ink)),
+                SizedBox(height: 3),
+                Text('Off is cheaper on an older phone. The design says a '
+                    'low-end GPU should be able to refuse them.',
+                    style: TextStyle(
+                        fontFamily: BpType.prose,
+                        fontSize: BpType.micro,
+                        height: 1.5,
+                        color: BpcadColors.inkFaint)),
+              ],
+            ),
+          ),
+          const SizedBox(width: BpSpace.base),
+          // A SQUARE-CORNERED SWITCH, per the design's settings rows - 38 × 20
+          // with hard corners, because it is data chrome.
+          _Switch(
+            on: widget.settings.effects,
+            onChanged: (value) async {
+              await widget.settings.setEffects(value);
+              if (mounted) setState(() {});
+            },
+          ),
+        ]),
+      );
+
+  /// The printer profile, READ ONLY, and it says why.
+  Widget _profilePanel(Health? health) => GlassSurface(
+        depth: GlassDepth.panel,
+        padding: const EdgeInsets.all(BpSpace.base),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('printer profile',
+                style: TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: BpType.micro,
+                    color: BpcadColors.inkDim)),
+            const SizedBox(height: BpSpace.snug),
+            _row('printer', health?.printer ?? '—'),
+            if (health?.bedMm != null)
+              _row('bed',
+                  '${health!.bedMm!.map((v) => v.toStringAsFixed(0)).join(' × ')} mm'),
+            const SizedBox(height: BpSpace.snug),
+            // WHY IT IS NOT EDITABLE HERE. Not an omission: these values are
+            // the source every geometry decision is taken from, and config's
+            // own rule is that an unmeasured value is UNSET and reading one
+            // raises, because a wrong tolerance is worse than no tolerance. A
+            // phone that could type a clearance would be manufacturing a
+            // measurement, and the part built from it would be wrong with
+            // nothing on screen to say so.
+            const Text(
+                'Set in config/default.toml on the computer. It is not '
+                'editable here: the joint clearance in it is a measured '
+                'value, and a number typed on a phone would be a measurement '
+                'nobody took. The calibration print is what will write it.',
+                style: TextStyle(
+                    fontFamily: BpType.prose,
+                    fontSize: BpType.micro,
+                    height: 1.55,
+                    color: BpcadColors.inkFaint)),
+          ],
+        ),
+      );
 
   Widget _row(String key, String value) => Padding(
         padding: const EdgeInsets.only(bottom: BpSpace.snug),
@@ -860,7 +1196,7 @@ class MachineScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             SizedBox(
-              width: 96,
+              width: 104,
               child: Text(key,
                   style: const TextStyle(
                       fontFamily: BpType.mono,
@@ -876,6 +1212,38 @@ class MachineScreen extends StatelessWidget {
                       fontFeatures: [FontFeature.tabularFigures()])),
             ),
           ],
+        ),
+      );
+}
+
+/// 38 × 20, hard-cornered. The design's own switch: data chrome keeps the
+/// squared radii, and Material's pill would be the only rounded control on
+/// the screen.
+class _Switch extends StatelessWidget {
+  const _Switch({required this.on, required this.onChanged});
+
+  final bool on;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+        onTap: () => onChanged(!on),
+        child: Container(
+          width: 38,
+          height: 20,
+          padding: const EdgeInsets.all(2),
+          decoration: BoxDecoration(
+            border: Border.all(
+                color: on ? BpCore.phosphor : BpcadColors.edge),
+          ),
+          child: Align(
+            alignment: on ? Alignment.centerRight : Alignment.centerLeft,
+            child: Container(
+              width: 14,
+              height: 14,
+              color: on ? BpCore.phosphor : BpcadColors.inkFaint,
+            ),
+          ),
         ),
       );
 }

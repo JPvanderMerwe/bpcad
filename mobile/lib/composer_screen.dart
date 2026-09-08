@@ -41,11 +41,17 @@ class ComposerScreen extends StatefulWidget {
     super.key,
     required this.api,
     required this.health,
+    this.remembered,
     this.seed = '',
   });
 
   final BpcadApi api;
   final Health? health;
+
+  /// The material the user last chose, from Settings. Empty means "whatever
+  /// the server lists first" - the phone should not have an opinion about a
+  /// material the computer may not be configured for.
+  final String? remembered;
 
   /// A starting sentence, for the library's "fit a part to something on your
   /// bench" invitation.
@@ -55,11 +61,34 @@ class ComposerScreen extends StatefulWidget {
   State<ComposerScreen> createState() => _ComposerScreenState();
 }
 
+/// Starting points, and every one is a part bpcad can actually make.
+///
+/// A BLANK BOX IS THE HARDEST THING TO ANSWER. The whole product turns on
+/// somebody typing a sentence, and "describe a part" with nothing else on
+/// screen is the point most people put the phone down - they do not know how
+/// much to say, or whether millimetres are expected, or whether it will
+/// understand "M4".
+///
+/// So these are worked examples rather than categories: each one shows the
+/// shape of a sentence that works, with its units and its fasteners in it.
+/// Tapping fills the box and leaves the cursor there, because the useful move
+/// is nearly always to edit one number.
+const List<(String, String)> kSeeds = [
+  ('Rod bracket', 'Bracket to hold an 8 mm rod to a wall'),
+  ('Drilled plate',
+      'A flat plate 80 by 40 by 6 mm with two 5 mm holes 60 mm apart'),
+  ('Enclosure', 'An enclosure 100 by 60 by 30 mm with 2.5 mm walls'),
+  ('Hinge', 'A hinge 40 mm wide that prints in place and actually turns'),
+  ('Vent', 'A louvre vent 76 mm wide with four blades'),
+  ('Wall hook', 'A wall hook 80 mm tall screwed through two 5 mm holes'),
+];
+
 class _ComposerScreenState extends State<ComposerScreen> {
   late final TextEditingController _prompt =
       TextEditingController(text: widget.seed);
   String? _photoPath;
   String? _problem;
+  String? _chosenMaterial;
 
   @override
   void dispose() {
@@ -71,10 +100,15 @@ class _ComposerScreenState extends State<ComposerScreen> {
   /// A phone hardcoding "petg" would build in petg on a machine configured
   /// for something else, and the clearance that comes out would be wrong by a
   /// tenth of a millimetre with nothing on screen to say so.
-  String get _material =>
-      (widget.health?.materials.isNotEmpty ?? false)
-          ? widget.health!.materials.first
-          : 'petg';
+  String get _material {
+    if (_chosenMaterial != null) return _chosenMaterial!;
+    if (widget.remembered != null && widget.remembered!.isNotEmpty) {
+      return widget.remembered!;
+    }
+    return (widget.health?.materials.isNotEmpty ?? false)
+        ? widget.health!.materials.first
+        : 'petg';
+  }
 
   Future<void> _go() async {
     final request = _prompt.text.trim();
@@ -125,6 +159,10 @@ class _ComposerScreenState extends State<ComposerScreen> {
           padding: const EdgeInsets.all(BpSpace.base),
           children: [
             _promptBox(),
+            const SizedBox(height: BpSpace.base),
+            _seeds(),
+            const SizedBox(height: BpSpace.base),
+            _materialRow(),
             const SizedBox(height: BpSpace.base),
             _pipeline(),
             if (_problem != null) ...[
@@ -257,6 +295,72 @@ class _ComposerScreenState extends State<ComposerScreen> {
           ),
         ),
       );
+
+  Widget _seeds() => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('or start from one of these',
+              style: TextStyle(
+                  fontFamily: BpType.mono,
+                  fontSize: BpType.micro,
+                  color: BpcadColors.inkDim)),
+          const SizedBox(height: BpSpace.snug),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final (label, sentence) in kSeeds)
+                BpChip(
+                  label: label,
+                  onTap: () {
+                    _prompt.text = sentence;
+                    // The cursor goes to the END, because the useful next move
+                    // is nearly always to change one number - not to retype
+                    // the sentence from the front.
+                    _prompt.selection =
+                        TextSelection.collapsed(offset: sentence.length);
+                    setState(() {});
+                  },
+                ),
+            ],
+          ),
+        ],
+      );
+
+  /// WHICH MATERIAL, because it decides the clearance.
+  ///
+  /// This was hardcoded to whatever the server listed first. Material is not
+  /// a preference here: the running clearance of a moving joint comes from
+  /// it, so a hinge built in the wrong one binds or rattles - and the number
+  /// is per material in config. Offering the choice is the difference between
+  /// a part that turns and a part that does not.
+  Widget _materialRow() {
+    final materials = widget.health?.materials ?? const <String>[];
+    if (materials.length < 2) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('material',
+            style: TextStyle(
+                fontFamily: BpType.mono,
+                fontSize: BpType.micro,
+                color: BpcadColors.inkDim)),
+        const SizedBox(height: BpSpace.snug),
+        Wrap(
+          spacing: 6,
+          children: [
+            for (final name in materials)
+              BpChip(
+                label: name,
+                selected: name == _material,
+                onTap: () => setState(() => _chosenMaterial = name),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
 
   /// THE PIPELINE BANNER. A trust surface: it says what the request is about
   /// to be spent on. It states the road every request on this build takes -

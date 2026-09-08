@@ -12,8 +12,16 @@ import 'package:bpcad_app/tokens.dart';
 import 'package:flutter/material.dart';
 import 'package:bpcad_app/result_screen.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
+  // The shell reads its settings before it shows anything, because the boot
+  // self-test cannot start until it knows which computer to ask. Under
+  // `flutter test` there is no platform channel behind SharedPreferences, so
+  // the read never completes and the app sits on a blank frame - which is a
+  // fact about the harness, not about the app.
+  setUp(() => SharedPreferences.setMockInitialValues({}));
+
   testWidgets('the boot self-test names the address it could not reach',
       (WidgetTester tester) async {
     // THE SELF-TEST IS NOT A SCRIPT, and this is the test that keeps it that
@@ -26,6 +34,8 @@ void main() {
     // answered, and it NAMES THE ADDRESS. The fix is nearly always the cable
     // or the port and the user cannot guess which.
     await tester.pumpWidget(const BpcadApp());
+    // One pump for the settings read, then the health call.
+    await tester.pump();
     await tester.pump(const Duration(seconds: 1));
     // Not pumpAndSettle: the boot sweep loops for ever by design, and
     // settling waits for animations to stop.
@@ -46,6 +56,7 @@ void main() {
     // must not be the pass pen when nothing answered - a green "ok" beside a
     // dead server is the exact lie this screen exists to avoid.
     await tester.pumpWidget(const BpcadApp());
+    await tester.pump();
     await tester.pump(const Duration(seconds: 1));
     await tester.pump(const Duration(seconds: 2));
 

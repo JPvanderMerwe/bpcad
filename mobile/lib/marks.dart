@@ -378,3 +378,68 @@ class _SkeletonState extends State<Skeleton>
     );
   }
 }
+
+
+/// A chip: bordered, hard-cornered, amber when selected.
+///
+/// `BpChip`, not `Chip`: Material exports a `Chip` of its own, and a name that
+/// collides with one in `flutter/material.dart` is ambiguous at every call
+/// site that imports both - which is every screen.
+///
+/// ONE WIDGET, BECAUSE THE SAME MISTAKE WAS MADE THREE TIMES.
+///
+/// A Container with a non-null `alignment` sizes itself as large as its
+/// constraints allow. Inside a Row in a horizontal scroll view the width is
+/// unbounded, so it hugs its child and looks right - which is why the library
+/// filter chips were fine. Inside a `Wrap` the width is bounded by the
+/// parent, so every chip became a full-width row: the viewport pills stacked
+/// down the middle of the part, and then the composer's starting points and
+/// material chips did it again in the next commit.
+///
+/// This has no `alignment` and no `constraints`. It is padding and a border,
+/// so it is the width of its label wherever it is put, and the tap target
+/// clears the brief's 44 × 32 floor on the padding alone.
+class BpChip extends StatelessWidget {
+  const BpChip({
+    super.key,
+    required this.label,
+    required this.onTap,
+    this.selected = false,
+    this.tone,
+  });
+
+  final String label;
+  final VoidCallback onTap;
+  final bool selected;
+
+  /// Overrides the selected colour, for a chip that means something other
+  /// than "chosen" - a reference body's cyan, say.
+  final Color? tone;
+
+  @override
+  Widget build(BuildContext context) {
+    final accent = tone ?? BpCore.phosphor;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(BpRadius.control),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: selected
+              ? accent.withValues(alpha: 0.18)
+              : Colors.transparent,
+          border: Border.all(color: selected ? accent : BpcadColors.edge),
+          borderRadius: BorderRadius.circular(BpRadius.control),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
+          child: Text(label,
+              style: TextStyle(
+                  fontFamily: BpType.mono,
+                  fontSize: BpType.label,
+                  height: 1.15,
+                  color: selected ? accent : BpcadColors.inkDim)),
+        ),
+      ),
+    );
+  }
+}
