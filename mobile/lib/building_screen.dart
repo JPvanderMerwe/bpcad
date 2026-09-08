@@ -193,17 +193,19 @@ class _BuildingScreenState extends State<BuildingScreen> {
                       letterSpacing: .06,
                       color: BpCore.phosphor)),
               const SizedBox(height: BpSpace.tight),
+              // MONO, not prose. The design sets this line in the mono face
+              // like every other label in the product - it is the request as
+              // the machine read it, which is data, and prose here made it
+              // read as a heading somebody wrote.
               Text(widget.request,
                   maxLines: 3,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(
-                      fontFamily: BpType.prose,
+                      fontFamily: BpType.mono,
                       fontSize: BpType.figure,
                       height: 1.35,
                       color: BpcadColors.ink)),
-              const Spacer(),
-              if (_problem == null) _waiting() else _failed(),
-              const Spacer(),
+              if (_problem == null) _waiting() else Expanded(child: _failed()),
               _stages(),
               const SizedBox(height: BpSpace.loose),
               _progress(),
@@ -216,22 +218,39 @@ class _BuildingScreenState extends State<BuildingScreen> {
     );
   }
 
-  Widget _waiting() => Center(
-        child: Column(
+  /// The design draws the part's own outline here with an amber bar scanning
+  /// down it. The part does not exist yet, so there is no outline to draw -
+  /// and drawing some other part's silhouette while yours is being built
+  /// would be decoration standing in for information.
+  ///
+  /// What is honest and carries the same motion: the graticule, with the
+  /// design's own 2.6s amber scan sweeping across it. The plate is real - it
+  /// is the plate the part will land on - and the bar says the machine is
+  /// working without claiming to show you anything it has made.
+  Widget _waiting() => Expanded(
+        child: Stack(
           children: [
-            const _Caliper(),
-            const SizedBox(height: BpSpace.wide),
-            Text(
-                widget.expectedSeconds > 90
-                    ? 'about ${(widget.expectedSeconds / 60).round()} minutes '
-                        'on that machine'
-                    : widget.expectedSeconds > 0
-                        ? 'about ${widget.expectedSeconds} seconds'
-                        : '',
-                style: const TextStyle(
-                    fontFamily: BpType.mono,
-                    fontSize: BpType.label,
-                    color: BpcadColors.inkDim)),
+            const Positioned.fill(child: _ScanPlate()),
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const _Caliper(),
+                  const SizedBox(height: BpSpace.wide),
+                  Text(
+                      widget.expectedSeconds > 90
+                          ? 'about ${(widget.expectedSeconds / 60).round()}'
+                              ' minutes on that machine'
+                          : widget.expectedSeconds > 0
+                              ? 'about ${widget.expectedSeconds} seconds'
+                              : '',
+                      style: const TextStyle(
+                          fontFamily: BpType.mono,
+                          fontSize: BpType.label,
+                          color: BpcadColors.inkDim)),
+                ],
+              ),
+            ),
           ],
         ),
       );
@@ -325,11 +344,19 @@ class _BuildingScreenState extends State<BuildingScreen> {
                   height: 1.55,
                   color: BpcadColors.inkFaint)),
           const SizedBox(height: BpSpace.snug),
+          // A BORDERED GHOST, which is what the design draws. A bare text
+          // button on a dark screen does not read as a control, and this one
+          // is the only way off the screen.
           SizedBox(
             width: double.infinity,
-            height: 40,
-            child: TextButton(
+            height: BpMetric.tap,
+            child: OutlinedButton(
               onPressed: () => Navigator.of(context).maybePop(),
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: BpcadColors.edge),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(BpRadius.control)),
+              ),
               child: Text(_problem != null ? 'Back' : 'Leave it running',
                   style: const TextStyle(
                       fontFamily: BpType.mono,
@@ -494,4 +521,87 @@ class _CaliperBars extends StatelessWidget {
           ],
         ),
       );
+}
+
+
+/// The graticule with an amber bar scanning across it.
+///
+/// The design's building screen has a 2px amber gradient bar travelling over
+/// 2.6 seconds. Here it travels over the build plate rather than over a
+/// drawing of the part, for the reason given at `_waiting`.
+class _ScanPlate extends StatefulWidget {
+  const _ScanPlate();
+
+  @override
+  State<_ScanPlate> createState() => _ScanPlateState();
+}
+
+class _ScanPlateState extends State<_ScanPlate>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller = AnimationController(
+    duration: const Duration(milliseconds: 2600),
+    vsync: this,
+  )..repeat();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final plate = CustomPaint(
+      size: Size.infinite,
+      painter: _PlatePainter(),
+    );
+    if (MediaQuery.of(context).disableAnimations) return plate;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        plate,
+        AnimatedBuilder(
+          animation: _controller,
+          builder: (context, _) => Align(
+            // Linear, per the design: a scan is a constant sweep, and easing
+            // it would read as something being dragged.
+            alignment: Alignment(0, _controller.value * 2 - 1),
+            child: Container(
+              height: 2,
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: [
+                  BpCore.phosphor.withValues(alpha: 0),
+                  BpCore.phosphor.withValues(alpha: 0.45),
+                  BpCore.phosphor.withValues(alpha: 0),
+                ]),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _PlatePainter extends CustomPainter {
+  /// 26px, the design's pitch on the app ground - the same as the boot
+  /// screen's, because it is the same plate.
+  static const double pitch = 26;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final line = Paint()
+      ..color = BpCore.grid
+      ..strokeWidth = 1;
+    for (double x = 0; x < size.width; x += pitch) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), line);
+    }
+    for (double y = 0; y < size.height; y += pitch) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
+    }
+  }
+
+  @override
+  bool shouldRepaint(_PlatePainter oldDelegate) => false;
 }

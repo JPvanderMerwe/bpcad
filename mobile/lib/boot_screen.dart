@@ -24,7 +24,6 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'glass.dart';
-import 'marks.dart';
 import 'theme.dart';
 import 'tokens.dart';
 
@@ -106,17 +105,23 @@ class _BootScreenState extends State<BootScreen>
           SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(BpSpace.loose),
+              // THE BLOCK SITS HIGH, NOT CENTRED, and the design is clear
+              // about it: mark, wordmark, self-test and Start are one column
+              // in the upper third with the rest of the screen left empty.
+              // Centring the lot and pushing Start to the bottom - which is
+              // what this did - reads as a splash screen rather than an
+              // instrument reporting its state.
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Spacer(),
+                  const Spacer(flex: 3),
                   _wordmark(),
-                  const SizedBox(height: BpSpace.room),
+                  const SizedBox(height: BpSpace.base),
                   _selfTest(),
-                  const Spacer(),
+                  const SizedBox(height: BpSpace.loose),
                   if (_problem != null) _unreachable(),
                   _start(),
-                  const SizedBox(height: BpSpace.base),
+                  const Spacer(flex: 7),
                   Text('bit primitive — bpcad',
                       style: TextStyle(
                           fontFamily: BpType.mono,
@@ -131,24 +136,21 @@ class _BootScreenState extends State<BootScreen>
     );
   }
 
-  Widget _wordmark() => Row(
+  /// The mark ABOVE the wordmark, and both left-aligned.
+  ///
+  /// The design stacks them: a 44px mark, then `bpcad` beneath it at title
+  /// size. Side by side at 72px with the wordmark at display 27 - which is
+  /// what this was - is a logo lockup, and the design does not have one.
+  Widget _wordmark() => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // THE REAL MARK, at the design's 72px with a 14 radius.
-          //
-          // This was an amber gradient square, which meant the one screen
-          // whose job is to say "this is bpcad" showed something that appears
-          // nowhere else in the product - least of all on the launcher icon
-          // the user had just tapped to get here.
-          ClipRRect(
-            borderRadius: BorderRadius.circular(14),
-            child: Image.asset('assets/app-icon.png',
-                width: 72, height: 72, filterQuality: FilterQuality.medium),
-          ),
-          const SizedBox(width: BpSpace.wide),
+          Image.asset('assets/app-icon.png',
+              width: 44, height: 44, filterQuality: FilterQuality.medium),
+          const SizedBox(height: BpSpace.base),
           Text('bpcad',
               style: TextStyle(
                   fontFamily: BpType.mono,
-                  fontSize: BpType.display,
+                  fontSize: BpType.title,
                   fontWeight: FontWeight.w600,
                   color: BpCore.screen)),
         ],
@@ -159,13 +161,10 @@ class _BootScreenState extends State<BootScreen>
   /// that came from configuration rather than from a test.
   Widget _selfTest() {
     if (!_done) {
-      return Row(children: [
-        const Caliper(height: 12),
-        const SizedBox(width: BpSpace.base),
-        Expanded(
-          child: _line('link', 'checking…', BpcadColors.inkDim, pulsing: true),
-        ),
-      ]);
+      // The pulsing line IS the indicator - the design's own 1.4s opacity
+      // pulse on the line that is still resolving. A caliper beside it would
+      // be two marks for one wait.
+      return _line('link', 'checking…', BpcadColors.inkDim, pulsing: true);
     }
     final health = _health;
     if (health == null) {
@@ -194,37 +193,56 @@ class _BootScreenState extends State<BootScreen>
     );
   }
 
+  /// One self-test line: `self-test ..... ok`.
+  ///
+  /// THE DOT LEADER PADS TO A FIXED COLUMN, IT DOES NOT FILL THE SCREEN.
+  ///
+  /// The first build stretched the dots across the whole width and
+  /// right-aligned the value to the far edge. That is a table of contents.
+  /// The design pads each label to about a quarter of the width and puts the
+  /// values in a LEFT-ALIGNED COLUMN just after it - which is how a machine
+  /// prints a self-test, and it keeps the whole block compact enough to read
+  /// as one thing.
+  static const double _labelColumn = 104;
+
   Widget _line(String key, String value, Color tone, {bool pulsing = false}) {
     final row = Padding(
-      padding: const EdgeInsets.only(bottom: BpSpace.snug),
+      padding: const EdgeInsets.only(bottom: 5),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.baseline,
         textBaseline: TextBaseline.alphabetic,
         children: [
-          Text(key,
-              style: TextStyle(
-                  fontFamily: BpType.mono,
-                  fontSize: BpType.label,
-                  color: BpcadColors.inkDim)),
-          // The dot leader. Drawn rather than typed, so it fills whatever
-          // width the phone has instead of being a guessed number of dots.
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: BpSpace.snug),
-              child: Text('.' * 200,
-                  maxLines: 1,
-                  overflow: TextOverflow.clip,
-                  style: TextStyle(
-                      fontFamily: BpType.mono,
-                      fontSize: BpType.label,
-                      height: 1,
-                      color: BpPen.dim)),
+          SizedBox(
+            width: _labelColumn,
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.baseline,
+              textBaseline: TextBaseline.alphabetic,
+              children: [
+                Text(key,
+                    style: const TextStyle(
+                        fontFamily: BpType.mono,
+                        fontSize: BpType.micro,
+                        color: BpcadColors.inkDim)),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: Text('.' * 60,
+                        maxLines: 1,
+                        overflow: TextOverflow.clip,
+                        style: const TextStyle(
+                            fontFamily: BpType.mono,
+                            fontSize: BpType.micro,
+                            height: 1,
+                            color: BpPen.dim)),
+                  ),
+                ),
+              ],
             ),
           ),
           Text(value,
               style: TextStyle(
                   fontFamily: BpType.mono,
-                  fontSize: BpType.label,
+                  fontSize: BpType.micro,
                   color: tone,
                   fontFeatures: const [FontFeature.tabularFigures()])),
         ],
@@ -275,7 +293,7 @@ class _BootScreenState extends State<BootScreen>
 
   Widget _start() => SizedBox(
         width: double.infinity,
-        height: 48,
+        height: 48,   // the design's own height for a primary action
         child: FilledButton(
           // Enabled either way: a bpcad with no server still opens what is
           // already on the phone, and a dead button would say otherwise.

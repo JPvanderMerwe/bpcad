@@ -305,11 +305,20 @@ class _LibraryScreenState extends State<LibraryScreen> {
             SliverPadding(
               padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
               sliver: SliverGrid(
+                // WIDER THAN TALL, which is what the design's numbers give.
+                //
+                // The thumbnail band is 104px on a card about 177px across at
+                // 390px of screen - so with the kind label, the name and the
+                // size line beneath, a card is roughly 1.15 wide for 1 tall.
+                // At 0.78 - taller than wide, which is what this was - the
+                // grid showed two rows where the design shows nearly three,
+                // and every thumbnail was a tall band of empty plate above
+                // and below the part.
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
                   mainAxisSpacing: BpSpace.base,
                   crossAxisSpacing: BpSpace.base,
-                  childAspectRatio: 0.78,
+                  childAspectRatio: 1.15,
                 ),
                 delegate: SliverChildBuilderDelegate(
                   (context, index) => _Card(
@@ -344,14 +353,31 @@ class _LibraryScreenState extends State<LibraryScreen> {
                       fontWeight: FontWeight.w600,
                       color: BpcadColors.ink)),
               const Spacer(),
-              // Where the design puts a credits pill. The honest equivalent
-              // is the count, which is a fact.
-              Text('${_parts.length}',
-                  style: const TextStyle(
-                      fontFamily: BpType.mono,
-                      fontSize: BpType.label,
-                      color: BpcadColors.inkDim,
-                      fontFeatures: [FontFeature.tabularFigures()])),
+              // THE DESIGN'S PILL, carrying a fact rather than a balance.
+              //
+              // The design puts a credits pill here - an amber square and a
+              // tabular count. There is no credit ledger, so the count is
+              // how many parts you have, which is true and is the number a
+              // maker actually wants at the top of their library. The pill's
+              // shape, square and tabular figure are the design's.
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: BpSpace.snug, vertical: 4),
+                decoration: BoxDecoration(
+                  border: Border.all(color: BpcadColors.edge),
+                  borderRadius: BorderRadius.circular(BpRadius.control),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Container(width: 7, height: 7, color: BpCore.phosphor),
+                  const SizedBox(width: 6),
+                  Text('${_parts.length}',
+                      style: const TextStyle(
+                          fontFamily: BpType.mono,
+                          fontSize: BpType.label,
+                          color: BpcadColors.ink,
+                          fontFeatures: [FontFeature.tabularFigures()])),
+                ]),
+              ),
             ]),
             const SizedBox(height: BpSpace.base),
             GlassSurface(
@@ -636,20 +662,36 @@ class _Card extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(height: 5),
-            Text(part.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                    fontFamily: BpType.mono,
-                    fontSize: BpType.label,
-                    color: BpcadColors.ink)),
-            Text(part.envelope,
-                style: const TextStyle(
-                    fontFamily: BpType.mono,
-                    fontSize: 9.5,
-                    color: BpPen.ref,
-                    fontFeatures: [FontFeature.tabularFigures()])),
+            const SizedBox(height: 6),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 2),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(part.name,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontFamily: BpType.mono,
+                          fontSize: BpType.label,
+                          height: 1.2,
+                          color: BpcadColors.ink)),
+                  // The design's second line is `v4 · 32 mm · moving` - a
+                  // version, the headline dimension and what it does. There is
+                  // no stored version number, so it is the measured envelope,
+                  // which is the fact a maker reads a library for.
+                  Text(part.envelope,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontFamily: BpType.mono,
+                          fontSize: 9.5,
+                          height: 1.4,
+                          color: BpPen.ref,
+                          fontFeatures: [FontFeature.tabularFigures()])),
+                ],
+              ),
+            ),
           ],
         ),
       ),

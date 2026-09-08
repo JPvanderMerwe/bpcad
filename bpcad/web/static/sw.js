@@ -27,7 +27,8 @@
 //
 // v1 -> v2: the 3D viewer page and its vendored renderer.
 // v2 -> v3: the generated design tokens, which app.css now imports.
-const SHELL = 'bpcad-shell-v3';
+// v3 -> v4: the brand mark, now a real icon rather than a CSS gradient.
+const SHELL = 'bpcad-shell-v4';
 
 const SHELL_FILES = [
   '/',
@@ -46,6 +47,10 @@ const SHELL_FILES = [
   '/static/fonts/jetbrainsmono-latin.woff2',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',
+  // The brand mark in the left column. Shell, because a header whose icon
+  // fails to load offline shows a broken-image box where the product's name
+  // is - and app.css now points at this rather than drawing a gradient.
+  '/static/icons/icon-48.png',
   // The 3D viewer is SHELL for the same reason the fonts are. A viewer that
   // needs a CDN is a viewer that fails in a workshop with no signal, which is
   // why the renderer is vendored rather than linked - and a vendored file that

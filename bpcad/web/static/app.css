@@ -345,11 +345,15 @@ html, body {
 }
 .brandbar .name { font: var(--bp-weight-bold) var(--bp-text-figure)/1 var(--bp-mono);
                   letter-spacing: -.01em; }
+/* THE REAL MARK, not a gradient standing in for one.
+   This was a two-stop amber gradient, so the web app's own brand mark was
+   something that appears nowhere else in the product - not on the favicon,
+   not on the phone's launcher, not on the boot screen. It is the same PNG
+   the manifest and the apple-touch-icon already point at, which is the whole
+   reason bpcad_media generates one master and forty-six sizes from it. */
 .brandbar .mark {
-  width: 22px; height: 22px; flex: none;
-  border-radius: var(--bp-radius-edge);
-  background: linear-gradient(140deg, var(--bp-act),
-              color-mix(in srgb, var(--bp-act) 45%, var(--bp-case)));
+  width: 24px; height: 24px; flex: none;
+  background: url("/static/icons/icon-48.png") center / contain no-repeat;
 }
 
 /* ── the prompt ──────────────────────────────────────────────────────────
