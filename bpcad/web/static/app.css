@@ -786,6 +786,17 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
                 color: var(--bp-ink-faint); box-shadow: none; cursor: default; }
 .btn.quiet { background: transparent; }
 
+/* ── a draft ─────────────────────────────────────────────────────────────
+ * The request in the reading face, the engine's diagnosis in the mono one,
+ * and the figures below. The panel is warn-tinted because a run gave up -
+ * nothing broke, and the two must not look the same.
+ */
+.draftAsked { margin: 0 0 var(--bp-space-base); color: var(--bp-ink);
+              font: var(--bp-weight-regular) var(--bp-text-reading)/1.35 var(--bp-mono); }
+#draftWhy { margin: 0 0 var(--bp-space-base); }
+#draftHandoff { margin: var(--bp-space-base) 0; }
+#draftRetry { margin-top: var(--bp-space-snug); }
+
 /* ── the library ─────────────────────────────────────────────────────────
  * Two columns of glass cards. The thumbnail band sits on `case` with its own
  * finer graticule, so a render with a transparent background has the build

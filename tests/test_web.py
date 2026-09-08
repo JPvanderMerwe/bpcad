@@ -220,6 +220,54 @@ def test_a_stored_part_serves_the_verdict_it_was_given(base_url):
         assert line["status"] in ("pass", "warn", "fail", "info")
 
 
+def test_a_draft_carries_why_it_did_not_build(base_url):
+    """
+    A DRAFT WAS A DEAD END, AND IT WAS THE WORST ONE IN THE APP.
+
+    The library lists drafts, correctly - a run that gave up is still
+    something you started. But opening one asked for a turntable frame of a
+    part with no mesh, got a 404, and showed a screen with no size, no
+    checks and no exports: the screen you land on after a failure said
+    nothing about the failure.
+
+    Everything was already in run.json. What this pins is that it comes out:
+    the request as typed, what was spent on it, and the engine's own
+    diagnosis - which for a failed cut carries the measured spans and the
+    numbers to change, and is worthless the moment anybody paraphrases it.
+    """
+    parts = get_json(base_url + "/api/parts")["parts"]
+    drafts = [p for p in parts if p.get("built") is False]
+    if not drafts:
+        pytest.skip("nothing in the library has failed to build")
+
+    data = get_json("%s/api/part/%s" % (base_url, drafts[0]["name"]))
+    draft = data.get("draft")
+    assert draft is not None, "a draft came back with nothing about the run"
+
+    # THE SENTENCE COMES BACK. Without it the retry starts from a blank box,
+    # which is the worst possible way to recover from a four-minute failure.
+    assert draft["request"], "the draft lost what was asked for"
+    assert draft["attempts"] >= 1
+    assert draft["elapsed_s"] > 0
+    # The engine's own words, or an explicit absence of them - never a
+    # paraphrase invented here.
+    assert "message" in draft
+    assert "spec_draft" in draft
+
+
+def test_a_part_that_built_carries_no_draft(base_url):
+    """
+    The counterpart. `draft` present means "there is no mesh and here is
+    why"; showing it beside a built part would put a failure notice on a
+    part that succeeded.
+    """
+    name = _first_built(base_url)["name"]
+    data = get_json("%s/api/part/%s" % (base_url, name))
+    if data.get("has_stl") is False:
+        pytest.skip("%s has no mesh on disk" % name)
+    assert data.get("draft") is None
+
+
 def test_a_re_check_runs_for_real_and_says_it_is_current(base_url):
     """
     Re-checking is not a rebuild. No model is called and no geometry is

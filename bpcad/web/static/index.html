@@ -200,6 +200,19 @@
       <p class="micro" id="paramNote" hidden></p>
     </section>
 
+    <!-- WHY IT DID NOT BUILD. A draft was a dead end here too: the viewport
+         asked for a turntable frame of a part with no mesh, got a 404, and
+         every panel below it came up empty. Everything in this one was
+         already on disk in run.json. -->
+    <section class="panel glass glass--warn" id="draftPanel" hidden>
+      <h2 class="label">this one did not build</h2>
+      <p class="draftAsked" id="draftAsked"></p>
+      <pre class="doc" id="draftWhy"></pre>
+      <div class="kv" id="draftCost"></div>
+      <p class="micro" id="draftHandoff"></p>
+      <button class="btn commit" id="draftRetry" type="button">Try again, with the words to hand</button>
+    </section>
+
     <section class="panel glass glass--panel" id="reportPanel" hidden>
       <h2 class="label">dimension report</h2>
       <div class="kv" id="dimReport"></div>

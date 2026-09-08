@@ -539,6 +539,7 @@ class PartDetail {
     required this.hasStl,
     required this.frames,
     required this.checks,
+    required this.draft,
   });
 
   final String name;
@@ -568,6 +569,14 @@ class PartDetail {
   /// every part built through the pipeline was verified at build time and the
   /// whole report is on disk, which is what this field carries.
   final Checks? checks;
+
+  /// WHY IT DID NOT BUILD, for the ones that did not.
+  ///
+  /// Non-null means there is no mesh and never was: the run gave up. Opening
+  /// one of these used to land on the result screen, which asked for a
+  /// turntable frame of a part with no geometry, got a 404, and showed
+  /// nothing about what had happened. Everything in here was already on disk.
+  final Draft? draft;
 
   bool get parametric => template != null && params.isNotEmpty;
 
@@ -603,6 +612,9 @@ class PartDetail {
       frames: (json['frames'] ?? 24) as int,
       checks: json['checks'] is Map<String, dynamic>
           ? Checks.fromJson(json['checks'] as Map<String, dynamic>)
+          : null,
+      draft: json['draft'] is Map<String, dynamic>
+          ? Draft.fromJson(json['draft'] as Map<String, dynamic>)
           : null,
     );
   }
@@ -915,5 +927,67 @@ class CheckLine {
         name: (json['name'] ?? '').toString(),
         value: (json['value'] ?? '').toString(),
         status: (json['status'] ?? 'info').toString(),
+      );
+}
+
+/// A run that gave up, and everything it recorded on the way.
+///
+/// A DRAFT IS NOT AN EMPTY PART. It is a request, a number of attempts across
+/// named models, a measurable amount of time spent, and a diagnosis - which
+/// for a failed cut is not "invalid spec" but "disc in cut mode removed
+/// nothing; it sits at (0.0, 0.0, -8.0) and the part spans z -8.0..-3.0; set
+/// z_mm to -10.00 and height_mm to 9.00". All of that was on disk in run.json
+/// and none of it reached either client.
+class Draft {
+  Draft({
+    required this.request,
+    required this.attempts,
+    required this.elapsedSeconds,
+    required this.machine,
+    required this.models,
+    required this.levelReached,
+    required this.message,
+    required this.handoff,
+    required this.specDraft,
+  });
+
+  /// What was asked for, as it was typed. This is what "try again" starts
+  /// from - retyping a sentence you already wrote is the worst possible way
+  /// to recover from a failure.
+  final String request;
+  final int attempts;
+  final double elapsedSeconds;
+  final String machine;
+
+  /// The models tried, in the order they were tried: the primary, then the
+  /// smaller fallback. That order is part of the story.
+  final List<String> models;
+  final int? levelReached;
+
+  /// The engine's diagnosis of the last attempt. Its own words, always -
+  /// paraphrasing this loses the measured numbers, which are the only part of
+  /// it anybody can act on.
+  final String message;
+
+  /// Where the marked-up spec sits on the computer, for fixing by hand.
+  final String handoff;
+  final String specDraft;
+
+  String get spent => elapsedSeconds >= 90
+      ? '${(elapsedSeconds / 60).round()} min'
+      : '${elapsedSeconds.round()} s';
+
+  factory Draft.fromJson(Map<String, dynamic> json) => Draft(
+        request: (json['request'] ?? '').toString(),
+        attempts: ((json['attempts'] ?? 0) as num).round(),
+        elapsedSeconds: ((json['elapsed_s'] ?? 0) as num).toDouble(),
+        machine: (json['machine'] ?? '').toString(),
+        models: ((json['models'] ?? const []) as List<dynamic>)
+            .map((e) => e.toString())
+            .toList(),
+        levelReached: json['level_reached'] as int?,
+        message: (json['message'] ?? '').toString(),
+        handoff: (json['handoff'] ?? '').toString(),
+        specDraft: (json['spec_draft'] ?? '').toString(),
       );
 }

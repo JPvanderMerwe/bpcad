@@ -344,6 +344,15 @@ function showPart(part) {
   chip.querySelector('span').textContent = level;
   $('switcher').appendChild(chip);
 
+  // A DRAFT IS A DIFFERENT VIEW, and this is where it forks.
+  //
+  // It used to be this one: loadFrames asking for a turntable of a part with
+  // no mesh, a 404 per frame, and checks, exports and parameters all coming
+  // up empty below an empty viewport. Nothing said what had happened. See
+  // draft() - everything it shows was already in run.json.
+  if (part.draft) return draft(part);
+
+  $('draftPanel').hidden = true;
   dimensionReport(part);
   checks(part);
   exports(part);
@@ -354,6 +363,78 @@ function showPart(part) {
   $('legend').hidden = false;
   $('hint').hidden = false;
   loadFrames(part.name, part.frames || 24);
+}
+
+/* WHY IT DID NOT BUILD.
+ *
+ * The point of this view is the next move, not the apology. The request comes
+ * back in the composer in one tap, because retyping a sentence you already
+ * wrote is the worst way to recover from a four-minute failure. The engine's
+ * diagnosis is shown word for word - for a failed cut it carries the measured
+ * spans and the numbers to change, and paraphrasing it throws away the only
+ * part anybody can act on. And the handoff path is named, because at the
+ * computer the fastest fix is to open that file and correct one number.
+ */
+function draft(part) {
+  const d = part.draft;
+
+  // Nothing below the fork applies to a part with no geometry, and a stale
+  // panel from the last part opened would be worse than an empty one.
+  ['reportPanel', 'checkPanel', 'exportPanel', 'paramPanel'].forEach((id) => {
+    const el = $(id);
+    if (el) el.hidden = true;
+  });
+  $('legend').hidden = true;
+  $('hint').hidden = true;
+  show3d(false);
+
+  $('draftAsked').textContent = d.request || part.name;
+  $('draftWhy').textContent = d.message
+    || 'The run recorded no reason, which is itself worth knowing: it ran '
+     + 'out of attempts rather than hitting a problem it could name.';
+
+  const cost = $('draftCost');
+  cost.innerHTML = '';
+  const row = (key, value) => {
+    if (value === '' || value === null || value === undefined) return;
+    const r = document.createElement('div');
+    r.className = 'r';
+    const k = document.createElement('div'); k.className = 'k';
+    k.textContent = key;
+    const v = document.createElement('div'); v.className = 'v num';
+    v.textContent = value;
+    r.append(k, v); cost.appendChild(r);
+  };
+  row('attempts', String(d.attempts || 0));
+  // WHAT IT COST decides whether trying the same thing again is worth it.
+  // Four attempts over ten minutes is a different situation from one over
+  // twenty seconds.
+  row('time spent', (d.elapsed_s || 0) >= 90
+    ? Math.round((d.elapsed_s || 0) / 60) + ' min'
+    : Math.round(d.elapsed_s || 0) + ' s');
+  row('models tried', (d.models || []).join(' then '));
+  row('on', d.machine || '');
+  row('got as far as', d.level_reached === 1 ? 'a template'
+    : d.level_reached === 2 ? 'composing from primitives' : '');
+
+  $('draftHandoff').textContent = d.handoff
+    ? 'The closest attempt is written out with every problem marked inline, '
+      + 'at ' + d.handoff + ' - correcting the number above and building it '
+      + 'is seconds of work, against minutes for another run.'
+    : '';
+
+  const retry = $('draftRetry');
+  retry.disabled = !d.request;
+  retry.onclick = () => {
+    const box = $('prompt');
+    box.value = d.request;
+    box.focus();
+    // The cursor at the END, because the useful next move is nearly always
+    // to change a few words of what is already there.
+    box.setSelectionRange(box.value.length, box.value.length);
+  };
+
+  $('draftPanel').hidden = false;
 }
 
 /* THE DIMENSION REPORT. Measured, from the stored regression - the same
@@ -999,7 +1080,15 @@ async function openPart(name) {
     const entry = state.library.find((p) => p.name === name) || {};
     showPart({
       name,
-      verdict: '',          // not stored; re-verifying costs a rebuild
+      // THESE WERE BEING DROPPED. showPart is handed a literal built here,
+      // so a field the server added and this list did not know about never
+      // reached the panels - which is exactly what happened to `checks` the
+      // day the server started sending it: the checks panel read
+      // part.checks, found undefined, and printed "never checked" over every
+      // part in the library.
+      checks: data.checks || null,
+      draft: data.draft || null,
+      verdict: '',          // the fresh-generate shape; stored parts use checks
       report_md: data.report_md || '',
       spec: data.spec || null,
       level: data.level ?? null,

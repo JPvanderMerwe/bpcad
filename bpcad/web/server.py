@@ -671,6 +671,72 @@ def _stored_checks(part_dir: Path) -> dict | None:
     return checks
 
 
+def _draft_payload(part_dir: Path) -> dict | None:
+    """
+    Why this one did not build, in the engine's own words.
+
+    A DRAFT WAS A DEAD END IN BOTH CLIENTS. The library lists it - correctly,
+    it is something you started - and opening it asked for a turntable frame
+    of a part with no mesh, got a 404, and showed a screen with no size, no
+    material, no checks and no exports. Nothing on it said what had happened
+    or what to do next.
+
+    Everything needed was already on disk. run.json records the request, how
+    many attempts were spent on it, which models were tried and for how long,
+    and the engine's diagnosis - which for a failed cut is not "invalid spec"
+    but "disc in cut mode removed nothing; it sits at (20.0, 0.0, -2.0) and
+    the part spans x -20.0..15.0; set z_mm to -4.00 and height_mm to 9.00".
+    That is a sentence somebody can act on, and it was being thrown away.
+
+    Returns None for a part that built, so this never appears beside a mesh.
+    """
+    run = part_dir / "run.json"
+    if not run.is_file():
+        return None
+    try:
+        data = json.loads(run.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    if data.get("ok"):
+        return None
+
+    attempts = data.get("attempts") or []
+    # dict.fromkeys rather than a set: the order the models were tried in is
+    # the story - the primary first, then the smaller fallback.
+    models = list(dict.fromkeys(
+        str(a.get("model")) for a in attempts if a.get("model")))
+    errors = [str(a.get("error")) for a in attempts if a.get("error")]
+
+    # THE MARKED-UP SPEC, capped. It is the handoff: the closest attempt with
+    # every problem written inline, and the file somebody edits by hand to
+    # rescue the part. Long ones are cut rather than dropped, because the top
+    # of it is the header that explains what to do.
+    draft_text = ""
+    draft_path = data.get("handoff") or ""
+    candidates = [Path(draft_path)] if draft_path else []
+    candidates += sorted(part_dir.glob("spec.draft.yaml"))
+    for candidate in candidates:
+        if candidate.is_file():
+            draft_text = candidate.read_text()[:8000]
+            draft_path = str(candidate)
+            break
+
+    return {
+        "request": str(data.get("request") or ""),
+        "attempts": len(attempts),
+        "elapsed_s": round(float(data.get("elapsed_s") or 0.0), 1),
+        "machine": str(data.get("machine") or ""),
+        "models": models,
+        "level_reached": data.get("level_reached"),
+        # The LAST error, which is the one the run gave up on. The earlier
+        # ones are attempts that were superseded, and showing four of them
+        # buries the one that matters.
+        "message": errors[-1] if errors else "",
+        "handoff": draft_path,
+        "spec_draft": draft_text,
+    }
+
+
 def _jobs_payload(limit: int = 12) -> list[dict]:
     """
     What the machine is working on, and what it just finished.
@@ -1237,6 +1303,12 @@ class Handler(BaseHTTPRequestHandler):
         checks = _stored_checks(part_dir)
         if checks is not None:
             payload["checks"] = checks
+
+        # WHY IT DID NOT BUILD, for the ones that did not. See _draft_payload:
+        # opening one of these used to be a dead end with a 404 render on it.
+        draft = _draft_payload(part_dir)
+        if draft is not None:
+            payload["draft"] = draft
 
         payload["has_stl"] = stl is not None and Path(stl).is_file()
         payload["files"] = sorted({

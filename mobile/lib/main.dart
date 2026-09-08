@@ -272,7 +272,16 @@ enum _Filter {
   all('All'),
   parametric('Parametric'),
   fromPhoto('From photo'),
-  moving('Moving');
+  moving('Moving'),
+
+  /// THE RUNS THAT GAVE UP, findable.
+  ///
+  /// They were always listed and never separable, sitting between the built
+  /// parts with a `draft` badge and nothing else. That was tolerable while
+  /// opening one was a dead end; now that a draft opens on the engine's own
+  /// diagnosis and a one-tap retry, being able to find them is the difference
+  /// between a failed run being lost and being finished.
+  drafts('Drafts');
 
   const _Filter(this.label);
   final String label;
@@ -289,6 +298,14 @@ class _LibraryScreenState extends State<LibraryScreen> {
   /// instantly and keeps working when the cable comes out - a search box that
   /// waits on a round trip per keystroke feels broken even when it is not.
   String _query = '';
+
+  /// A CONTROLLER SO THE BOX CAN BE EMPTIED.
+  ///
+  /// It was an onChanged with no controller, which means the only way out of
+  /// a search was to select the text and delete it - on a phone, with the
+  /// results already narrowed to nothing, which is exactly when you want out
+  /// fastest.
+  final TextEditingController _search = TextEditingController();
 
   List<PartSummary> get _visible => _parts.where((part) {
         if (!part.matches(_query)) return false;
@@ -307,6 +324,8 @@ class _LibraryScreenState extends State<LibraryScreen> {
             return part.makes.contains('from photo');
           case _Filter.moving:
             return (part.bodies ?? 1) > 1;
+          case _Filter.drafts:
+            return !part.built;
         }
       }).toList();
 
@@ -314,6 +333,19 @@ class _LibraryScreenState extends State<LibraryScreen> {
   void initState() {
     super.initState();
     _refresh();
+  }
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
+
+  /// Back to everything, in one tap, keyboard away with it.
+  void _clearSearch() {
+    _search.clear();
+    FocusScope.of(context).unfocus();
+    setState(() => _query = '');
   }
 
   Future<void> _refresh() async {
@@ -435,7 +467,13 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 child: Row(mainAxisSize: MainAxisSize.min, children: [
                   Container(width: 7, height: 7, color: BpCore.phosphor),
                   const SizedBox(width: 6),
-                  Text('${_parts.length}',
+                  // HOW MANY OF HOW MANY, while a search or a filter is on.
+                  // A bare total beside a narrowed grid reads as a grid that
+                  // failed to load the rest.
+                  Text(
+                      _narrowed
+                          ? '${_visible.length} of ${_parts.length}'
+                          : '${_parts.length}',
                       style: const TextStyle(
                           fontFamily: BpType.mono,
                           fontSize: BpType.label,
@@ -458,7 +496,10 @@ class _LibraryScreenState extends State<LibraryScreen> {
                 const SizedBox(width: BpSpace.snug),
                 Expanded(
                   child: TextField(
+                    controller: _search,
+                    textInputAction: TextInputAction.search,
                     onChanged: (value) => setState(() => _query = value),
+                    onSubmitted: (_) => FocusScope.of(context).unfocus(),
                     style: const TextStyle(
                         fontFamily: BpType.mono,
                         fontSize: BpType.body,
@@ -479,6 +520,15 @@ class _LibraryScreenState extends State<LibraryScreen> {
                     ),
                   ),
                 ),
+                if (_query.isNotEmpty)
+                  InkWell(
+                    onTap: _clearSearch,
+                    borderRadius: BorderRadius.circular(BpRadius.edge),
+                    child: const Padding(
+                      padding: EdgeInsets.all(6),
+                      child: TypeMark.close(colour: BpcadColors.inkDim),
+                    ),
+                  ),
               ]),
             ),
             const SizedBox(height: BpSpace.snug),
@@ -497,24 +547,77 @@ class _LibraryScreenState extends State<LibraryScreen> {
         ),
       );
 
+  bool get _narrowed => _query.isNotEmpty || _filter != _Filter.all;
+
   Widget _chip(_Filter filter) => BpChip(
         label: filter.label,
         selected: _filter == filter,
         onTap: () => setState(() => _filter = filter),
       );
 
-  Widget _empty() => Padding(
-        padding: const EdgeInsets.all(BpSpace.loose),
+  /// AN EMPTY GRID WITH NO WAY OUT IS THE WORST STATE IN A LIBRARY.
+  ///
+  /// "Nothing matches that" and then the user has to work out for themselves
+  /// which of a typed query and a selected chip is hiding everything. So it
+  /// names what is narrowing it and offers to undo that in one tap.
+  Widget _empty() {
+    if (!_narrowed) {
+      return const Padding(
+        padding: EdgeInsets.all(BpSpace.loose),
         child: Text(
-            _query.isNotEmpty || _filter != _Filter.all
-                ? 'Nothing matches that.'
-                : 'Nothing here yet. Tap the amber button and describe a part.',
-            style: const TextStyle(
+            'Nothing here yet. Tap the amber button and describe a part.',
+            style: TextStyle(
                 fontFamily: BpType.prose,
                 fontSize: BpType.body,
                 height: 1.55,
                 color: BpcadColors.inkFaint)),
       );
+    }
+
+    final narrowing = [
+      if (_query.isNotEmpty) '"$_query"',
+      if (_filter != _Filter.all) _filter.label.toLowerCase(),
+    ].join(' and ');
+
+    return Padding(
+      padding: const EdgeInsets.all(BpSpace.loose),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Nothing matches $narrowing.',
+              style: const TextStyle(
+                  fontFamily: BpType.prose,
+                  fontSize: BpType.body,
+                  height: 1.55,
+                  color: BpcadColors.inkFaint)),
+          const SizedBox(height: BpSpace.base),
+          SizedBox(
+            height: BpMetric.tap,
+            child: OutlinedButton(
+              onPressed: () {
+                _search.clear();
+                FocusScope.of(context).unfocus();
+                setState(() {
+                  _query = '';
+                  _filter = _Filter.all;
+                });
+              },
+              style: OutlinedButton.styleFrom(
+                side: const BorderSide(color: BpcadColors.edge),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(BpRadius.control)),
+              ),
+              child: const Text('Show everything',
+                  style: TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.label,
+                      color: BpcadColors.ink)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _unreachable(String why) => Padding(
         padding: const EdgeInsets.fromLTRB(

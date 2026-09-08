@@ -37,6 +37,7 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'building_screen.dart';
+import 'draft_view.dart';
 import 'glass.dart';
 import 'marks.dart';
 import 'theme.dart';
@@ -66,6 +67,11 @@ class _ResultScreenState extends State<ResultScreen> {
   bool _dims = false;
   int _step = 0;
   int _renderVersion = 1;
+
+  /// The machine's reading. Already fetched for the render version; kept
+  /// whole because a draft hands it to the composer, which needs the material
+  /// list to offer a choice.
+  Health? _health;
   String? _problem;
   bool _warmed = false;
 
@@ -116,6 +122,7 @@ class _ResultScreenState extends State<ResultScreen> {
       if (!mounted) return;
       setState(() {
         _renderVersion = health.renderVersion;
+        _health = health;
         _part = part;
         _schema = schema;
         _step = (part.frames / 8).round() % part.frames;
@@ -171,6 +178,27 @@ class _ResultScreenState extends State<ResultScreen> {
     // above the keyboard. `bottom: 0` is then the top of the keyboard, which
     // is exactly where the command line belongs, and the viewport takes what
     // is left. No arithmetic, and nothing to get wrong twice.
+    // A DRAFT IS A DIFFERENT SCREEN, and this is where it forks.
+    //
+    // It used to be this one: a viewport asking the server for a turntable
+    // frame of a part with no mesh, getting a 404, over a sheet with no size,
+    // no material, no checks and no exports. The screen you land on after a
+    // failure said nothing about the failure. Everything it needed was on
+    // disk in run.json - see draft_view.dart.
+    //
+    // The fork is here rather than in the library so there is still one
+    // destination for a part: the caller taps a card and gets the right
+    // screen without having to know which kind it is.
+    final draft = part?.draft;
+    if (part != null && draft != null && !part.hasStl) {
+      return DraftView(
+        api: widget.api,
+        name: part.name,
+        draft: draft,
+        health: _health,
+      );
+    }
+
     final inset = part == null ? 0.0 : _sheetHeight(context);
 
     return Scaffold(
@@ -602,19 +630,39 @@ class _ResultScreenState extends State<ResultScreen> {
         ]),
       );
 
-  Widget _header(String title, {String? state}) => Padding(
+  /// THE SHEET'S OWN NAVIGATION, and it stays put.
+  ///
+  /// Each open state used to carry a title and a close cross, and nothing
+  /// else. So going from the checks to the exports - which is the single most
+  /// common move on this screen, you look at whether it passed and then you
+  /// download it - meant closing back to peek, finding the three buttons and
+  /// tapping again. Three taps and a change of layout to move one panel
+  /// across.
+  ///
+  /// A segmented control makes it one tap in any direction, and it never
+  /// moves, so the panel you are in is always readable off the same row. The
+  /// cross still goes back to peek, because peek is the part's summary rather
+  /// than a fourth panel.
+  Widget _tabs(SheetState current, {String? state}) => Padding(
         padding: const EdgeInsets.fromLTRB(
-            BpSpace.base, 0, BpSpace.base, BpSpace.snug),
+            BpSpace.base, 0, BpSpace.snug, BpSpace.snug),
         child: Row(children: [
           Expanded(
-            child: Text(title,
-                style: const TextStyle(
-                    fontFamily: BpType.mono,
-                    fontSize: BpType.micro,
-                    letterSpacing: .06,
-                    color: BpcadColors.inkDim)),
+            child: GlassSurface(
+              depth: GlassDepth.well,
+              blur: false,
+              padding: const EdgeInsets.all(2),
+              child: Row(children: [
+                _segment('Edit', SheetState.parameters, current),
+                _segment('Checks', SheetState.checks, current),
+                _segment('Export', SheetState.export, current),
+              ]),
+            ),
           ),
-          if (state != null)
+          if (state != null) ...[
+            const SizedBox(width: BpSpace.snug),
+            // Amber only when there is an edit the part has not been rebuilt
+            // with - a state worth acting on, rather than a label.
             Text(state,
                 style: TextStyle(
                     fontFamily: BpType.mono,
@@ -622,6 +670,7 @@ class _ResultScreenState extends State<ResultScreen> {
                     color: _edits.isEmpty
                         ? BpcadColors.inkFaint
                         : BpCore.phosphor)),
+          ],
           InkWell(
             onTap: () => setState(() {
               _sheet = SheetState.peek;
@@ -634,6 +683,41 @@ class _ResultScreenState extends State<ResultScreen> {
           ),
         ]),
       );
+
+  /// One segment. Square-cornered and amber when selected - the design's
+  /// segmented control is data chrome, so it keeps the hard radii, and the
+  /// selected one is named as well as coloured.
+  Widget _segment(String label, SheetState target, SheetState current) {
+    final on = target == current;
+    return Expanded(
+      child: InkWell(
+        onTap: on
+            ? null
+            : () => setState(() {
+                  _sheet = target;
+                  _half = true;
+                }),
+        borderRadius: BorderRadius.circular(BpRadius.edge),
+        child: Container(
+          height: 30,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: on
+                ? BpCore.phosphor.withValues(alpha: 0.18)
+                : Colors.transparent,
+            border: Border.all(
+                color: on ? BpCore.phosphor : Colors.transparent),
+            borderRadius: BorderRadius.circular(BpRadius.edge),
+          ),
+          child: Text(label,
+              style: TextStyle(
+                  fontFamily: BpType.mono,
+                  fontSize: BpType.label,
+                  color: on ? BpCore.phosphor : BpcadColors.inkDim)),
+        ),
+      ),
+    );
+  }
 
   /// SLIDERS ONLY WHERE THERE ARE REAL PARAMETERS AND REAL BOUNDS.
   ///
@@ -648,7 +732,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
     return Column(
       children: [
-        _header('parameters',
+        _tabs(SheetState.parameters,
             state: _edits.isEmpty ? 'up to date' : 'not rebuilt'),
         Expanded(
           child: slidable.isEmpty
@@ -781,7 +865,7 @@ class _ResultScreenState extends State<ResultScreen> {
     final checks = _shown;
     return Column(
       children: [
-        _header('checks'),
+        _tabs(SheetState.checks),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
@@ -966,7 +1050,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
     return Column(
       children: [
-        _header('export'),
+        _tabs(SheetState.export),
         Expanded(
           child: ListView(
             padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
