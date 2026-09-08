@@ -523,6 +523,205 @@ def _render_turntable_frame(name: str, step: int, width: int, height: int,
 # ---------------------------------------------------------------------------
 
 
+def _checks_from_report(report: dict) -> dict:
+    """
+    One verify report - stored or just run - as a list a person can read.
+
+    THE SAME FUNCTION FOR BOTH, and that is the point. A stored verdict and a
+    fresh one are the same VerifyReport.to_dict shape, so rendering them
+    through two code paths is how the two come to disagree about what a check
+    is called or when it counts as passed.
+
+    A LINE IS A MEASURED VALUE AND A STATUS, never a status alone. "watertight
+    yes" and "worst overhang 12.4 deg" are what makes this a report rather
+    than a green tick, and brief 6.7 forbids colour carrying meaning on its
+    own anyway.
+
+    `info` is a real status and not a cop-out: the number of separate bodies
+    is the fact that decides whether a hinge turns, and it is neither a pass
+    nor a failure - it is the measurement you have to look at.
+    """
+    mesh = report.get("mesh") or {}
+    over = report.get("overhang") or {}
+    lines: list[dict] = []
+
+    def line(name: str, value: str, status: str) -> None:
+        lines.append({"name": name, "value": value, "status": status})
+
+    def yn(flag) -> str:
+        return "yes" if flag else "no"
+
+    if mesh:
+        line("watertight", yn(mesh.get("watertight")),
+             "pass" if mesh.get("watertight") else "fail")
+        line("one closed volume", yn(mesh.get("is_volume")),
+             "pass" if mesh.get("is_volume") else "fail")
+        line("winding consistent", yn(mesh.get("winding_consistent")),
+             "pass" if mesh.get("winding_consistent") else "fail")
+        degenerate = int(mesh.get("degenerate_faces") or 0)
+        line("degenerate faces", str(degenerate),
+             "pass" if degenerate == 0 else "fail")
+        # SEPARATE BODIES IS THE FACT THAT DECIDES WHETHER A HINGE TURNS.
+        # Two bodies move, one is fused solid - and neither is right or wrong
+        # without knowing what was asked for, so it is reported and not judged.
+        if mesh.get("body_count") is not None:
+            line("separate bodies", str(int(mesh["body_count"])), "info")
+        bbox = mesh.get("bbox_mm")
+        if isinstance(bbox, (list, tuple)) and len(bbox) == 3:
+            line("envelope",
+                 "%.2f × %.2f × %.2f mm" % tuple(float(v) for v in bbox),
+                 "info")
+        if mesh.get("volume_cm3") is not None:
+            line("volume", "%.3f cm3" % float(mesh["volume_cm3"]), "info")
+        if mesh.get("face_count") is not None:
+            line("triangles", str(int(mesh["face_count"])), "info")
+
+    if over:
+        worst = float(over.get("worst_overhang_deg") or 0.0)
+        threshold = float(over.get("max_deg") or 45.0)
+        line("worst overhang", "%.1f deg from vertical" % worst,
+             "warn" if worst > threshold else "pass")
+        # SUPPORT IS NOT A FAILURE. Plenty of good parts need it - the louvre
+        # vent reference bridges its own aperture by design - and a verdict
+        # that cries wolf on a known-good part teaches you to ignore verdicts.
+        supports = bool(over.get("supports_needed"))
+        line("supports needed", yn(supports), "warn" if supports else "pass")
+        if over.get("unsupported_area_mm2") is not None:
+            line("unsupported underside",
+                 "%.2f mm2" % float(over["unsupported_area_mm2"]),
+                 "warn" if float(over["unsupported_area_mm2"]) > 0 else "pass")
+        if over.get("bed_area_mm2") is not None:
+            line("bed contact", "%.0f mm2" % float(over["bed_area_mm2"]), "info")
+
+    features = report.get("features") or {}
+    for check in features.get("checks") or []:
+        status = {"ok": "pass", "marginal": "warn", "too_fine": "fail"}.get(
+            str(check.get("status")), "info")
+        line("feature %s" % check.get("name"),
+             "%.3f mm" % float(check.get("value_mm", 0.0)), status)
+
+    return {
+        "verdict": report.get("verdict") or ("PASS" if report.get("ok") else "FAIL"),
+        "ok": bool(report.get("ok")),
+        "problems": [str(p) for p in (report.get("problems") or [])],
+        "warnings": [str(w) for w in (report.get("warnings") or [])],
+        "nozzle_mm": report.get("nozzle_mm"),
+        "material": report.get("material"),
+        "print_axis": report.get("print_axis"),
+        "lines": lines,
+    }
+
+
+def _stored_checks(part_dir: Path) -> dict | None:
+    """
+    The verdict this part was given when it was built.
+
+    IT WAS THERE THE WHOLE TIME. Every part built through the pipeline writes
+    run.json, and run.json carries the entire verify report - ok, the mesh
+    checks, overhang, surface levels, problems, warnings. This endpoint used
+    to say "a part on disk has no stored verdict, and re-verifying costs as
+    long as building it". Both halves were wrong: the verdict is on disk, and
+    a re-verify measured at 0.3s against a build of 151s for the same part.
+    The expensive thing in a build is the model call, not the checking.
+
+    What IS true is that a stored verdict was taken on a particular day
+    against a particular printer profile. So it is served with its date and
+    the nozzle and material it was measured against, and if the profile has
+    moved since, this says so and the client can ask for a fresh one.
+    """
+    run = part_dir / "run.json"
+    if not run.is_file():
+        return None
+    try:
+        data = json.loads(run.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+    report = data.get("report")
+    if not isinstance(report, dict) or not report:
+        return None
+
+    checks = _checks_from_report(report)
+    checks["source"] = "stored"
+    checks["checked_at"] = round(run.stat().st_mtime, 3)
+
+    # HAS THE PROFILE MOVED UNDER IT? A verdict measured against a 0.4 mm
+    # nozzle says nothing certain about a machine now running 0.6, and the
+    # feature-size checks are the ones that change. Only what can actually be
+    # compared is compared - the stored report records the nozzle and the
+    # material and not the bed, so the bed is not claimed either way.
+    drift: list[str] = []
+    try:
+        from bpcad import api
+
+        cfg = api.config()
+        now_nozzle = float(cfg.print_settings["nozzle_mm"])
+        was_nozzle = checks.get("nozzle_mm")
+        if was_nozzle is not None and abs(float(was_nozzle) - now_nozzle) > 1e-9:
+            drift.append(
+                "it was checked against a %.2f mm nozzle and the profile now "
+                "says %.2f mm" % (float(was_nozzle), now_nozzle))
+    except Exception:
+        # A profile that cannot be read is not a reason to withhold a verdict
+        # that was taken. It is a reason not to claim the verdict is current.
+        drift.append("the current printer profile could not be read to "
+                     "compare against")
+
+    checks["drift"] = drift
+    return checks
+
+
+def _jobs_payload(limit: int = 12) -> list[dict]:
+    """
+    What the machine is working on, and what it just finished.
+
+    THIS IS WHAT MAKES "YOU CAN LEAVE IT RUNNING" CHECKABLE. A generate runs
+    on its own thread and outlives the screen that started it, which is a
+    promise both clients make - and until this endpoint there was no way to
+    ask what became of it. A phone that locked its screen mid-build had to
+    guess from whether a part later appeared in the library.
+
+    Read only, and it invents nothing: the elapsed time comes from the job's
+    own first and last event timestamps, taken on the server's clock, and the
+    note is the last thing the engine actually said rather than a stage this
+    function decided the job must be at.
+    """
+    with JOBS_LOCK:
+        jobs = list(JOBS.values())
+
+    now = time.time()
+    out = []
+    for job in jobs:
+        with job.lock:
+            events = list(job.events)
+        if not events:
+            continue
+        started = events[0].get("at", now)
+        # A finished job's clock stops at its last event. Measuring a done job
+        # against `now` would show a build from this morning as five hours
+        # long, which is a wrong number rather than a stale one.
+        ended = events[-1].get("at", now) if job.done else now
+        notes = [e.get("text", "") for e in events if e.get("kind") == "note"]
+        result = job.result or {}
+        out.append({
+            "id": job.id,
+            "kind": job.kind,
+            "request": job.request,
+            "done": job.done,
+            "ok": bool(result.get("ok")),
+            "note": notes[-1] if notes else "",
+            "name": str(result.get("name") or ""),
+            "message": str(result.get("message") or ""),
+            "started_at": round(started, 3),
+            "elapsed_s": round(max(0.0, ended - started), 1),
+        })
+
+    # Newest first, and only a handful: this is a readout of what the machine
+    # is doing, not a history, and the library is where finished parts live.
+    out.sort(key=lambda row: row["started_at"], reverse=True)
+    return out[:limit]
+
+
 def _library_payload() -> list[dict]:
     from bpcad import api
 
@@ -770,6 +969,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(_health())
         if path == "/api/parts":
             return self._json({"parts": _library_payload()})
+        if path == "/api/jobs":
+            return self._json({"jobs": _jobs_payload()})
 
         m = re.fullmatch(r"/api/template/([^/]+)", path)
         if m:
@@ -856,6 +1057,10 @@ class Handler(BaseHTTPRequestHandler):
             job = _start_job("generate", request,
                              _generate_work(request, material, image))
             return self._json({"job": job.id})
+
+        m = re.fullmatch(r"/api/part/([^/]+)/verify", path)
+        if m:
+            return self._json(self._reverify(m.group(1)))
 
         if path == "/api/refine":
             name = (body.get("name") or "").strip()
@@ -1015,10 +1220,24 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-        # NO VERDICT. A part on disk has no stored verdict, and the only honest
-        # answers are to re-verify it - which takes as long as building it - or
-        # to say nothing. Inventing a PASS because the file exists is exactly
-        # the failure this program is built to avoid.
+        # THE VERDICT IT WAS GIVEN, with the day it was given and the profile
+        # it was measured against.
+        #
+        # This used to say "a part on disk has no stored verdict, and the only
+        # honest answers are to re-verify it - which takes as long as building
+        # it - or to say nothing". Both halves were false. run.json holds the
+        # entire verify report, and a re-verify of a real part measured 0.3s
+        # against that part's own recorded build time of 151s - the model call
+        # is what a build costs, not the checking. The result was two clients
+        # printing "not re-checked" over an answer that was sitting in the
+        # part's own directory.
+        #
+        # Absent when the part predates run.json or was imported rather than
+        # generated, which is a real "not known" and says so.
+        checks = _stored_checks(part_dir)
+        if checks is not None:
+            payload["checks"] = checks
+
         payload["has_stl"] = stl is not None and Path(stl).is_file()
         payload["files"] = sorted({
             f.suffix.lstrip(".").lower()
@@ -1026,6 +1245,56 @@ class Handler(BaseHTTPRequestHandler):
             if f.suffix.lstrip(".").lower() in self.DOWNLOADABLE
         })
         return payload
+
+    def _reverify(self, name: str) -> dict:
+        """
+        Check this part again, now, against the profile as it stands today.
+
+        SYNCHRONOUS, BECAUSE IT IS CHEAP. This is not a build: no model is
+        called and no geometry is composed. It loads the mesh that is already
+        on disk and runs the same checks the build ran - measured at 0.3s on a
+        real part whose build took 151s. Putting it on the job queue would
+        mean a spinner, an event stream and a screen state for something that
+        finishes before the phone has finished animating.
+
+        It does not write anything. A re-check is a reading, and overwriting
+        run.json would destroy the record of what the part was given when it
+        was made - which is exactly the provenance the report tab is for.
+        """
+        self._check_name(name)
+        from bpcad import api
+
+        part_dir, stl = _resolve_part(name)
+        if stl is None or not Path(stl).is_file():
+            raise HttpError(
+                409, "%s has no mesh to check - it is a draft, and there is "
+                     "nothing on disk to measure" % name)
+
+        material = None
+        spec_path = part_dir / "spec.yaml"
+        if spec_path.is_file():
+            try:
+                loaded = api.load_spec(spec_path)
+                spec_obj = loaded[0] if isinstance(loaded, tuple) else loaded
+                material = getattr(spec_obj, "material", None)
+            except Exception:
+                # The material only labels the report. A spec that will not
+                # load is a reason to check the mesh without it, not a reason
+                # to refuse to check the mesh.
+                pass
+
+        try:
+            report = api.verify(str(stl), material=material)
+        except api.ApiError as exc:
+            raise HttpError(422, str(exc))
+
+        checks = _checks_from_report(report.to_dict())
+        checks["source"] = "just now"
+        checks["checked_at"] = round(time.time(), 3)
+        # Nothing has drifted from a check taken against the profile as it is
+        # this second, which is the whole reason to offer one.
+        checks["drift"] = []
+        return {"name": name, "checks": checks}
 
     def _template(self, name: str) -> dict:
         """

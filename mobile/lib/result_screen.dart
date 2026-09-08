@@ -69,6 +69,13 @@ class _ResultScreenState extends State<ResultScreen> {
   String? _problem;
   bool _warmed = false;
 
+  /// A check run from this screen, which replaces the stored one on display.
+  /// Held here rather than written back into [_part] so the provenance stays
+  /// straight: one of these came off disk and one was taken just now.
+  Checks? _rechecked;
+  bool _rechecking = false;
+  String? _recheckProblem;
+
   @override
   void initState() {
     super.initState();
@@ -503,11 +510,12 @@ class _ResultScreenState extends State<ResultScreen> {
         padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
         children: [
           Row(children: [
-            // NOT RE-CHECKED, and the chip says so. bpcad stores no verdict:
-            // the only honest answers are to re-verify (which costs as long as
-            // rebuilding) or to say nothing, and a remembered tick is not a
-            // check.
-            _summaryChip('!', 'not re-checked', BpCore.phosphor),
+            // THE VERDICT IT WAS GIVEN. This chip used to read "not
+            // re-checked" on every part, on the grounds that no verdict is
+            // stored and re-checking costs a rebuild - and both were false.
+            // The build's verdict is in the part's own run.json, and a fresh
+            // check takes a fraction of a second.
+            _verdictChip(),
             const SizedBox(width: BpSpace.snug),
             if (part.bodies != null)
               _summaryChip(part.bodies! > 1 ? '✓' : '·',
@@ -722,54 +730,212 @@ class _ResultScreenState extends State<ResultScreen> {
     ));
   }
 
-  Widget _checks(PartDetail part) => Column(
-        children: [
-          _header('checks'),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
-              children: [
-                _Check(
+  /// Which check this screen is showing: the one taken just now if there is
+  /// one, otherwise the one the build wrote.
+  Checks? get _shown => _rechecked ?? _part?.checks;
+
+  /// The verdict, as a chip, in the words the engine used.
+  Widget _verdictChip() {
+    final checks = _shown;
+    if (checks == null) {
+      // A REAL "NOT KNOWN", and only for a part that has one: imported
+      // meshes and parts made before run.json existed. Not a blanket state
+      // applied to everything.
+      return _summaryChip('?', 'never checked', BpCore.phosphor);
+    }
+    if (!checks.ok) return _summaryChip('×', 'FAIL', BpPen.fail);
+    if (checks.stale) {
+      return _summaryChip('!', '${checks.verdict} · profile moved',
+          BpCore.phosphor);
+    }
+    return _summaryChip(
+        checks.warnings.isEmpty ? '✓' : '!',
+        '${checks.verdict} · ${checks.age}',
+        checks.warnings.isEmpty ? BpPen.pass : BpCore.phosphor);
+  }
+
+  /// Run the checks again, against the profile as it stands this second.
+  Future<void> _recheck() async {
+    setState(() {
+      _rechecking = true;
+      _recheckProblem = null;
+    });
+    try {
+      final checks = await widget.api.reverify(widget.name);
+      if (!mounted) return;
+      setState(() {
+        _rechecked = checks;
+        _rechecking = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _rechecking = false;
+        _recheckProblem =
+            error is BpcadUnreachable ? error.why : error.toString();
+      });
+    }
+  }
+
+  Widget _checks(PartDetail part) {
+    final checks = _shown;
+    return Column(
+      children: [
+        _header('checks'),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: BpSpace.base),
+            children: [
+              if (checks == null)
+                const _Check(
                   tone: BpCore.phosphor,
-                  mark: '!',
-                  name: 'Not re-checked',
-                  tag: 'unverified',
-                  why: 'This part was verified when it was built and the '
-                      'result is in the report below. bpcad does not store a '
-                      'verdict, because re-checking costs as long as '
-                      'rebuilding and a remembered tick is not a check.',
-                ),
-                if (part.bodies != null)
+                  mark: '?',
+                  name: 'Never checked',
+                  tag: 'no record',
+                  why: 'This part has no run.json, so it was either imported '
+                      'or made before bpcad kept one. That is a real gap in '
+                      'the record rather than a check that was skipped — run '
+                      'one now and it will be measured against the profile as '
+                      'it stands.',
+                )
+              else ...[
+                _provenance(checks),
+                const SizedBox(height: BpSpace.base),
+                // THE MEASURED VALUES, one line each. A status with no number
+                // beside it is a green tick, which is the thing this panel
+                // exists not to be.
+                for (final line in checks.lines) _CheckLineRow(line: line),
+                for (final problem in checks.problems)
                   _Check(
-                    tone: part.bodies! > 1 ? BpPen.pass : BpcadColors.inkDim,
-                    mark: part.bodies! > 1 ? '✓' : '·',
-                    name: 'Pieces',
-                    tag: part.bodies! > 1 ? '${part.bodies} bodies' : 'one body',
-                    why: part.bodies! > 1
-                        ? 'Separate solids, so they move relative to each '
-                            'other. This is the fact that decides whether a '
-                            'mechanism works.'
-                        : 'One fused solid. Nothing in this part moves.',
+                    tone: BpPen.fail,
+                    mark: '×',
+                    name: 'Problem',
+                    tag: 'fail',
+                    why: problem,
                   ),
-                if (part.reportMd.isNotEmpty) ...[
-                  const SizedBox(height: BpSpace.base),
-                  Text('the report as it was written',
-                      style: const TextStyle(
-                          fontFamily: BpType.mono,
-                          fontSize: BpType.micro,
-                          color: BpcadColors.inkDim)),
-                  const SizedBox(height: BpSpace.tight),
-                  Text(part.reportMd,
-                      style: const TextStyle(
-                          fontFamily: BpType.mono,
-                          fontSize: 11,
-                          height: 1.6,
-                          color: BpcadColors.inkDim)),
-                ],
+                for (final warning in checks.warnings)
+                  _Check(
+                    tone: BpCore.phosphor,
+                    mark: '!',
+                    name: 'Worth knowing',
+                    tag: 'warning',
+                    why: warning,
+                  ),
               ],
-            ),
+              if (part.bodies != null)
+                _Check(
+                  tone: part.bodies! > 1 ? BpPen.pass : BpcadColors.inkDim,
+                  mark: part.bodies! > 1 ? '✓' : '·',
+                  name: 'Pieces',
+                  tag: part.bodies! > 1 ? '${part.bodies} bodies' : 'one body',
+                  why: part.bodies! > 1
+                      ? 'Separate solids, so they move relative to each '
+                          'other. This is the fact that decides whether a '
+                          'mechanism works.'
+                      : 'One fused solid. Nothing in this part moves.',
+                ),
+              const SizedBox(height: BpSpace.snug),
+              _recheckButton(),
+              if (_recheckProblem != null) ...[
+                const SizedBox(height: BpSpace.snug),
+                Text(_recheckProblem!,
+                    style: const TextStyle(
+                        fontFamily: BpType.prose,
+                        fontSize: BpType.micro,
+                        height: 1.55,
+                        color: BpPen.fail)),
+              ],
+              if (part.reportMd.isNotEmpty) ...[
+                const SizedBox(height: BpSpace.base),
+                const Text('the report as it was written',
+                    style: TextStyle(
+                        fontFamily: BpType.mono,
+                        fontSize: BpType.micro,
+                        color: BpcadColors.inkDim)),
+                const SizedBox(height: BpSpace.tight),
+                Text(part.reportMd,
+                    style: const TextStyle(
+                        fontFamily: BpType.mono,
+                        fontSize: 11,
+                        height: 1.6,
+                        color: BpcadColors.inkDim)),
+              ],
+              const SizedBox(height: BpSpace.room),
+            ],
           ),
-        ],
+        ),
+      ],
+    );
+  }
+
+  /// WHERE THIS VERDICT CAME FROM AND WHEN.
+  ///
+  /// A verdict with no provenance is the remembered tick this program refuses
+  /// to show. A stored one was measured on a particular day against a
+  /// particular profile, and if that profile has moved since, the drift lines
+  /// say exactly what moved - which is the one honest reason to distrust it.
+  Widget _provenance(Checks checks) => GlassSurface(
+        tint: checks.ok
+            ? (checks.stale ? GlassTint.warn : GlassTint.ref)
+            : GlassTint.warn,
+        depth: GlassDepth.card,
+        padding: const EdgeInsets.all(BpSpace.base),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(checks.verdict,
+                style: TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: BpType.figure,
+                    color: checks.ok ? BpPen.pass : BpPen.fail)),
+            const SizedBox(height: 3),
+            Text(
+                checks.fresh
+                    ? 'checked just now, against the profile as it stands'
+                    : 'checked when it was built, ${checks.age}'
+                        '${checks.nozzleMm == null ? '' : ', against a '
+                        '${checks.nozzleMm!.toStringAsFixed(2)} mm nozzle'}',
+                style: const TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: BpType.micro,
+                    height: 1.5,
+                    color: BpcadColors.inkDim)),
+            for (final why in checks.drift) ...[
+              const SizedBox(height: BpSpace.snug),
+              Text(why,
+                  style: const TextStyle(
+                      fontFamily: BpType.prose,
+                      fontSize: BpType.micro,
+                      height: 1.55,
+                      color: BpCore.phosphor)),
+            ],
+          ],
+        ),
+      );
+
+  /// A SECOND, NOT A REBUILD, and the button says so.
+  ///
+  /// The reason this was never offered was a belief that re-checking costs as
+  /// long as building. It does not: the mesh is on disk and no model is
+  /// involved. Measured at 0.3s against a build of 151s for the same part.
+  Widget _recheckButton() => SizedBox(
+        width: double.infinity,
+        height: BpMetric.tap,
+        child: OutlinedButton(
+          onPressed: _rechecking ? null : _recheck,
+          style: OutlinedButton.styleFrom(
+            side: const BorderSide(color: BpcadColors.edge),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(BpRadius.control)),
+          ),
+          child: _rechecking
+              ? const Caliper(height: 14)
+              : const Text('Check it again',
+                  style: TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.label,
+                      color: BpcadColors.ink)),
+        ),
       );
 
   Widget _exports(PartDetail part) {
@@ -1235,4 +1401,61 @@ class _CommandLineState extends State<_CommandLine> {
           ],
         ]),
       );
+}
+
+/// One measured check, as a row: what was looked at, what it read, how it
+/// lands.
+///
+/// THE VALUE IS THE POINT. "watertight — yes" and "worst overhang — 12.4 deg
+/// from vertical" are a report; a column of green ticks is a decoration. And
+/// the status is a word as well as a colour, because brief 6.7 forbids colour
+/// carrying meaning on its own.
+class _CheckLineRow extends StatelessWidget {
+  const _CheckLineRow({required this.line});
+
+  final CheckLine line;
+
+  static const Map<String, Color> _tones = {
+    'pass': BpPen.pass,
+    'warn': BpCore.phosphor,
+    'fail': BpPen.fail,
+    'info': BpcadColors.inkDim,
+  };
+
+  static const Map<String, String> _marks = {
+    'pass': '✓',
+    'warn': '!',
+    'fail': '×',
+    'info': '·',
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final tone = _tones[line.status] ?? BpcadColors.inkDim;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: BpSpace.snug),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        SizedBox(
+          width: 14,
+          child: Text(_marks[line.status] ?? '·',
+              style: TextStyle(
+                  fontFamily: BpType.mono, fontSize: 11, color: tone)),
+        ),
+        Expanded(
+          child: Text(line.name,
+              style: const TextStyle(
+                  fontFamily: BpType.mono,
+                  fontSize: BpType.label,
+                  color: BpcadColors.inkDim)),
+        ),
+        const SizedBox(width: BpSpace.snug),
+        Text(line.value,
+            style: TextStyle(
+                fontFamily: BpType.mono,
+                fontSize: BpType.label,
+                color: line.status == 'info' ? BpcadColors.ink : tone,
+                fontFeatures: const [FontFeature.tabularFigures()])),
+      ]),
+    );
+  }
 }

@@ -698,6 +698,41 @@ input[type="range"]:focus-visible::-webkit-slider-thumb {
 .cwhy { margin: 3px 0 0; color: var(--bp-ink-dim);
         font: var(--bp-weight-regular) var(--bp-text-label)/1.5 var(--bp-prose); }
 
+/* WHERE THE VERDICT CAME FROM AND WHEN. A verdict with no provenance is the
+   remembered tick this program refuses to show: it was measured on a
+   particular day against a particular profile, and `cdrift` is what says the
+   profile has moved since. */
+.cprov { padding: var(--bp-space-base); border: 1px solid var(--bp-edge);
+         border-radius: var(--bp-radius-card); background: var(--bp-glass-lift); }
+.cprov.pass { border-color: color-mix(in srgb, var(--bp-pass) 45%, transparent); }
+.cprov.warn { border-color: color-mix(in srgb, var(--bp-act) 55%, transparent); }
+.cprov.fail { border-color: color-mix(in srgb, var(--bp-fail) 55%, transparent); }
+.cverdict { font: var(--bp-weight-medium) var(--bp-text-figure)/1.2 var(--bp-mono); }
+.cprov.pass .cverdict { color: var(--bp-pass); }
+.cprov.warn .cverdict { color: var(--bp-pass); }
+.cprov.fail .cverdict { color: var(--bp-fail); }
+.cwhen { margin-top: 3px; color: var(--bp-ink-dim);
+         font: var(--bp-weight-regular) var(--bp-text-micro)/1.5 var(--bp-mono); }
+.cdrift { margin: var(--bp-space-snug) 0 0; color: var(--bp-act);
+          font: var(--bp-weight-regular) var(--bp-text-micro)/1.55 var(--bp-prose); }
+
+/* ONE MEASURED CHECK PER ROW: the mark, what was looked at, what it read. The
+   value is set in the numeric face, because it is a measurement and not a
+   label - a status with no number beside it is a green tick. */
+.cline { display: flex; align-items: baseline; gap: var(--bp-space-snug); }
+.clmark { width: 12px; flex: none;
+          font: var(--bp-weight-medium) 11px/1.4 var(--bp-mono); }
+.cline.pass .clmark { color: var(--bp-pass); }
+.cline.warn .clmark { color: var(--bp-act); }
+.cline.fail .clmark { color: var(--bp-fail); }
+.cline.info .clmark { color: var(--bp-ink-faint); }
+.clname { flex: 1 1 auto; min-width: 0; color: var(--bp-ink-dim);
+          font: var(--bp-weight-regular) var(--bp-text-label)/1.4 var(--bp-mono); }
+.clvalue { color: var(--bp-ink);
+           font: var(--bp-weight-regular) var(--bp-text-label)/1.4 var(--bp-mono); }
+.cline.warn .clvalue { color: var(--bp-act); }
+.cline.fail .clvalue { color: var(--bp-fail); }
+
 /* ── export ──────────────────────────────────────────────────────────────
  * One row per format: a bordered extension tag, the filename, a note, and
  * the size or a gate word. A gated format is amber and legible, never

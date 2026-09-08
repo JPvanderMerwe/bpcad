@@ -20,6 +20,8 @@
 // middle of a product whose entire promise is that every figure on screen was
 // measured.
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import 'api.dart';
@@ -136,6 +138,11 @@ class _ShellState extends State<Shell> {
               settings: settings,
               health: _health,
               onServerChanged: _useServer,
+              // The health was read once at boot and never again, so starting
+              // the model on the computer left every screen still saying
+              // "none" until the app was restarted. The Machine tab re-reads
+              // it, and hands it back so the rest of the app has it too.
+              onHealth: (health) => setState(() => _health = health),
             ),
       bottomNavigationBar: _TabBar(
         index: _tab,
@@ -803,14 +810,26 @@ class _DashedBorder extends CustomPainter {
 /// measured.
 ///
 /// What belongs here instead is the machine: which computer is answering,
-/// what it can do, and the two settings that decide whether the app works at
-/// all and whether a moving part comes out moving.
+/// WHAT IT IS DOING RIGHT NOW, what it holds, what it can make, and the two
+/// settings that decide whether the app works at all and whether a moving
+/// part comes out moving.
+///
+/// THE WORK PANEL IS WHY THIS TAB EXISTS RATHER THAN BEING A SETTINGS SHEET.
+///
+/// Both clients promise that a build outlives the screen that started it -
+/// "you can leave this running" is written on the building screen. Until
+/// /api/jobs there was no way to ask whether that was true: a phone that
+/// locked its screen mid-build had to guess from whether a part turned up in
+/// the library later. Now the tab answers it, and the answer comes from the
+/// job's own event log rather than from a stage this app decided it must be
+/// at by now.
 class MachineScreen extends StatefulWidget {
   const MachineScreen({
     super.key,
     required this.api,
     required this.settings,
     required this.onServerChanged,
+    this.onHealth,
     this.health,
   });
 
@@ -821,6 +840,13 @@ class MachineScreen extends StatefulWidget {
   /// the self-test - the API object holds its base URL, so changing it means
   /// making a new one.
   final ValueChanged<String> onServerChanged;
+
+  /// Handed a fresh reading so the rest of the app gets it too. The health
+  /// was read once at boot and then never again, which meant starting the
+  /// model on the computer left every other screen still saying "none" until
+  /// the app was restarted.
+  final ValueChanged<Health>? onHealth;
+
   final Health? health;
 
   @override
@@ -834,10 +860,85 @@ class _MachineScreenState extends State<MachineScreen> {
   bool _reachable = false;
   bool _tested = false;
 
+  /// The machine's own reading, refreshed here rather than frozen at boot.
+  Health? _health;
+
+  List<RunningJob> _jobs = const [];
+  List<PartSummary> _parts = const [];
+  String? _libraryProblem;
+  Timer? _poll;
+
+  /// A read is already in flight. The job read has a ten-second timeout and
+  /// the poll fires every three, so against a computer that is not answering
+  /// - which is the ordinary state of a phone - they would stack three deep
+  /// and stay there.
+  bool _reading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _health = widget.health;
+    _refresh();
+    // THREE SECONDS, and only while this tab is on screen - the shell builds
+    // the Machine tab only when it is selected, so the timer dies with it.
+    // A build takes minutes, so this is not a tight loop chasing a fast
+    // number; it is slow enough to be cheap and quick enough that a stage
+    // landing is visible while you are looking at it.
+    _poll = Timer.periodic(const Duration(seconds: 3), (_) => _readJobs());
+  }
+
   @override
   void dispose() {
+    _poll?.cancel();
     _server.dispose();
     super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    await Future.wait([_readHealth(), _readJobs(), _readLibrary()]);
+  }
+
+  Future<void> _readHealth() async {
+    try {
+      final health = await widget.api.health();
+      if (!mounted) return;
+      setState(() => _health = health);
+      widget.onHealth?.call(health);
+    } catch (_) {
+      // The panels below already say what a null health means, and they say
+      // it with the address in the sentence. A second error line here would
+      // be the same fact twice.
+    }
+  }
+
+  Future<void> _readJobs() async {
+    if (_reading) return;
+    _reading = true;
+    try {
+      final jobs = await widget.api.jobs();
+      if (mounted) setState(() => _jobs = jobs);
+    } catch (_) {
+      if (mounted) setState(() => _jobs = const []);
+    } finally {
+      _reading = false;
+    }
+  }
+
+  Future<void> _readLibrary() async {
+    try {
+      final parts = await widget.api.parts();
+      if (!mounted) return;
+      setState(() {
+        _parts = parts;
+        _libraryProblem = null;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _parts = const [];
+        _libraryProblem = error is BpcadUnreachable ? error.why : '$error';
+      });
+    }
   }
 
   /// Try the address BEFORE saving it.
@@ -886,32 +987,172 @@ class _MachineScreenState extends State<MachineScreen> {
     }
   }
 
+  void _openPart(String name) {
+    if (name.isEmpty) return;
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => ResultScreen(api: widget.api, name: name),
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final health = widget.health;
+    final health = _health;
     return SafeArea(
       bottom: false,
-      child: ListView(
-        padding: const EdgeInsets.all(BpSpace.base),
+      // PULL TO REFRESH, because everything on this screen is a reading of
+      // another computer and every reading here goes stale. The three reads
+      // it runs are the three panels below it.
+      child: RefreshIndicator(
+        onRefresh: _refresh,
+        color: BpCore.phosphor,
+        backgroundColor: BpcadColors.bezel,
+        child: ListView(
+          padding: const EdgeInsets.all(BpSpace.base),
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [
+            const Text('This machine',
+                style: TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: BpType.title,
+                    fontWeight: FontWeight.w600,
+                    color: BpcadColors.ink)),
+            const SizedBox(height: BpSpace.base),
+            _workPanel(),
+            const SizedBox(height: BpSpace.base),
+            _serverPanel(),
+            const SizedBox(height: BpSpace.base),
+            _statePanel(health),
+            const SizedBox(height: BpSpace.base),
+            _libraryPanel(),
+            const SizedBox(height: BpSpace.base),
+            _makesPanel(health),
+            const SizedBox(height: BpSpace.base),
+            _materialPanel(health),
+            const SizedBox(height: BpSpace.base),
+            _effectsPanel(),
+            const SizedBox(height: BpSpace.base),
+            _profilePanel(health),
+            const SizedBox(height: BpSpace.room),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// WHAT THE COMPUTER IS DOING, from its own job log.
+  ///
+  /// Running work first, then what it just finished, because the first
+  /// question is "is it working" and the second is "what came of the one I
+  /// left". A finished job that produced a part opens it - which is the
+  /// shortest path there is from "it is done" to looking at it.
+  Widget _workPanel() {
+    final running = _jobs.where((job) => !job.done).toList();
+    final finished = _jobs.where((job) => job.done).take(3).toList();
+
+    return GlassSurface(
+      depth: GlassDepth.card,
+      padding: const EdgeInsets.all(BpSpace.base),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('This machine',
-              style: TextStyle(
-                  fontFamily: BpType.mono,
-                  fontSize: BpType.title,
-                  fontWeight: FontWeight.w600,
-                  color: BpcadColors.ink)),
-          const SizedBox(height: BpSpace.base),
-          _serverPanel(),
-          const SizedBox(height: BpSpace.base),
-          _statePanel(health),
-          const SizedBox(height: BpSpace.base),
-          _materialPanel(health),
-          const SizedBox(height: BpSpace.base),
-          _effectsPanel(),
-          const SizedBox(height: BpSpace.base),
-          _profilePanel(health),
-          const SizedBox(height: BpSpace.room),
+          Row(children: [
+            const Text('working on',
+                style: TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: BpType.micro,
+                    color: BpcadColors.inkDim)),
+            const Spacer(),
+            if (running.isNotEmpty) const Caliper(height: 12),
+          ]),
+          const SizedBox(height: BpSpace.snug),
+          if (running.isEmpty && finished.isEmpty)
+            Text(
+                _health == null
+                    ? 'not answering, so there is nothing to report'
+                    : 'nothing running',
+                style: const TextStyle(
+                    fontFamily: BpType.mono,
+                    fontSize: BpType.label,
+                    color: BpcadColors.inkFaint)),
+          for (final job in running) _jobRow(job),
+          if (running.isNotEmpty && finished.isNotEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: BpSpace.snug),
+              child: Divider(height: 1, color: BpcadColors.edge),
+            ),
+          for (final job in finished) _jobRow(job),
         ],
+      ),
+    );
+  }
+
+  Widget _jobRow(RunningJob job) {
+    // Never colour alone - brief 6.7. The square is paired with the word
+    // beside it in every state.
+    final (Color tone, String state) = job.done
+        ? (job.ok ? BpPen.pass : BpPen.fail, job.ok ? 'built' : 'failed')
+        : (BpCore.phosphor, job.kind == 'refine' ? 'rebuilding' : 'building');
+
+    return InkWell(
+      onTap: job.done && job.ok ? () => _openPart(job.name) : null,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: BpSpace.tight),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 9,
+              height: 9,
+              margin: const EdgeInsets.only(top: 4),
+              decoration: BoxDecoration(
+                color: job.done ? tone : Colors.transparent,
+                border: Border.all(color: tone),
+              ),
+            ),
+            const SizedBox(width: BpSpace.snug),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(job.request.isEmpty ? job.kind : job.request,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontFamily: BpType.mono,
+                          fontSize: BpType.label,
+                          height: 1.35,
+                          color: BpcadColors.ink)),
+                  const SizedBox(height: 2),
+                  Text(
+                      // THE ENGINE'S LAST WORDS. Not a stage this app worked
+                      // out from the clock - the whole point of the building
+                      // screen's honesty rule, kept here too.
+                      job.done
+                          ? (job.ok
+                              ? '$state · ${job.name} · ${job.elapsed}'
+                              : '$state after ${job.elapsed}')
+                          : job.note.isEmpty
+                              ? '$state · ${job.elapsed}'
+                              : '${job.note} · ${job.elapsed}',
+                      style: TextStyle(
+                          fontFamily: BpType.mono,
+                          fontSize: BpType.micro,
+                          color: job.done && !job.ok
+                              ? BpPen.fail
+                              : BpcadColors.inkDim,
+                          fontFeatures: const [
+                            FontFeature.tabularFigures()
+                          ])),
+                ],
+              ),
+            ),
+            if (job.done && job.ok)
+              const Padding(
+                padding: EdgeInsets.only(left: BpSpace.snug, top: 2),
+                child: TypeMark('›', colour: BpcadColors.inkFaint),
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -1044,8 +1285,6 @@ class _MachineScreenState extends State<MachineScreen> {
                   health.promptSeconds > 90
                       ? '~${(health.promptSeconds / 60).round()} min'
                       : '~${health.promptSeconds} s'),
-            if (health != null && health.templates.isNotEmpty)
-              _row('templates', '${health.templates.length} known'),
             if (health?.headline.isNotEmpty == true) ...[
               const SizedBox(height: BpSpace.snug),
               // THE SERVER'S OWN SENTENCE, not a paraphrase. It measured how
@@ -1060,6 +1299,111 @@ class _MachineScreenState extends State<MachineScreen> {
           ],
         ),
       );
+
+  /// WHAT IT HOLDS. Counted from the library the server serves, not stored
+  /// here - the two would drift, and the number that mattered would be the
+  /// wrong one.
+  ///
+  /// A DRAFT IS COUNTED SEPARATELY AND ON PURPOSE. A run that failed hands
+  /// off a spec with no geometry, and it is right that the library lists it -
+  /// it is something you started. Folding it into "17 parts" would make the
+  /// count a claim that seventeen things exist to print.
+  Widget _libraryPanel() {
+    final built = _parts.where((part) => part.built).length;
+    final drafts = _parts.length - built;
+
+    return GlassSurface(
+      depth: GlassDepth.card,
+      padding: const EdgeInsets.all(BpSpace.base),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('what is on it',
+              style: TextStyle(
+                  fontFamily: BpType.mono,
+                  fontSize: BpType.micro,
+                  color: BpcadColors.inkDim)),
+          const SizedBox(height: BpSpace.snug),
+          if (_libraryProblem != null)
+            Text(_libraryProblem!,
+                style: const TextStyle(
+                    fontFamily: BpType.prose,
+                    fontSize: BpType.micro,
+                    height: 1.55,
+                    color: BpPen.fail))
+          else ...[
+            _row('parts built', '$built'),
+            if (drafts > 0) _row('drafts', '$drafts, never built'),
+            if (_parts.isEmpty)
+              const Text('nothing made yet',
+                  style: TextStyle(
+                      fontFamily: BpType.mono,
+                      fontSize: BpType.label,
+                      color: BpcadColors.inkFaint)),
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// WHAT IT CAN MAKE, named rather than counted.
+  ///
+  /// The templates were shown as "14 known", which tells you a number and
+  /// nothing else. These are the shapes the engine has a real, parametric,
+  /// verified path to - the difference between a request that lands on a
+  /// template and one that has to be composed from primitives - so naming
+  /// them is the most useful thing this screen can say about what to ask for.
+  Widget _makesPanel(Health? health) {
+    final templates = health?.templates ?? const <String>[];
+    if (templates.isEmpty) return const SizedBox.shrink();
+
+    return GlassSurface(
+      depth: GlassDepth.card,
+      padding: const EdgeInsets.all(BpSpace.base),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('what it can make · ${templates.length}',
+              style: const TextStyle(
+                  fontFamily: BpType.mono,
+                  fontSize: BpType.micro,
+                  color: BpcadColors.inkDim)),
+          const SizedBox(height: BpSpace.snug),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final name in templates)
+                BpChip(
+                  label: name.replaceAll('_', ' '),
+                  // Straight into the composer with the template named. The
+                  // sentence is the user's to write - this only says which
+                  // shape they are starting from, which is a fact.
+                  onTap: () => Navigator.of(context).push(MaterialPageRoute(
+                    builder: (_) => ComposerScreen(
+                      api: widget.api,
+                      health: health,
+                      remembered: widget.settings.material,
+                      seed: 'A ${name.replaceAll('_', ' ')} ',
+                    ),
+                  )),
+                ),
+            ],
+          ),
+          const SizedBox(height: BpSpace.snug),
+          const Text(
+              'A request that lands on one of these gets a parametric solid '
+              'with bounds the builder enforces. Anything else is composed '
+              'from primitives, which works and is less certain.',
+              style: TextStyle(
+                  fontFamily: BpType.prose,
+                  fontSize: BpType.micro,
+                  height: 1.55,
+                  color: BpcadColors.inkFaint)),
+        ],
+      ),
+    );
+  }
 
   /// WHICH MATERIAL A NEW PART IS BUILT IN, and it is not a preference.
   ///

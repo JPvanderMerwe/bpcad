@@ -26,11 +26,11 @@
 // waiting this is.
 
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
 import 'api.dart';
+import 'build_rig.dart';
 import 'glass.dart';
 import 'result_screen.dart';
 import 'theme.dart';
@@ -219,29 +219,34 @@ class _BuildingScreenState extends State<BuildingScreen> {
     );
   }
 
-  /// THE MODEL BEING DRAWN, on the plate it will be printed on.
+  /// THE MODEL BEING DRAWN AND TURNED, on the plate it will be printed on.
   ///
   /// The design strokes the part's own outline over 2.6 seconds with an amber
   /// pass behind it. The part does not exist yet, so what is stroked here is
-  /// an isometric WIREFRAME on the graticule - deliberately abstract, because
-  /// drawing some other part's silhouette while yours is being built would be
-  /// decoration standing in for information, and a maker would believe it.
+  /// an isometric WIREFRAME - deliberately abstract, because drawing some
+  /// other part's silhouette while yours is being built would be decoration
+  /// standing in for information, and a maker would believe it.
   ///
-  /// A wireframe box nobody can mistake for a hinged clamp is a different
-  /// thing: it is the visual language of geometry under construction, in the
-  /// design's own motion, and it says the machine is working without claiming
-  /// to show you anything it has made.
+  /// THREE MOTIONS, AND ONLY ONE OF THEM MEANS ANYTHING.
   ///
-  /// It draws further with each stage the engine actually reports, so the
-  /// picture is not a loop running on a timer - by "Built the solid" the box
-  /// is closed, and by the checks it has its bore. That is the one thing this
-  /// screen must never fake: see the note at the top of the file.
+  /// It TURNS, slowly, so the thing on screen reads as a solid in space
+  /// rather than a diagram. It is SCANNED by a visor descending through it,
+  /// which is the design's amber pass made into something that belongs to the
+  /// object instead of sweeping the whole panel - and where the visor crosses
+  /// an edge it marks the crossing, which is what a machine measuring
+  /// something looks like.
+  ///
+  /// And it is DRAWN FURTHER with each stage the engine actually reports.
+  /// That is the one motion carrying information, and it is the one that must
+  /// never be faked: by "Built the solid" the box is closed, and by the checks
+  /// it has its bore. The turn and the visor are ambient and claim nothing -
+  /// see the note at the top of the file.
   Widget _waiting() => Expanded(
         child: Stack(
           children: [
-            const Positioned.fill(child: _ScanPlate()),
+            const Positioned.fill(child: RepaintBoundary(child: BuildPlate())),
             Positioned.fill(
-              child: _Wireframe(
+              child: BuildRig(
                 progress: _reached < 0 ? 0.0 : (_reached + 1) / kStages.length,
               ),
             ),
@@ -289,15 +294,23 @@ class _BuildingScreenState extends State<BuildingScreen> {
         ),
       );
 
+  /// The stage list, which arrives rather than appearing.
+  ///
+  /// Staggered by 70ms a row on first build - the same interval the web
+  /// client uses for its scrollback. It costs nothing and it is the
+  /// difference between a list that was drawn and a list that was written.
   Widget _stages() => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           for (var i = 0; i < kStages.length; i++)
-            _StageRow(
-              label: kStages[i].$1,
-              note: kStages[i].$2,
-              done: i <= _reached,
-              live: i == _reached + 1 && _problem == null && !_finished,
+            _Arrive(
+              delay: Duration(milliseconds: 70 * i),
+              child: _StageRow(
+                label: kStages[i].$1,
+                note: kStages[i].$2,
+                done: i <= _reached,
+                live: i == _reached + 1 && _problem == null && !_finished,
+              ),
             ),
         ],
       );
@@ -306,12 +319,24 @@ class _BuildingScreenState extends State<BuildingScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // A 2px track: it is a data mark, so it keeps the hard edge.
+          // IT TRAVELS TO THE NEW VALUE RATHER THAN JUMPING. The stages
+          // arrive minutes apart, so a step that snaps reads as a glitch on a
+          // screen where nothing else has moved for ninety seconds. It still
+          // never creeps: the target is a completed stage count and the bar
+          // sits dead still between them.
           SizedBox(
             height: 2,
-            child: LinearProgressIndicator(
-              value: _fraction,
-              backgroundColor: BpcadColors.edge,
-              color: _problem == null ? BpCore.phosphor : BpPen.fail,
+            child: TweenAnimationBuilder<double>(
+              tween: Tween<double>(begin: 0, end: _fraction),
+              duration: const Duration(milliseconds: 700),
+              curve: Curves.easeOutCubic,
+              builder: (context, value, _) => LinearProgressIndicator(
+                value: MediaQuery.of(context).disableAnimations
+                    ? _fraction
+                    : value,
+                backgroundColor: BpcadColors.edge,
+                color: _problem == null ? BpCore.phosphor : BpPen.fail,
+              ),
             ),
           ),
           const SizedBox(height: BpSpace.snug),
@@ -532,235 +557,57 @@ class _CaliperBars extends StatelessWidget {
 }
 
 
-/// The graticule with an amber bar scanning across it.
+/// A child that arrives: a short fade and a 6px rise, after a delay.
 ///
-/// The design's building screen has a 2px amber gradient bar travelling over
-/// 2.6 seconds. Here it travels over the build plate rather than over a
-/// drawing of the part, for the reason given at `_waiting`.
-class _ScanPlate extends StatefulWidget {
-  const _ScanPlate();
+/// Used to stagger the stage list. Deliberately small - the design's motion
+/// is a machine settling, not a page assembling itself - and it respects
+/// reduced motion by simply being there.
+class _Arrive extends StatefulWidget {
+  const _Arrive({required this.child, required this.delay});
+
+  final Widget child;
+  final Duration delay;
 
   @override
-  State<_ScanPlate> createState() => _ScanPlateState();
+  State<_Arrive> createState() => _ArriveState();
 }
 
-class _ScanPlateState extends State<_ScanPlate>
-    with SingleTickerProviderStateMixin {
+class _ArriveState extends State<_Arrive> with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
-    duration: const Duration(milliseconds: 2600),
-    vsync: this,
-  )..repeat();
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final plate = CustomPaint(
-      size: Size.infinite,
-      painter: _PlatePainter(),
-    );
-    if (MediaQuery.of(context).disableAnimations) return plate;
-
-    return Stack(
-      fit: StackFit.expand,
-      children: [
-        plate,
-        AnimatedBuilder(
-          animation: _controller,
-          builder: (context, _) => Align(
-            // Linear, per the design: a scan is a constant sweep, and easing
-            // it would read as something being dragged.
-            alignment: Alignment(0, _controller.value * 2 - 1),
-            child: Container(
-              height: 2,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [
-                  BpCore.phosphor.withValues(alpha: 0),
-                  BpCore.phosphor.withValues(alpha: 0.45),
-                  BpCore.phosphor.withValues(alpha: 0),
-                ]),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _PlatePainter extends CustomPainter {
-  /// 26px, the design's pitch on the app ground - the same as the boot
-  /// screen's, because it is the same plate.
-  static const double pitch = 26;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final line = Paint()
-      ..color = BpCore.grid
-      ..strokeWidth = 1;
-    for (double x = 0; x < size.width; x += pitch) {
-      canvas.drawLine(Offset(x, 0), Offset(x, size.height), line);
-    }
-    for (double y = 0; y < size.height; y += pitch) {
-      canvas.drawLine(Offset(0, y), Offset(size.width, y), line);
-    }
-  }
-
-  @override
-  bool shouldRepaint(_PlatePainter oldDelegate) => false;
-}
-
-
-/// An isometric wireframe, stroked on as the build reports progress.
-///
-/// The edges are drawn in the order a solid is actually made: the footprint
-/// first, then the verticals, then the top face, then a bore. `progress` is
-/// the fraction of the whole outline to draw, and it comes from the stage
-/// list rather than from a clock.
-class _Wireframe extends StatefulWidget {
-  const _Wireframe({required this.progress});
-
-  final double progress;
-
-  @override
-  State<_Wireframe> createState() => _WireframeState();
-}
-
-class _WireframeState extends State<_Wireframe>
-    with SingleTickerProviderStateMixin {
-  /// The stages arrive minutes apart, so the stroke is eased between them
-  /// rather than snapping - a jump would read as a glitch, and this is the
-  /// only thing on screen that moves when a stage lands.
-  late final AnimationController _controller = AnimationController(
-    duration: const Duration(milliseconds: 900),
+    duration: const Duration(milliseconds: 320),
     vsync: this,
   );
-  late double _shown = _floor;
-
-  /// Never zero. A screen that says "building" over an empty plate for the
-  /// first ninety seconds looks like a screen that failed to start, so the
-  /// footprint is on from the beginning.
-  static const double _floor = 0.18;
+  Timer? _start;
 
   @override
   void initState() {
     super.initState();
-    _controller.addListener(() => setState(() {}));
-    _controller.value = 1;
+    _start = Timer(widget.delay, () {
+      if (mounted) _controller.forward();
+    });
   }
-
-  @override
-  void didUpdateWidget(_Wireframe old) {
-    super.didUpdateWidget(old);
-    if (old.progress == widget.progress) return;
-    _shown = _target(old.progress);
-    _controller.forward(from: 0);
-  }
-
-  double _target(double progress) =>
-      _floor + progress * (1 - _floor);
 
   @override
   void dispose() {
+    _start?.cancel();
     _controller.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final to = _target(widget.progress);
-    final drawn = MediaQuery.of(context).disableAnimations
-        ? to
-        : _shown + (to - _shown) * Curves.easeOutCubic
-            .transform(_controller.value);
-    return CustomPaint(painter: _WireframePainter(drawn));
+    if (MediaQuery.of(context).disableAnimations) return widget.child;
+    final eased = CurvedAnimation(parent: _controller, curve: Curves.easeOut);
+    return FadeTransition(
+      opacity: eased,
+      child: AnimatedBuilder(
+        animation: eased,
+        builder: (context, child) => Transform.translate(
+          offset: Offset(0, 6 * (1 - eased.value)),
+          child: child,
+        ),
+        child: widget.child,
+      ),
+    );
   }
-}
-
-class _WireframePainter extends CustomPainter {
-  const _WireframePainter(this.drawn);
-
-  final double drawn;
-
-  /// The isometric projection this product uses everywhere: azimuth 315,
-  /// elevation 26. Written out rather than borrowed from the renderer, because
-  /// this is a drawing of nothing in particular and does not belong in the
-  /// pipeline that draws real parts.
-  Offset _iso(double x, double y, double z, Size size, double scale) {
-    const cos30 = 0.8660254;
-    final sx = (x - y) * cos30;
-    final sy = (x + y) * 0.5 - z;
-    return Offset(size.width / 2 + sx * scale, size.height / 2 + sy * scale);
-  }
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final scale = size.shortestSide / 6.2;
-    Offset at(double x, double y, double z) => _iso(x, y, z, size, scale);
-
-    // A 2 × 2 × 1 slab with a bore, in the order a solid is built.
-    const h = 1.0;
-    final footprint = [
-      (at(-1, -1, 0), at(1, -1, 0)),
-      (at(1, -1, 0), at(1, 1, 0)),
-      (at(1, 1, 0), at(-1, 1, 0)),
-      (at(-1, 1, 0), at(-1, -1, 0)),
-    ];
-    final verticals = [
-      (at(-1, -1, 0), at(-1, -1, h)),
-      (at(1, -1, 0), at(1, -1, h)),
-      (at(1, 1, 0), at(1, 1, h)),
-      (at(-1, 1, 0), at(-1, 1, h)),
-    ];
-    final top = [
-      (at(-1, -1, h), at(1, -1, h)),
-      (at(1, -1, h), at(1, 1, h)),
-      (at(1, 1, h), at(-1, 1, h)),
-      (at(-1, 1, h), at(-1, -1, h)),
-    ];
-
-    final segments = [...footprint, ...verticals, ...top];
-
-    // The bore, as a ring on the top face. Last, because a cut comes after
-    // the solid it is cut from - which is the order the engine works in too.
-    const steps = 40;
-    for (var i = 0; i < steps; i++) {
-      final a0 = i / steps * 2 * 3.14159265;
-      final a1 = (i + 1) / steps * 2 * 3.14159265;
-      segments.add((
-        at(0.45 * math.cos(a0), 0.45 * math.sin(a0), h),
-        at(0.45 * math.cos(a1), 0.45 * math.sin(a1), h),
-      ));
-    }
-
-    final count = (segments.length * drawn.clamp(0.0, 1.0)).floor();
-    final line = Paint()
-      ..color = BpCore.screen
-      ..strokeWidth = 1.6
-      ..strokeCap = StrokeCap.round;
-
-    for (var i = 0; i < count && i < segments.length; i++) {
-      canvas.drawLine(segments[i].$1, segments[i].$2, line);
-    }
-
-    // The segment currently being drawn, in amber. One moving mark, and it is
-    // what makes the drawing read as being made rather than as being revealed.
-    if (count < segments.length) {
-      canvas.drawLine(
-        segments[count].$1,
-        segments[count].$2,
-        Paint()
-          ..color = BpCore.phosphor
-          ..strokeWidth = 2
-          ..strokeCap = StrokeCap.round,
-      );
-    }
-  }
-
-  @override
-  bool shouldRepaint(_WireframePainter old) => old.drawn != drawn;
 }

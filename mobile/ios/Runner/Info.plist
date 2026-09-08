@@ -41,6 +41,14 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<!-- WHY THE APP ASKS. A reference photo is measured on the computer and
+	     becomes a reference body; it is never printed and never leaves the
+	     machine running bpcad. The strings say that, because a permission
+	     prompt with a vague reason is one people refuse. -->
+	<key>NSCameraUsageDescription</key>
+	<string>To photograph the object your part has to fit, so bpcad can measure its outline.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>To use a photo you already have as the reference bpcad measures your part against.</string>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>

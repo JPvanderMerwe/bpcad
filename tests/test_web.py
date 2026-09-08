@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -176,14 +177,106 @@ def test_a_draft_says_it_has_no_mesh_rather_than_looking_broken(base_url):
     )
 
 
-def test_a_stored_part_claims_no_verdict(base_url):
+def test_a_stored_part_serves_the_verdict_it_was_given(base_url):
     """
-    Nothing on disk records the verdict, and re-verifying costs as much as
-    rebuilding. Inventing a PASS because the files exist is precisely the
-    failure this program is built to avoid.
+    THE VERDICT WAS ON DISK THE WHOLE TIME.
+
+    This route used to answer with no verdict at all, and both clients printed
+    "not re-checked" over every part, on the stated grounds that nothing
+    records one and that re-verifying costs as long as building. Both were
+    false: every part built through the pipeline writes run.json and run.json
+    holds the entire verify report, and a re-verify of a real part measured
+    0.3s against that same part's recorded build time of 151s.
+
+    What is still forbidden is inventing one. A part with no run.json - an
+    import, or one made before bpcad kept one - carries no `checks` key at
+    all, which is a real "not known" rather than a manufactured PASS.
     """
-    data = get_json("%s/api/part/%s" % (base_url, _first_built(base_url)["name"]))
-    assert "verdict" not in data
+    name = _first_built(base_url)["name"]
+    data = get_json("%s/api/part/%s" % (base_url, name))
+
+    checks = data.get("checks")
+    if checks is None:
+        # Legitimate: this part has no run.json. Then it must claim nothing.
+        assert "verdict" not in data
+        pytest.skip("%s predates run.json, so there is nothing stored to serve"
+                    % name)
+
+    assert checks["verdict"] in ("PASS", "PASS, with warnings", "FAIL")
+    assert isinstance(checks["ok"], bool)
+    assert checks["source"] == "stored"
+
+    # PROVENANCE, OR IT IS A REMEMBERED TICK. A verdict with no date and no
+    # profile behind it is exactly what this program refuses to show.
+    assert checks["checked_at"] > 0
+    assert "drift" in checks
+
+    # AND A MEASURED VALUE ON EVERY LINE. A status with no number beside it is
+    # a green tick, which is what the checks panel exists not to be.
+    assert checks["lines"], "the verdict came with no measured checks"
+    for line in checks["lines"]:
+        assert line["name"]
+        assert line["value"] != ""
+        assert line["status"] in ("pass", "warn", "fail", "info")
+
+
+def test_a_re_check_runs_for_real_and_says_it_is_current(base_url):
+    """
+    Re-checking is not a rebuild. No model is called and no geometry is
+    composed - the mesh is on disk and the same checks run over it again -
+    which is why this is a plain POST with an answer rather than a job.
+    """
+    name = _first_built(base_url)["name"]
+    stored = get_json("%s/api/part/%s" % (base_url, name)).get("checks")
+
+    request = urllib.request.Request(
+        "%s/api/part/%s/verify" % (base_url, name), data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            body = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        if exc.code == 409:
+            pytest.skip("%s has no mesh on disk to check" % name)
+        raise
+
+    fresh = body["checks"]
+    assert fresh["source"] == "just now"
+    # Nothing has drifted from a check taken this second - that is the whole
+    # reason to offer one.
+    assert fresh["drift"] == []
+    assert fresh["lines"]
+
+    # THE TWO MUST AGREE ABOUT THE GEOMETRY. The mesh is deterministic from
+    # the spec, so a fresh check of an unchanged part that disagreed with its
+    # stored verdict would mean one of the two was wrong.
+    if stored is not None and not stored.get("drift"):
+        assert fresh["ok"] == stored["ok"], (
+            "a re-check disagreed with the stored verdict on unchanged "
+            "geometry: %s then %s" % (stored["verdict"], fresh["verdict"]))
+
+
+def test_re_checking_something_with_no_mesh_says_so(base_url):
+    """
+    A draft is a spec with no geometry. Asking to measure it is a real
+    request with a real answer - there is nothing on disk to measure - and
+    that answer is a sentence, not a 500.
+    """
+    parts = get_json(base_url + "/api/parts")["parts"]
+    drafts = [p for p in parts if p.get("built") is False]
+    if not drafts:
+        pytest.skip("nothing in the library has failed to build")
+
+    request = urllib.request.Request(
+        "%s/api/part/%s/verify" % (base_url, drafts[0]["name"]),
+        data=b"", method="POST")
+    try:
+        with urllib.request.urlopen(request, timeout=60) as response:
+            assert False, "a draft was checked, and it has no mesh: %s" % (
+                response.read())
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 409, "expected a refusal, got %d" % exc.code
+        message = json.loads(exc.read())["error"]
+        assert "no mesh" in message, message
 
 
 def a_built_part(base_url) -> dict:
@@ -683,6 +776,75 @@ def test_a_job_that_raises_reports_a_readable_message_not_a_traceback(base_url):
 
 def test_asking_for_a_job_that_does_not_exist_is_a_404(base_url):
     assert status_of(base_url + "/api/job/deadbeef0000") == 404
+
+
+def test_the_machine_says_what_it_is_working_on(base_url):
+    """
+    "YOU CAN LEAVE IT RUNNING" HAS TO BE CHECKABLE.
+
+    Both clients promise that a build outlives the screen that started it,
+    and until /api/jobs there was no way to ask what became of one. A phone
+    that locked mid-build had to guess from whether a part turned up later.
+    """
+    release = threading.Event()
+
+    def work(job):
+        job.emit("note", text="building geometry")
+        release.wait(5)
+        return {"ok": True, "name": "a-part"}
+
+    job = web._start_job("generate", "a bracket for an 8 mm rod", work)
+    while len(job.events) < 2:                    # started + the note
+        pass
+
+    rows = get_json(base_url + "/api/jobs")["jobs"]
+    mine = [row for row in rows if row["id"] == job.id]
+    assert mine, "the running job was not in %r" % rows
+    row = mine[0]
+    assert row["done"] is False
+    assert row["kind"] == "generate"
+    assert row["request"] == "a bracket for an 8 mm rod"
+    # THE ENGINE'S LAST WORDS, not a stage this endpoint decided it must be at.
+    assert row["note"] == "building geometry"
+    assert row["elapsed_s"] >= 0
+
+    release.set()
+    for _ in range(200):
+        if job.done:
+            break
+        time.sleep(0.05)
+
+    row = [r for r in get_json(base_url + "/api/jobs")["jobs"]
+           if r["id"] == job.id][0]
+    assert row["done"] is True
+    assert row["ok"] is True
+    assert row["name"] == "a-part"
+
+
+def test_a_finished_job_stops_its_clock_rather_than_ageing(base_url):
+    """
+    A done job measured against `now` reads as hours long by the evening.
+    That is a wrong number on a screen whose whole claim is measured numbers,
+    not a stale one - so the clock stops at the last event.
+    """
+
+    def work(job):
+        return {"ok": True, "name": "quick"}
+
+    job = web._start_job("generate", "something quick", work)
+    for _ in range(200):
+        if job.done:
+            break
+        time.sleep(0.05)
+
+    first = [r for r in get_json(base_url + "/api/jobs")["jobs"]
+             if r["id"] == job.id][0]["elapsed_s"]
+    time.sleep(0.4)
+    second = [r for r in get_json(base_url + "/api/jobs")["jobs"]
+              if r["id"] == job.id][0]["elapsed_s"]
+    assert first == second, (
+        "a finished job aged from %.1fs to %.1fs between two reads" % (first, second)
+    )
 
 
 # ---------------------------------------------------------------------------

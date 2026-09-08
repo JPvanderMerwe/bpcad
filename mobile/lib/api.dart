@@ -169,6 +169,24 @@ class BpcadApi {
         jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  /// Check a part again, now, against the printer profile as it stands.
+  ///
+  /// NOT A REBUILD, and not a job. No model is called and no geometry is
+  /// composed: the mesh is already on disk and the same checks the build ran
+  /// are run over it again. It was measured at 0.3s on a part whose build
+  /// took 151s - which is why this is a plain request with an answer rather
+  /// than a progress screen.
+  Future<Checks> reverify(String name) async {
+    final response = await http
+        .post(_uri('/api/part/${Uri.encodeComponent(name)}/verify'))
+        .timeout(const Duration(seconds: 120));
+    if (response.statusCode != 200) {
+      throw BpcadUnreachable(_messageFrom(response));
+    }
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return Checks.fromJson(body['checks'] as Map<String, dynamic>);
+  }
+
   /// A template's parameters, with the bounds the sliders need.
   ///
   /// THE BOUNDS ARE THE SCHEMA'S OWN. A client inventing a range would be
@@ -210,11 +228,17 @@ class BpcadApi {
         jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  /// Put a photo on the server and get back the path to hand to a generate.
+  /// Put a photo on the server and get back the reference it became.
   ///
   /// The bytes go up raw with their content type; the server names the file
   /// itself rather than trusting one from a phone.
-  Future<String> upload(List<int> bytes, String contentType) async {
+  ///
+  /// IT COMES BACK MEASURED. The server runs the silhouette measurement as
+  /// part of taking the file, which is the whole reason this returns an
+  /// object rather than a path: a photo that separated nothing from its
+  /// background is worth saying so about in the second it lands, not after
+  /// the user has spent four minutes of GPU on it.
+  Future<Reference> upload(List<int> bytes, String contentType) async {
     final response = await http
         .post(_uri('/api/upload'),
             headers: {'Content-Type': contentType}, body: bytes)
@@ -222,8 +246,25 @@ class BpcadApi {
     if (response.statusCode != 200) {
       throw BpcadUnreachable(_messageFrom(response));
     }
-    return (jsonDecode(response.body) as Map<String, dynamic>)['path']
-        as String;
+    return Reference.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// What the machine is working on right now.
+  ///
+  /// A generate runs on the computer and outlives the screen that started it -
+  /// which is the promise the building screen makes when it says "you can
+  /// leave this running". Without this the phone had no way to ask what came
+  /// of that, and "it carries on" was a claim the app could not check.
+  Future<List<RunningJob>> jobs() async {
+    final response = await http.get(_uri('/api/jobs')).timeout(_quick);
+    if (response.statusCode != 200) {
+      throw BpcadUnreachable('the job list answered ${response.statusCode}');
+    }
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return ((body['jobs'] ?? const []) as List<dynamic>)
+        .map((e) => RunningJob.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   /// Progress for a running job, as server-sent events.
@@ -497,6 +538,7 @@ class PartDetail {
     required this.files,
     required this.hasStl,
     required this.frames,
+    required this.checks,
   });
 
   final String name;
@@ -519,10 +561,25 @@ class PartDetail {
   final bool hasStl;
   final int frames;
 
+  /// THE VERDICT THIS PART WAS GIVEN, or null when there genuinely is none.
+  ///
+  /// Null means the part predates run.json or was imported rather than
+  /// generated - a real "not known". It does NOT mean "we did not look":
+  /// every part built through the pipeline was verified at build time and the
+  /// whole report is on disk, which is what this field carries.
+  final Checks? checks;
+
   bool get parametric => template != null && params.isNotEmpty;
 
   factory PartDetail.fromJson(Map<String, dynamic> json) {
-    final spec = (json['spec'] ?? const {}) as Map<String, dynamic>;
+    // `as Map<String, dynamic>` on a `const {}` fallback throws: an empty
+    // const map is Map<dynamic, dynamic>, and the cast fails at runtime. It
+    // never showed up because the server sends a spec for every part that
+    // HAS a spec.yaml - and threw on the ones that do not, which is every
+    // draft and every imported mesh: exactly the parts that also carry no
+    // verdict, so it surfaced the moment those were opened.
+    final spec = (json['spec'] as Map<String, dynamic>?) ??
+        const <String, dynamic>{};
     List<double>? size;
     final raw = json['size_mm'];
     if (raw is List && raw.length == 3 && raw.every((v) => v is num)) {
@@ -537,12 +594,16 @@ class PartDetail {
       volumeCm3: (json['volume_cm3'] as num?)?.toDouble(),
       bodies: json['bodies'] as int?,
       reportMd: (json['report_md'] ?? '').toString(),
-      params: (spec['params'] ?? const {}) as Map<String, dynamic>,
+      params: (spec['params'] as Map<String, dynamic>?) ??
+          const <String, dynamic>{},
       files: ((json['files'] ?? const []) as List<dynamic>)
           .map((e) => e.toString())
           .toList(),
       hasStl: json['has_stl'] != false,
       frames: (json['frames'] ?? 24) as int,
+      checks: json['checks'] is Map<String, dynamic>
+          ? Checks.fromJson(json['checks'] as Map<String, dynamic>)
+          : null,
     );
   }
 }
@@ -626,5 +687,233 @@ class ParsedCommand {
         text: (json['text'] ?? '').toString(),
         refine: json['refine'] as String?,
         problem: json['problem'] as String?,
+      );
+}
+
+/// A reference photo, as the server took it and measured it.
+///
+/// EVERY NUMBER IN HERE IS IN PIXELS, and that is the point of carrying the
+/// caveat on the object rather than leaving the UI to remember it. Nothing
+/// measured off a photograph can become a millimetre without one real
+/// dimension from the person holding the object - so the screen that shows
+/// these says so, every time, beside them.
+class Reference {
+  Reference({
+    required this.path,
+    required this.name,
+    required this.bytes,
+    required this.type,
+    required this.measured,
+    required this.note,
+    required this.needsScale,
+  });
+
+  /// Where it landed on the computer. This is what a generate is handed.
+  final String path;
+  final String name;
+  final int bytes;
+  final String type;
+
+  /// The silhouette measurement, in the server's own keys: `width_px`,
+  /// `height_px`, `aspect`, `background_cut`, and the boxes as read.
+  final Map<String, dynamic> measured;
+
+  /// Why the measurement is empty, when it is. A photo whose object touches
+  /// the border, or that separated nothing from its background, fails here -
+  /// and it is far better to say that now than to spend a build on it.
+  final String note;
+  final bool needsScale;
+
+  bool get separated => measured.isNotEmpty;
+
+  /// The size of the object in the frame, in pixels. Null when nothing
+  /// separated - never a zero, because zero reads as a measurement.
+  String? get extentPx {
+    final w = measured['width_px'];
+    final h = measured['height_px'];
+    if (w is! num || h is! num) return null;
+    return '${w.round()} × ${h.round()} px';
+  }
+
+  String? get aspect {
+    final value = measured['aspect'];
+    return value is num ? value.toStringAsFixed(3) : null;
+  }
+
+  String get weight => bytes < 1048576
+      ? '${(bytes / 1024).round()} kB'
+      : '${(bytes / 1048576).toStringAsFixed(1)} MB';
+
+  factory Reference.fromJson(Map<String, dynamic> json) => Reference(
+        path: (json['path'] ?? '').toString(),
+        name: (json['name'] ?? '').toString(),
+        bytes: ((json['bytes'] ?? 0) as num).round(),
+        type: (json['type'] ?? '').toString(),
+        measured: Map<String, dynamic>.from(
+            (json['measured'] ?? const <String, dynamic>{}) as Map),
+        note: (json['note'] ?? '').toString(),
+        needsScale: json['needs_scale'] == true,
+      );
+}
+
+/// One job on the computer, running or finished.
+///
+/// The elapsed time is worked out from the server's own clock reading, not
+/// from when the phone happened to ask - a phone that has been asleep for ten
+/// minutes must not report a job as ten minutes younger than it is.
+class RunningJob {
+  RunningJob({
+    required this.id,
+    required this.kind,
+    required this.request,
+    required this.done,
+    required this.ok,
+    required this.note,
+    required this.name,
+    required this.elapsedSeconds,
+  });
+
+  final String id;
+
+  /// `generate` or `refine`.
+  final String kind;
+  final String request;
+  final bool done;
+
+  /// Whether it produced a part. Meaningless while [done] is false, which is
+  /// why the UI reads [done] first.
+  final bool ok;
+
+  /// The last thing the engine said. This is the same text the building
+  /// screen lights its stages from.
+  final String note;
+
+  /// The part it made, once there is one.
+  final String name;
+  final int elapsedSeconds;
+
+  String get elapsed => elapsedSeconds >= 90
+      ? '${(elapsedSeconds / 60).round()} min'
+      : '${elapsedSeconds}s';
+
+  factory RunningJob.fromJson(Map<String, dynamic> json) => RunningJob(
+        id: (json['id'] ?? '').toString(),
+        kind: (json['kind'] ?? '').toString(),
+        request: (json['request'] ?? '').toString(),
+        done: json['done'] == true,
+        ok: json['ok'] == true,
+        note: (json['note'] ?? '').toString(),
+        name: (json['name'] ?? '').toString(),
+        elapsedSeconds: ((json['elapsed_s'] ?? 0) as num).round(),
+      );
+}
+
+/// One verify report, stored or just run.
+///
+/// WHY THIS EXISTS AT ALL. Both clients used to print "not re-checked" over
+/// every part, on the stated grounds that a part on disk has no verdict and
+/// that re-verifying costs as long as building. Neither was true: run.json
+/// holds the entire verify report from the build, and a re-verify of a real
+/// part measured 0.3s against that same part's recorded build time of 151s.
+/// The expensive thing in a build is the model call, not the checking.
+///
+/// So a part carries its verdict, WITH the day it was taken and the profile
+/// it was taken against - and [drift] says when that profile has moved since,
+/// which is the one honest reason to distrust a stored answer.
+class Checks {
+  Checks({
+    required this.verdict,
+    required this.ok,
+    required this.problems,
+    required this.warnings,
+    required this.lines,
+    required this.source,
+    required this.checkedAt,
+    required this.drift,
+    required this.nozzleMm,
+    required this.material,
+  });
+
+  /// `PASS`, `PASS, with warnings` or `FAIL`, in the engine's own words.
+  final String verdict;
+  final bool ok;
+
+  /// What makes the part WRONG. Needing support is deliberately not one of
+  /// these - plenty of good parts need it, and a verdict that cries wolf on a
+  /// known-good part teaches you to ignore verdicts.
+  final List<String> problems;
+
+  /// Worth knowing before printing, but not defects in the geometry.
+  final List<String> warnings;
+
+  /// Every check with its measured value. A status without a number is a
+  /// green tick, which is what this whole panel exists not to be.
+  final List<CheckLine> lines;
+
+  /// `stored` or `just now`.
+  final String source;
+  final DateTime checkedAt;
+
+  /// Reasons the stored answer may no longer hold - a nozzle that changed in
+  /// the profile since. Empty for a check taken this second.
+  final List<String> drift;
+
+  final double? nozzleMm;
+  final String? material;
+
+  bool get fresh => source == 'just now';
+  bool get stale => drift.isNotEmpty;
+
+  /// How long ago, in the words a person uses. Never a raw timestamp: "built
+  /// 3 days ago" is a fact somebody can act on and "1788514274" is not.
+  String get age {
+    final delta = DateTime.now().difference(checkedAt);
+    if (delta.inSeconds < 45) return 'just now';
+    if (delta.inMinutes < 60) return '${delta.inMinutes} min ago';
+    if (delta.inHours < 24) return '${delta.inHours} h ago';
+    return '${delta.inDays} d ago';
+  }
+
+  factory Checks.fromJson(Map<String, dynamic> json) => Checks(
+        verdict: (json['verdict'] ?? '').toString(),
+        ok: json['ok'] == true,
+        problems: ((json['problems'] ?? const []) as List<dynamic>)
+            .map((e) => e.toString())
+            .toList(),
+        warnings: ((json['warnings'] ?? const []) as List<dynamic>)
+            .map((e) => e.toString())
+            .toList(),
+        lines: ((json['lines'] ?? const []) as List<dynamic>)
+            .map((e) => CheckLine.fromJson(e as Map<String, dynamic>))
+            .toList(),
+        source: (json['source'] ?? 'stored').toString(),
+        checkedAt: DateTime.fromMillisecondsSinceEpoch(
+            (((json['checked_at'] ?? 0) as num) * 1000).round()),
+        drift: ((json['drift'] ?? const []) as List<dynamic>)
+            .map((e) => e.toString())
+            .toList(),
+        nozzleMm: (json['nozzle_mm'] as num?)?.toDouble(),
+        material: json['material']?.toString(),
+      );
+}
+
+/// One measured check: what was looked at, what it read, and how that lands.
+///
+/// `info` is a real status. The number of separate bodies decides whether a
+/// hinge turns and is neither a pass nor a failure - it is the measurement
+/// you have to look at yourself.
+class CheckLine {
+  CheckLine({required this.name, required this.value, required this.status});
+
+  final String name;
+  final String value;
+
+  /// `pass`, `warn`, `fail` or `info`.
+  final String status;
+
+  factory CheckLine.fromJson(Map<String, dynamic> json) => CheckLine(
+        name: (json['name'] ?? '').toString(),
+        value: (json['value'] ?? '').toString(),
+        status: (json['status'] ?? 'info').toString(),
       );
 }

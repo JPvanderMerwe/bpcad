@@ -395,12 +395,23 @@ function dimensionReport(part) {
 
 /* CHECKS.
  *
- * A freshly built part carries a verdict, its problems and its warnings. A
- * part opened from the library does NOT - the server refuses to invent one,
- * because the only honest answers are to re-verify it (which costs as long as
- * building it) or to say nothing. So this panel says which of those two
- * situations you are in, rather than showing a row of green ticks that were
- * true last Tuesday.
+ * THIS PANEL USED TO SAY "NOT RE-CHECKED" ON EVERY STORED PART, on the stated
+ * grounds that no verdict is kept and that re-verifying costs as long as
+ * building. Both were wrong. Every part built through the pipeline writes
+ * run.json, and run.json holds the whole verify report - ok, mesh, overhang,
+ * problems, warnings. And a re-verify of a real part measured 0.3s against
+ * that part's own recorded build time of 151s: the expensive thing in a build
+ * is the model call, not the checking.
+ *
+ * So a part shows the verdict it was given, WITH the day it was given and the
+ * profile it was measured against, and every check with the value it read. A
+ * status with no number beside it is a green tick, which is what this panel
+ * exists not to be.
+ *
+ * The one honest reason to distrust a stored answer is that the profile has
+ * moved under it - a nozzle changed in config since. That is what `drift`
+ * carries, and it is why "Check it again" is a button rather than an
+ * automatic refresh: the user decides when the answer needs to be current.
  */
 function checks(part) {
   const host = $('checks');
@@ -419,22 +430,104 @@ function checks(part) {
     host.appendChild(el);
   };
 
-  const verdict = (part.verdict || '').toUpperCase();
-  if (verdict) {
-    const problems = part.problems || [];
-    const warnings = part.warnings || [];
-    if (!problems.length && !warnings.length) {
-      add('pass', '✓', 'Every check', 'pass',
-          'Watertight, inside the bed, and no wall under the nozzle width.');
-    }
-    problems.forEach((p) => add('fail', '✗', 'Failed', 'fail', p));
-    warnings.forEach((w) => add('warn', '!', 'Warning', 'warn', w));
+  /* One measured check: the name, the value it read, and how that lands.
+     Reusing the fact-row shape from the report panel keeps a number set in
+     the numeric face, which is what makes it read as a measurement. */
+  const measured = (line) => {
+    const el = document.createElement('div');
+    el.className = 'cline ' + (line.status || 'info');
+    el.innerHTML = '<span class="clmark"></span><span class="clname"></span>'
+      + '<span class="clvalue num"></span>';
+    el.querySelector('.clmark').textContent =
+      { pass: '\u2713', warn: '!', fail: '\u00d7' }[line.status] || '\u00b7';
+    el.querySelector('.clname').textContent = line.name;
+    el.querySelector('.clvalue').textContent = line.value;
+    host.appendChild(el);
+  };
+
+  const ago = (epochSeconds) => {
+    const delta = Date.now() / 1000 - (epochSeconds || 0);
+    if (delta < 45) return 'just now';
+    if (delta < 3600) return Math.round(delta / 60) + ' min ago';
+    if (delta < 86400) return Math.round(delta / 3600) + ' h ago';
+    return Math.round(delta / 86400) + ' d ago';
+  };
+
+  /* A freshly built part carries its verdict at the top level of the job's
+     done frame; a part opened from the library carries `checks`. Same report,
+     two ways in - so the newer shape is preferred and the older one still
+     works without a second rendering of it. */
+  const c = part.checks;
+  if (c) {
+    const note = document.createElement('div');
+    note.className = 'cprov ' + (c.ok ? (c.drift && c.drift.length ? 'warn' : 'pass') : 'fail');
+    const when = c.source === 'just now'
+      ? 'checked just now, against the profile as it stands'
+      : 'checked when it was built, ' + ago(c.checked_at)
+        + (c.nozzle_mm ? ', against a ' + c.nozzle_mm.toFixed(2) + ' mm nozzle' : '');
+    note.innerHTML = '<div class="cverdict"></div><div class="cwhen"></div>';
+    note.querySelector('.cverdict').textContent = c.verdict || '';
+    note.querySelector('.cwhen').textContent = when;
+    (c.drift || []).forEach((why) => {
+      const line = document.createElement('p');
+      line.className = 'cdrift';
+      line.textContent = why;
+      note.appendChild(line);
+    });
+    host.appendChild(note);
+
+    (c.lines || []).forEach(measured);
+    (c.problems || []).forEach((p) => add('fail', '\u00d7', 'Problem', 'fail', p));
+    (c.warnings || []).forEach((w) => add('warn', '!', 'Worth knowing', 'warn', w));
   } else {
-    add('warn', '!', 'Not re-checked', 'unverified',
-        'This part was verified when it was built and the result is in the '
-        + 'report below. bpcad does not store a verdict, because re-checking '
-        + 'costs as long as rebuilding and a remembered tick is not a check.');
+    const verdict = (part.verdict || '').toUpperCase();
+    if (verdict) {
+      const problems = part.problems || [];
+      const warnings = part.warnings || [];
+      if (!problems.length && !warnings.length) {
+        add('pass', '\u2713', 'Every check', 'pass',
+            'Watertight, inside the bed, and no wall under the nozzle width.');
+      }
+      problems.forEach((p) => add('fail', '\u2717', 'Failed', 'fail', p));
+      warnings.forEach((w) => add('warn', '!', 'Warning', 'warn', w));
+    } else {
+      /* A REAL "NOT KNOWN", and only for a part that has one: imported meshes
+         and parts made before run.json existed. Not a blanket state applied
+         to everything that comes off disk. */
+      add('warn', '?', 'Never checked', 'no record',
+          'This part has no run.json, so it was either imported or made '
+          + 'before bpcad kept one. That is a gap in the record rather than a '
+          + 'check that was skipped - run one now and it is measured against '
+          + 'the profile as it stands.');
+    }
   }
+
+  /* A SECOND, NOT A REBUILD, and the button says so. */
+  const again = document.createElement('button');
+  again.className = 'btn';
+  again.type = 'button';
+  again.textContent = 'Check it again';
+  again.addEventListener('click', async () => {
+    again.disabled = true;
+    again.textContent = 'checking';
+    try {
+      const url = '/api/part/' + encodeURIComponent(part.name) + '/verify';
+      const response = await fetch(url, { method: 'POST' });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error || response.status);
+      part.checks = body.checks;
+      checks(part);
+      return;
+    } catch (error) {
+      again.disabled = false;
+      again.textContent = 'Check it again';
+      const line = document.createElement('p');
+      line.className = 'cdrift';
+      line.textContent = String(error.message || error);
+      host.appendChild(line);
+    }
+  });
+  host.appendChild(again);
 
   $('reportText').textContent = part.report_md || '';
   $('reportBox').hidden = !part.report_md;
