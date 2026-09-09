@@ -68,7 +68,7 @@ from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal, Union
 
 import cadquery as cq
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from bpcad.build.helpers import (
     BuildLog,
@@ -191,6 +191,38 @@ class DslOp(BaseModel):
 # ---------------------------------------------------------------------------
 # creators
 # ---------------------------------------------------------------------------
+
+
+def _as_xy_pairs(value: Any) -> Any:
+    """
+    Accept a point written as {"x": 1, "y": 2} as well as [1, 2].
+
+    A MODEL WRITES POINTS AS OBJECTS, and the schema wanted tuples. Asked for
+    an articulated dragon, hermes3 spent two of its three attempts - 384
+    seconds - being told:
+
+        profile_extrude.points.0
+            problem : Input should be a valid tuple
+            given   : {'x': -60, 'y': 0}
+
+    five times over, once per point. Nothing about that answer was wrong about
+    the GEOMETRY. It described the outline it meant, unambiguously, in the
+    more natural of the two spellings, and the run threw it away.
+
+    This is a coercion and not a guess: {"x": a, "y": b} has exactly one
+    reading, and anything that is not a pair of numbers or an x/y object is
+    still refused with the schema's own message. Being strict about spelling
+    when the meaning is certain buys nothing and costs a whole attempt.
+    """
+    if not isinstance(value, list):
+        return value
+    out = []
+    for item in value:
+        if isinstance(item, dict) and set(item) == {"x", "y"}:
+            out.append((item["x"], item["y"]))
+        else:
+            out.append(item)
+    return out
 
 
 class Creator(DslOp):
@@ -653,8 +685,13 @@ class ProfileExtrude(Creator):
     op: Literal["profile_extrude"]
     points: list[tuple[float, float]] = Field(
         ..., min_length=3, max_length=2000,
-        description="Closed outline as (x, y) pairs. Do not repeat the first point at the end.",
+        description=(
+            "Closed outline as (x, y) pairs, or {x:, y:} objects. Do not "
+            "repeat the first point at the end"
+        ),
     )
+
+    _xy = field_validator("points", mode="before")(_as_xy_pairs)
     scale_mm: float = Field(1.0, gt=0, le=1000, description="Multiplier from outline units to mm.")
     height_mm: float = Field(..., gt=0, le=1000, description="Extrusion in Z.")
 
@@ -974,6 +1011,8 @@ class EmbossPolygon(DslOp):
     op: Literal["emboss_polygon"]
     anchor: Anchor = Field(..., description="Face to work on. A name, not a selector.")
     points: list[tuple[float, float]] = Field(..., min_length=3)
+
+    _xy = field_validator("points", mode="before")(_as_xy_pairs)
     scale_mm: float = Field(1.0, gt=0, le=1000, description="Multiplier from polygon units to mm.")
     depth_mm: float = Field(..., gt=0, le=100, description="Relief height, or cut depth if cut.")
     cut: bool = Field(False, description="True cuts into the face, False raises off it.")

@@ -1048,3 +1048,47 @@ def test_thousands_of_dead_facets_are_still_a_reported_fault():
         [box, trimesh.Trimesh(**trimesh.triangles.to_kwargs(dead))])
     report = report_for(mesh)
     assert any("degenerate" in p for p in report.problems), report.problems
+
+def test_a_point_written_as_an_object_is_accepted():
+    """
+    A MODEL WRITES POINTS AS OBJECTS, and the schema wanted tuples.
+
+    Asked for an articulated dragon, hermes3 spent two of its three attempts -
+    384 seconds - being told "Input should be a valid tuple, given {'x': -60,
+    'y': 0}", once per point. Nothing about that answer was wrong about the
+    geometry: it described the outline it meant, unambiguously, and the run
+    threw it away over spelling. The shape it described comes out 120 mm
+    across, which is the dimension the request asked for.
+    """
+    from bpcad.spec.dsl import run_ops
+    from bpcad.verify.fit import mesh_of_solid
+
+    as_objects = mesh_of_solid(run_ops([{
+        "op": "profile_extrude", "height_mm": 6,
+        "points": [{"x": -60, "y": 0}, {"x": -30, "y": 40}, {"x": 0, "y": 80},
+                   {"x": 30, "y": 40}, {"x": 60, "y": 0}],
+    }]).solid)
+    as_tuples = mesh_of_solid(run_ops([{
+        "op": "profile_extrude", "height_mm": 6,
+        "points": [[-60, 0], [-30, 40], [0, 80], [30, 40], [60, 0]],
+    }]).solid)
+
+    assert as_objects.is_watertight
+    assert abs(as_objects.extents[0] - 120.0) < 0.01, as_objects.extents
+    # THE SAME SHAPE, not merely a shape. A coercion that changed the geometry
+    # would be worse than the rejection it replaces.
+    assert abs(as_objects.volume - as_tuples.volume) < 1e-6
+
+
+def test_something_that_is_not_a_point_is_still_refused():
+    """
+    The coercion is for one unambiguous spelling. Anything else still gets the
+    schema's own message, because guessing what a malformed point meant is
+    inventing geometry.
+    """
+    from bpcad.spec.dsl import DslError, parse_op
+
+    with pytest.raises(DslError) as caught:
+        parse_op({"op": "profile_extrude", "height_mm": 6,
+                  "points": [{"x": 1}, {"y": 2}, "somewhere"]})
+    assert "profile_extrude" in str(caught.value)
