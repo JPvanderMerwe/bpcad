@@ -9,6 +9,8 @@ regression digest - so these are equality assertions, not tolerances.
 
 from pathlib import Path
 
+import math
+
 import cadquery as cq
 import pytest
 from pydantic import ValidationError
@@ -897,3 +899,152 @@ def test_a_cut_that_misses_the_part_entirely_is_still_refused(tmp_path):
         compile_and_verify(spec, api.config(), base, tmp_path / "out",
                            strict_cuts=True)
     assert "removed nothing" in str(caught.value)
+
+# ---------------------------------------------------------------------------
+# the two ops that make an organic, articulated part possible at all
+# ---------------------------------------------------------------------------
+
+
+def _mesh(ops, print_axis="z"):
+    from bpcad.spec.dsl import run_ops
+    from bpcad.verify.fit import mesh_of_solid
+    return mesh_of_solid(run_ops(ops, print_axis=print_axis).solid)
+
+
+def test_a_loft_tapers_and_bends_and_is_watertight():
+    """
+    EVERY OTHER CREATOR IS ONE SIZE ALL THE WAY ALONG. A box, a cylinder, a
+    cone and a ball cannot describe a body that is fat in the middle and thin
+    at both ends, or a horn that tapers as it curves - which is most of what
+    anybody actually wants to print. Before this op the honest answer to those
+    was "no template fits", and CLAUDE.md 31 says that is never an acceptable
+    end state.
+    """
+    mesh = _mesh([{
+        "op": "loft",
+        "sections": [
+            {"at_mm": 0, "width_mm": 8},
+            {"at_mm": 12, "width_mm": 20, "depth_mm": 14},
+            {"at_mm": 26, "width_mm": 16, "depth_mm": 12, "x_mm": 6},
+            {"at_mm": 40, "width_mm": 5, "x_mm": 14},
+        ],
+    }])
+    assert mesh.is_watertight
+    # It BENDS: the last station is 14 mm off-axis, so the envelope is wider
+    # than the widest single section.
+    assert mesh.extents[0] > 20.0, mesh.extents
+    assert abs(mesh.extents[2] - 40.0) < 0.1, mesh.extents
+
+
+def test_two_sections_at_the_same_station_say_so():
+    from bpcad.spec.dsl import DslError, run_ops
+
+    with pytest.raises(DslError) as caught:
+        run_ops([{"op": "loft", "sections": [
+            {"at_mm": 5, "width_mm": 10},
+            {"at_mm": 5, "width_mm": 4},
+        ]}])
+    assert "no distance between them" in str(caught.value)
+
+
+def test_a_free_joint_leaves_two_bodies_with_the_measured_gap():
+    """
+    A PRINT-IN-PLACE JOINT IS A SUBTRACTION, NOT AN ASSEMBLY. Two objects
+    placed near each other fuse in the slicer. The way it is really done is to
+    build one blob and remove a thin shell inside it, leaving a ball trapped in
+    a socket - and that is what this op does.
+
+    Two bodies is the whole test. One body means it printed as a solid lump.
+    """
+    import cadquery as cq
+    from bpcad.spec.dsl import run_ops
+    from bpcad.verify.fit import solid_gap_mm
+
+    clearance = 0.30
+    scene = run_ops([
+        {"op": "disc", "diameter_mm": 12, "height_mm": 10},
+        {"op": "disc", "diameter_mm": 5, "height_mm": 6, "z_mm": 10},
+        {"op": "sphere", "diameter_mm": 9, "z_mm": 18},
+        {"op": "disc", "diameter_mm": 14, "height_mm": 14, "z_mm": 12},
+        {"op": "free_joint", "diameter_mm": 9, "clearance_mm": clearance,
+         "stem_d_mm": 5, "stem_len_mm": 9, "z_mm": 18,
+         "rotate_axis": "y", "rotate_deg": 180},
+    ])
+    bodies = scene.solid.solids().vals()
+    assert len(bodies) == 2, (
+        "the joint did not free the ball - %d body/bodies" % len(bodies))
+
+    a = cq.Workplane("XY").newObject([bodies[0]])
+    b = cq.Workplane("XY").newObject([bodies[1]])
+    gap = solid_gap_mm(a, b)
+    assert abs(gap - clearance) < 0.01, (
+        "the running gap measured %.4f mm and the material's clearance is "
+        "%.2f mm" % (gap, clearance))
+
+
+def test_a_stem_as_fat_as_its_ball_is_refused():
+    """
+    No shoulder means the joint pulls straight out, which is a toy that falls
+    apart in your hand rather than a mechanism.
+    """
+    from bpcad.spec.dsl import DslError, run_ops
+
+    with pytest.raises(DslError) as caught:
+        run_ops([
+            {"op": "disc", "diameter_mm": 20, "height_mm": 20},
+            {"op": "free_joint", "diameter_mm": 9, "clearance_mm": 0.3,
+             "stem_d_mm": 9, "stem_len_mm": 9, "z_mm": 10},
+        ])
+    assert "pull straight out" in str(caught.value)
+
+
+def test_a_sphere_exports_as_a_watertight_mesh():
+    """
+    THE SPHERE HAD NEVER PRODUCED A PRINTABLE MESH.
+
+    OpenCASCADE tessellates a sphere with a triangle fan at each pole and
+    writes one zero-area triangle at each of the two poles. Those leave two
+    unmatched edges, so the mesh was reported not watertight at EVERY export
+    tolerance - 0.005, 0.01, 0.05, 0.1 - because the poles are a topology
+    artifact and not a density one.
+
+    One of the fifteen primitives failed verification every single time it was
+    used, and so did anything unioned with one. "not watertight - the mesh has
+    holes and will not slice" was a recurring failure in the eval.
+    """
+    mesh = _mesh([{"op": "sphere", "diameter_mm": 9}])
+    assert mesh.is_watertight
+    # AND THE GEOMETRY IS UNTOUCHED. A zero-area triangle is not geometry, so
+    # removing it cannot move a surface: this is the analytic volume of the
+    # ball, to four decimal places.
+    assert abs(mesh.volume - (4.0 / 3.0) * math.pi * 4.5 ** 3) < 0.2, mesh.volume
+
+
+def test_a_sphere_fused_to_a_part_is_still_watertight():
+    mesh = _mesh([
+        {"op": "rounded_prism", "width_mm": 20, "depth_mm": 20,
+         "height_mm": 10, "corner_r_mm": 1},
+        {"op": "sphere", "diameter_mm": 9, "z_mm": 10},
+    ])
+    assert mesh.is_watertight
+
+
+def test_thousands_of_dead_facets_are_still_a_reported_fault():
+    """
+    The pole triangles are removed so they cannot fail a sound part, but an
+    export tolerance set too fine produces them in the thousands and that is a
+    real fault. The threshold scales with the part rather than being fixed, so
+    the check still fires where it was meant to.
+    """
+    import numpy as np
+    import trimesh
+
+    from bpcad.verify.mesh import report_for
+
+    # A cube, plus a thousand facets with no area at all.
+    box = trimesh.creation.box((10, 10, 10))
+    dead = np.zeros((1000, 3, 3))
+    mesh = trimesh.util.concatenate(
+        [box, trimesh.Trimesh(**trimesh.triangles.to_kwargs(dead))])
+    report = report_for(mesh)
+    assert any("degenerate" in p for p in report.problems), report.problems

@@ -114,3 +114,35 @@ debugging time, written down so it does not happen twice.
     source of truth for the algorithms. Port and generalise it; do not rewrite
     it and do not "improve" the algorithms. Where it is generalised, keep the
     existing behaviour as the default and prove equivalence with a test.
+
+## Coverage
+
+31. **A template is an optimisation, never the boundary of the product.**
+    bpcad is a parametric modeller you talk to. It is not a template catalogue
+    with a chat box on the front, and any change that makes it more of one is
+    the wrong change.
+
+    So: **"no template fits" is never an acceptable end state.** It is the
+    normal case. Most things a person wants have no template and never will -
+    the catalogue is five entries and the space of parts is not. A template is
+    a shortcut for a shape that comes up often enough to be worth pinning, with
+    bounds a builder can enforce. Everything else has to be composed, and the
+    composition path is the product rather than the fallback.
+
+    Which means the DSL is the thing to invest in. When a request cannot be
+    made, the fix is a missing OPERATION - a loft, a sweep along a path, a
+    revolve of a drawn profile, a shell, a print-in-place joint, a pattern
+    around a curve - not a missing template. Adding a template to close a gap a
+    primitive should have closed is borrowing against the next request.
+
+    This does not loosen rule 12. The model still does not write CAD code: it
+    fills a validated spec, and the answer to a shape the spec cannot express
+    is to teach the spec that shape, with bounds and a verifier, not to hand
+    the model a Python prompt.
+
+    *Written 2026-09-09, after "a mini articulated dragon that prints in place"
+    exhausted level 1 in seconds because nothing in the catalogue claims a
+    dragon. The measured geometry was never the problem - the same build
+    produces an 80 x 40 x 6 mm plate whose bores measure 4.9998 mm at 59.998 mm
+    centres, watertight, 0.0001% off the analytic volume. What it cannot do is
+    describe a shape nobody wrote a template for.*

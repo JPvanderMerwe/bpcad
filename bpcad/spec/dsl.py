@@ -713,6 +713,220 @@ def _place_on_anchor(scene: Scene, anchor: str, local: cq.Workplane) -> cq.Workp
     return cq.Workplane("XY").newObject([moved])
 
 
+class LoftSection(BaseModel):
+    """
+    One cross-section of a loft, at a distance along its axis.
+
+    `depth_mm` omitted means a circle. `x_mm` and `y_mm` shift this station
+    sideways, which is what BENDS the loft - a stack of circles walking along
+    x is a curved horn, not a straight cone.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    at_mm: float = Field(
+        ..., ge=0, le=1000,
+        description="Distance from the base of the loft, along its axis.")
+    width_mm: float = Field(
+        ..., gt=0, le=1000, description="Across X at this station.")
+    depth_mm: float | None = Field(
+        None, gt=0, le=1000,
+        description="Across Y at this station. Omit for a circle.")
+    x_mm: float = Field(
+        0.0, ge=-1000, le=1000,
+        description="Shift this station sideways in X. This is what bends it.")
+    y_mm: float = Field(
+        0.0, ge=-1000, le=1000, description="Shift this station sideways in Y.")
+    shape: Literal["ellipse", "rect"] = Field(
+        "ellipse", description="ellipse is the organic one; rect is a slab.")
+
+
+class Loft(Creator):
+    """
+    A solid blended through a stack of cross-sections: tapers, bulges, bends.
+
+    THIS IS THE OP THAT MAKES ORGANIC SHAPES POSSIBLE. Everything else in this
+    list is a box, a cylinder, a cone or a ball - shapes with one size all the
+    way along. A body that is fat in the middle and thin at both ends, a horn
+    that tapers as it curves, a tail segment, a fairing, a handle that swells
+    where a hand goes: none of them can be made from primitives that do not
+    change section, and before this op the honest answer to most of what a
+    person wants to print was "no template fits".
+
+    Sections are given in order from the base. Each one may be a different size
+    AND in a different place, so the loft tapers and bends at the same time.
+    Stands ON its placement point like every other creator.
+    """
+
+    op: Literal["loft"]
+    sections: list[LoftSection] = Field(
+        ..., min_length=2, max_length=64,
+        description=(
+            "Cross-sections from the base up, in increasing at_mm. Three or "
+            "four is usually enough: base, widest point, tip"
+        ),
+    )
+    ruled: bool = Field(
+        False,
+        description=(
+            "true joins the sections with straight sides, like a stack of "
+            "cones. false blends them smoothly, which is what an organic "
+            "shape wants"
+        ),
+    )
+
+    def _emit(self) -> cq.Workplane:
+        stations = sorted(self.sections, key=lambda s: s.at_mm)
+        for a, b in zip(stations, stations[1:]):
+            if abs(b.at_mm - a.at_mm) < 1e-6:
+                raise DslError(
+                    "loft: two sections are both at %.3f mm along the axis, so "
+                    "there is no distance between them to blend over. Move one."
+                    % a.at_mm
+                )
+
+        wires = []
+        for station in stations:
+            depth = station.depth_mm if station.depth_mm is not None else station.width_mm
+            centre = cq.Vector(station.x_mm, station.y_mm, station.at_mm)
+            if station.shape == "rect":
+                half_w, half_d = station.width_mm / 2.0, depth / 2.0
+                points = [
+                    (-half_w, -half_d), (half_w, -half_d),
+                    (half_w, half_d), (-half_w, half_d), (-half_w, -half_d),
+                ]
+                wire = cq.Wire.makePolygon(
+                    [cq.Vector(px, py, 0) for px, py in points])
+            elif abs(station.width_mm - depth) < 1e-9:
+                wire = cq.Wire.makeCircle(
+                    station.width_mm / 2.0, cq.Vector(0, 0, 0), cq.Vector(0, 0, 1))
+            else:
+                wire = cq.Wire.makeEllipse(
+                    station.width_mm / 2.0, depth / 2.0,
+                    cq.Vector(0, 0, 0), cq.Vector(0, 0, 1), cq.Vector(1, 0, 0))
+            wires.append(wire.translate(centre))
+
+        try:
+            solid = cq.Solid.makeLoft(wires, self.ruled)
+        except Exception as exc:
+            raise DslError(
+                "loft: the sections could not be blended into a solid (%s). "
+                "Mixing rect and ellipse sections, or a very sharp change in "
+                "size between two stations, is the usual cause - try sections "
+                "of the same shape, or put an extra one between them." % exc
+            ) from exc
+        return cq.Workplane("XY").newObject([solid])
+
+
+class FreeJoint(Creator):
+    """
+    Cut a running gap around a ball and its stem, leaving two bodies that move.
+
+    THIS IS WHAT MAKES A PART ARTICULATED, and nothing before it could.
+
+    A print-in-place joint is not built by placing two objects near each other
+    - a slicer fuses anything closer than a nozzle width. It is built by making
+    ONE blob and then removing a thin shell inside it, so what is left is a
+    ball trapped in a socket with a measured gap between them. That is the
+    whole trick, and it is a subtraction rather than an assembly.
+
+    So: build the segment that ends in a ball, build the segment that swallows
+    it, let them overlap, and put this op at the ball's centre. It removes a
+    `clearance_mm` shell around the ball AND a matching annulus around the
+    stem, so the stem can swing in the socket's mouth instead of being welded
+    into it. The stem itself is never cut, which is what keeps the ball
+    attached to the segment it belongs to.
+
+    The gap is a MEASURED value, per material, out of config - the same number
+    a hinge's running fit comes from. It is required rather than defaulted
+    because a joint built to a guessed clearance either binds solid or rattles,
+    and both are a wasted print. The prompt carries the measured figure for the
+    material in use.
+
+    The stem runs along +Z from the ball centre before placement, so
+    rotate_axis and rotate_deg aim the joint.
+    """
+
+    op: Literal["free_joint"]
+    diameter_mm: float = Field(
+        ..., gt=0, le=500, description="The ball's diameter.")
+    clearance_mm: float = Field(
+        ..., gt=0, le=2.0,
+        description=(
+            "The running gap, measured, from the material's config. Not a "
+            "guess: too small binds solid and too large rattles"
+        ),
+    )
+    stem_d_mm: float = Field(
+        ..., gt=0, le=500,
+        description=(
+            "The neck joining the ball to its own segment. Must be smaller "
+            "than the ball or the joint pulls straight out"
+        ),
+    )
+    stem_len_mm: float = Field(
+        ..., gt=0, le=500,
+        description=(
+            "How far the socket's mouth is opened up along the stem. About "
+            "the ball's diameter is usually right"
+        ),
+    )
+
+    mode: Mode = Field(
+        "cut",
+        description="Always cut - this op removes the gap that frees the ball.",
+    )
+
+    def _emit(self) -> cq.Workplane:
+        if self.stem_d_mm >= self.diameter_mm:
+            raise DslError(
+                "free_joint: the stem is %.2f mm and the ball is %.2f mm, so "
+                "there is no shoulder to hold the joint together and it would "
+                "pull straight out. Make stem_d_mm smaller than diameter_mm - "
+                "about half is usual."
+                % (self.stem_d_mm, self.diameter_mm)
+            )
+
+        r = self.diameter_mm / 2.0
+        c = self.clearance_mm
+        stem_r = self.stem_d_mm / 2.0
+
+        ball = cq.Solid.makeSphere(r, angleDegrees1=-90)
+        ball_outer = cq.Solid.makeSphere(r + c, angleDegrees1=-90)
+
+        # The stem runs +Z out of the ball. It is made longer than the mouth
+        # so the annulus around it reaches clear of the socket material.
+        reach = self.stem_len_mm + r + c
+        stem = cq.Solid.makeCylinder(stem_r, reach, cq.Vector(0, 0, 0),
+                                     cq.Vector(0, 0, 1))
+        stem_outer = cq.Solid.makeCylinder(stem_r + c, reach, cq.Vector(0, 0, 0),
+                                           cq.Vector(0, 0, 1))
+
+        try:
+            # ONE SUBTRACTION, NOT TWO FUSED SHELLS.
+            #
+            # The obvious build - (ball_outer - ball) fused to
+            # (stem_outer - stem) - meets itself at a knife edge where the
+            # stem leaves the ball, and a zero-thickness feature tessellates
+            # into open edges: both bodies came out of it with holes in the
+            # mesh and failed the watertight check.
+            #
+            # The gap is simply "everything within clearance of the moving
+            # member's surface", so it is built that way: grow the whole
+            # member, subtract the member. No seam, because there are no two
+            # pieces to join. And the member itself is never removed, which is
+            # what keeps the ball on its own stem.
+            member = ball.fuse(stem).clean()
+            grown = ball_outer.fuse(stem_outer).clean()
+            shell = grown.cut(member).clean()
+        except Exception as exc:
+            raise DslError(
+                "free_joint: could not build the clearance shell (%s). Check "
+                "that clearance_mm is small next to the ball." % exc
+            ) from exc
+        return cq.Workplane("XY").newObject([shell])
+
+
 class Pocket(DslOp):
     """
     Cut a rounded rectangular recess into a named face.
@@ -1071,6 +1285,7 @@ def _shift_op(op: DslOp, dx: float, dy: float, dz: float) -> None:
 AnyOp = Annotated[
     Union[
         RoundedPrism, Disc, Cone, Sphere, Wedge, ProfileExtrude, ArcRod,
+        Loft, FreeJoint,
         Pocket, EmbossPolygon, EmbossText, BlendEdges, Hollow, Mirror,
         PatternLinear, PatternPolar,
     ],
@@ -1082,6 +1297,7 @@ PatternPolar.model_rebuild()
 
 CREATOR_NAMES = (
     "rounded_prism", "disc", "cone", "sphere", "wedge", "profile_extrude", "arc_rod",
+    "loft", "free_joint",
 )
 
 OP_NAMES = CREATOR_NAMES + (

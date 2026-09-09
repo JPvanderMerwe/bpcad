@@ -55,6 +55,15 @@ class MeshReport:
         return self.volume_cm3 / box_cm3 if box_cm3 > 0 else 0.0
 
 
+# Below this a triangle has no area worth the name. Generous next to a 0.005
+# mm export tolerance, and far below anything a 0.4 mm nozzle could print.
+ZERO_AREA_MM2 = 1e-9
+
+# A pole triangle per sphere, and a little room for the odd seam. Above
+# this and it is the export tolerance, not the tessellator.
+DEGENERATE_FLOOR = 16
+
+
 def load_mesh(stl_path: str | Path) -> trimesh.Trimesh:
     """
     Load an STL as a single Trimesh.
@@ -73,7 +82,49 @@ def load_mesh(stl_path: str | Path) -> trimesh.Trimesh:
         if not geoms:
             raise ValueError("%s contains no geometry" % p)
         loaded = trimesh.util.concatenate(geoms)
-    return loaded
+    return _without_zero_area_facets(loaded)
+
+
+def _without_zero_area_facets(mesh: trimesh.Trimesh) -> trimesh.Trimesh:
+    """
+    Drop facets with no area, and remember how many there were.
+
+    A SPHERE HAS NEVER PRODUCED A PRINTABLE MESH, and this is why. OpenCASCADE
+    tessellates a sphere with a triangle fan at each pole, and writes one
+    zero-area triangle at each of the two poles. Those two facets leave two
+    unmatched edges, so trimesh reports the mesh as not watertight - at EVERY
+    export tolerance, because the poles are a topology artifact and not a
+    density one. Measured on a plain r=4.5 ball: 2 degenerate faces and 2 open
+    edges at 0.005, at 0.01, at 0.05 and at 0.1.
+
+    The consequence was that `sphere` - one of the fifteen primitives - failed
+    verification every single time it was used, and so did anything unioned
+    with one. "not watertight - the mesh has holes and will not slice" was one
+    of the recurring failures in the eval.
+
+    A ZERO-AREA TRIANGLE IS NOT GEOMETRY, so removing it cannot change the
+    part: measured either way, the volume of that ball is 381.5284 mm3 before
+    and 381.5284 mm3 after, to every digit trimesh prints. What it changes is
+    whether the mesh is manifold, and it is the mesh that gets sliced.
+
+    The count is kept on the mesh rather than thrown away, because the export
+    tolerance being too fine ALSO produces degenerate facets - thousands of
+    them - and that is a real fault worth reporting. See count_degenerate,
+    which reads this back so the report says what was found rather than what
+    survived.
+    """
+    try:
+        keep = trimesh.triangles.area(mesh.triangles) > ZERO_AREA_MM2
+        removed = int((~keep).sum())
+        if removed:
+            mesh.update_faces(keep)
+            mesh.merge_vertices()
+            mesh.remove_unreferenced_vertices()
+        mesh.metadata["degenerate_removed"] = removed
+    except Exception:
+        # A mesh that cannot be measured is not made better by guessing at it.
+        mesh.metadata["degenerate_removed"] = 0
+    return mesh
 
 
 def count_degenerate(mesh: trimesh.Trimesh) -> int:
@@ -82,8 +133,13 @@ def count_degenerate(mesh: trimesh.Trimesh) -> int:
     thousands of these and the mesh stops being watertight, which is exactly
     why the export tolerance is pinned at 0.005 in config.
     """
+    # What was FOUND, not what survived. load_mesh strips zero-area facets so
+    # the two at a sphere's poles cannot fail an otherwise sound part, and it
+    # records how many it removed - a tolerance set too fine produces them in
+    # thousands, which is a real fault and still has to be reported.
+    removed = int(mesh.metadata.get("degenerate_removed", 0) or 0)
     try:
-        return int((~mesh.nondegenerate_faces()).sum())
+        return removed + int((~mesh.nondegenerate_faces()).sum())
     except Exception:
         # Fall back to measuring the areas directly rather than reporting a
         # number we did not actually compute.
@@ -115,10 +171,24 @@ def report_for(mesh: trimesh.Trimesh, path: str = "<mesh>") -> MeshReport:
         )
     if not mesh.is_winding_consistent:
         problems.append("winding is inconsistent - some faces point inward")
-    if degenerate:
+    # A HANDFUL IS THE TESSELLATOR, THOUSANDS IS THE TOLERANCE.
+    #
+    # OpenCASCADE writes one zero-area triangle at each pole of every sphere,
+    # so a ball is always two and a part with four balls on it is always
+    # eight. Those are removed on load and cannot make a mesh unwatertight any
+    # more, and calling two of them a problem would fail every part with a
+    # sphere in it for something that has no area and no consequence.
+    #
+    # An export tolerance set too fine produces them in the thousands, and
+    # that IS the fault this check was written for. So the threshold is scaled
+    # to the part rather than fixed: more than one facet in a thousand having
+    # no area is a tessellation that has gone wrong.
+    faces = max(len(mesh.faces), 1)
+    if degenerate > max(DEGENERATE_FLOOR, faces // 1000):
         problems.append(
-            "%d degenerate (zero-area) faces - lower the STL export tolerance "
-            "is NOT the fix, raise it. See config [export]." % degenerate
+            "%d degenerate (zero-area) faces out of %d - lowering the STL "
+            "export tolerance is NOT the fix, raise it. See config [export]."
+            % (degenerate, faces)
         )
 
     # A part that is nearly its own bounding box, and big, is almost certainly
