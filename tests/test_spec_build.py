@@ -1092,3 +1092,191 @@ def test_something_that_is_not_a_point_is_still_refused():
         parse_op({"op": "profile_extrude", "height_mm": 6,
                   "points": [{"x": 1}, {"y": 2}, "somewhere"]})
     assert "profile_extrude" in str(caught.value)
+
+def test_an_articulated_chain_is_the_length_it_was_asked_for():
+    """
+    THE FIGURE IN THE REQUEST IS A PARAMETER, NOT AN OUTCOME.
+
+    Asked for "about 120 mm nose to tail", a 7B model composing thirteen ops
+    by hand produced 195.0 x 30.0 x 60.0 and then repeated the same mistake
+    four times running. The number was in the sentence the whole time.
+
+    The pitch is SOLVED rather than iterated, and that is the bug this pins.
+    The layout has terms that scale with the pitch - bodies and stems - and
+    terms that do not: a ball is sized by the body it joins, not by how long
+    the animal is. Laying out at unit pitch and scaling the answer multiplied
+    the radii too, and asking for 120 mm gave 546.
+    """
+    import cadquery as cq
+
+    from bpcad.spec.dsl import run_ops
+    from bpcad.verify.fit import mesh_of_solid, solid_gap_mm
+
+    clearance = 0.30
+    scene = run_ops([{
+        "op": "articulated_chain", "count": 4, "length_mm": 120,
+        "start_width_mm": 26, "end_width_mm": 8,
+        "start_depth_mm": 20, "end_depth_mm": 7,
+        "clearance_mm": clearance,
+    }])
+
+    bodies = scene.solid.solids().vals()
+    assert len(bodies) == 4, (
+        "four segments were asked for and %d body/bodies came out - a chain "
+        "that is one body does not move" % len(bodies))
+
+    mesh = mesh_of_solid(scene.solid)
+    assert mesh.is_watertight
+    assert abs(mesh.extents[0] - 120.0) < 0.5, (
+        "asked for 120 mm and got %.2f mm" % mesh.extents[0])
+
+    # EVERY JOINT AT THE MEASURED CLEARANCE. One binding joint and the whole
+    # print is scrap.
+    for i in range(len(bodies) - 1):
+        gap = solid_gap_mm(cq.Workplane("XY").newObject([bodies[i]]),
+                           cq.Workplane("XY").newObject([bodies[i + 1]]))
+        assert abs(gap - clearance) < 0.01, (
+            "joint %d measured %.4f mm against a %.2f mm clearance"
+            % (i, gap, clearance))
+
+
+@pytest.mark.parametrize("count,length", [
+    (2, 40), (3, 80), (6, 120), (12, 200), (16, 150), (24, 300), (40, 400),
+])
+def test_a_chain_is_right_at_every_density(count, length):
+    """
+    Two links or forty, 40 mm or 400: the length, the body count and every
+    running gap have to come out right.
+
+    Each of these caught something. The pitch was solved against the wrong
+    reach and a dense chain came out 204.70 mm for a 200 mm request. The ball
+    was sized off the body alone, so on a short link the socket slid over the
+    previous SEGMENT - where nothing had been cut - and two bodies sat 0.181
+    mm apart against a 0.300 mm running fit, which is a joint that binds. And
+    the mouth annulus, uncapped, was longer than a short body and split one
+    segment into two.
+    """
+    import cadquery as cq
+
+    from bpcad.spec.dsl import run_ops
+    from bpcad.verify.fit import mesh_of_solid, solid_gap_mm
+
+    clearance = 0.3
+    scene = run_ops([{
+        "op": "articulated_chain", "count": count, "length_mm": length,
+        "start_width_mm": 20, "end_width_mm": 7, "clearance_mm": clearance,
+    }])
+    bodies = scene.solid.solids().vals()
+    mesh = mesh_of_solid(scene.solid)
+
+    assert len(bodies) == count, (
+        "%d segments asked for, %d bodies came out" % (count, len(bodies)))
+    assert abs(mesh.extents[0] - length) < 0.5, (
+        "%d links asked for %d mm and measured %.2f"
+        % (count, length, mesh.extents[0]))
+    assert mesh.is_watertight
+
+    # NO JOINT MAY BE TIGHTER THAN THE MEASURED FIT. One binding joint and the
+    # whole print is scrap, and it is the joint nobody looked at.
+    for i in range(len(bodies) - 1):
+        gap = solid_gap_mm(cq.Workplane("XY").newObject([bodies[i]]),
+                           cq.Workplane("XY").newObject([bodies[i + 1]]))
+        assert gap >= clearance - 0.005, (
+            "joint %d of %d measured %.4f mm against a %.2f mm clearance"
+            % (i, count - 1, gap, clearance))
+
+
+def test_a_chain_too_dense_to_print_is_refused_rather_than_shipped():
+    """
+    At some density the ball is thinner than a couple of extrusions and snaps
+    the first time the thing is flexed. Saying so beats shipping it.
+    """
+    from bpcad.spec.dsl import DslError, run_ops
+
+    with pytest.raises(DslError) as caught:
+        run_ops([{"op": "articulated_chain", "count": 5, "length_mm": 60,
+                  "start_width_mm": 14, "end_width_mm": 5,
+                  "clearance_mm": 0.3}])
+    assert "will not survive" in str(caught.value)
+
+
+def test_a_chain_that_gets_wider_says_which_end_is_which():
+    from bpcad.spec.dsl import DslError, run_ops
+
+    with pytest.raises(DslError) as caught:
+        run_ops([{"op": "articulated_chain", "count": 4, "length_mm": 100,
+                  "start_width_mm": 5, "end_width_mm": 40,
+                  "clearance_mm": 0.3}])
+    assert "big end last" in str(caught.value)
+
+# ---------------------------------------------------------------------------
+# revolve: everything that is made on a lathe
+# ---------------------------------------------------------------------------
+
+
+def test_a_revolve_is_dimensionally_exact():
+    """
+    A very large share of what people print is rotationally symmetric - cups,
+    vases, bottles, knobs, wheels, pulleys, funnels, chess pieces - and none
+    of it could be COMPOSED before this. There was a revolve inside the vessel
+    template, so you could have a turned shape only if the router decided your
+    request was a vessel, and only on its own.
+    """
+    from bpcad.spec.dsl import run_ops
+    from bpcad.verify.fit import mesh_of_solid
+
+    # A plain cylinder, which has an analytic volume to check against.
+    mesh = _mesh([{"op": "revolve", "points": [[10, 0], [10, 25]]}])
+    assert mesh.is_watertight
+    expected = math.pi * 100 * 25
+    assert abs(mesh.volume - expected) / expected < 0.001, (
+        "%.3f against %.3f" % (mesh.volume, expected))
+    assert abs(mesh.extents[0] - 20.0) < 0.05
+    assert abs(mesh.extents[2] - 25.0) < 0.01
+
+    # And a cone, whose profile reaches the axis.
+    cone = _mesh([{"op": "revolve", "points": [[20, 0], [0, 40]]}])
+    assert cone.is_watertight
+    expected = math.pi * 400 * 40 / 3
+    assert abs(cone.volume - expected) / expected < 0.001
+
+
+def test_a_profile_that_already_touches_the_axis_still_closes():
+    """
+    A cone ends at radius 0, and closing the profile back to the axis added
+    the axis point twice - a zero-length edge, which OCC reports as
+    "BRep_API: command not done" and says nothing at all about a duplicated
+    point. Reaching the axis is the ordinary way to write a cone, a dome or
+    the tip of a spinning top.
+    """
+    dome = _mesh([{"op": "revolve",
+                   "points": [[25, 0], [24, 10], [20, 18], [12, 24], [0, 26]]}])
+    assert dome.is_watertight
+    assert abs(dome.extents[2] - 26.0) < 0.01
+
+
+def test_a_revolve_cut_hollows_a_turned_shape():
+    """A bottle is a revolve with a revolve taken out of it."""
+    bottle = _mesh([
+        {"op": "revolve", "points": [[25, 0], [25, 60], [10, 80], [10, 95]]},
+        {"op": "revolve", "mode": "cut", "z_mm": 3,
+         "points": [[22, 0], [22, 57], [7, 77], [7, 92]]},
+    ])
+    assert bottle.is_watertight
+    solid = _mesh([{"op": "revolve",
+                    "points": [[25, 0], [25, 60], [10, 80], [10, 95]]}])
+    assert bottle.volume < solid.volume * 0.5, (
+        "the cut removed almost nothing - %.1f of %.1f cm3"
+        % (bottle.volume / 1000, solid.volume / 1000))
+
+
+def test_a_flat_or_negative_profile_says_which():
+    from bpcad.spec.dsl import DslError, run_ops
+
+    with pytest.raises(DslError) as flat:
+        run_ops([{"op": "revolve", "points": [[10, 5], [20, 5]]}])
+    assert "flat line" in str(flat.value)
+
+    with pytest.raises(DslError) as negative:
+        run_ops([{"op": "revolve", "points": [[10, 0], [-5, 20]]}])
+    assert "negative radius" in str(negative.value)

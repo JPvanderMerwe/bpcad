@@ -699,6 +699,99 @@ class ProfileExtrude(Creator):
         return poly_prism(self.points, self.scale_mm, 0.0, 0.0, 0.0, self.height_mm)
 
 
+class Revolve(Creator):
+    """
+    A silhouette turned about the vertical axis: anything made on a lathe.
+
+    Vases, cups, bottles, knobs, wheels, pulleys, funnels, lampshades, chess
+    pieces, handwheels, spinning tops - a very large share of what people
+    print is rotationally symmetric, and none of it could be composed before
+    this. There was a revolve inside the vessel TEMPLATE, which meant you
+    could have a turned shape only if the router decided your request was a
+    vessel and only on its own. CLAUDE.md 31: the fix for a shape that cannot
+    be made is an operation, not another template.
+
+    Points are (radius, height) from the base up, and the profile is closed
+    back to the axis for you - so a plain cup is four points and nothing else.
+    A radius of 0 is legal and gives a point, which is how you get a cone or
+    the tip of a spinning top.
+
+    In `cut` mode it is a turned cavity: the inside of a bottle, a countersink
+    with a shaped wall, the recess in a pulley.
+    """
+
+    op: Literal["revolve"]
+    points: list[tuple[float, float]] = Field(
+        ..., min_length=2, max_length=400,
+        description=(
+            "Silhouette as (radius_mm, height_mm) from the base up, or "
+            "{x:, y:} objects. Only one side - it is turned all the way round"
+        ),
+    )
+    angle_deg: float = Field(
+        360.0, gt=0, le=360,
+        description="Less than 360 leaves a wedge cut out of it.",
+    )
+
+    _xy = field_validator("points", mode="before")(_as_xy_pairs)
+
+    def _emit(self) -> cq.Workplane:
+        pts = [(float(r), float(z)) for r, z in self.points]
+        if any(r < 0 for r, _ in pts):
+            raise DslError(
+                "revolve: a negative radius (%.2f) would turn the profile "
+                "through the axis and self-intersect. Radii are distances "
+                "from the centre line, so they start at 0."
+                % min(r for r, _ in pts)
+            )
+        heights = [z for _, z in pts]
+        if max(heights) - min(heights) <= 1e-6:
+            raise DslError(
+                "revolve: every point is at height %.2f, so the profile is a "
+                "flat line and encloses nothing. Give it points at different "
+                "heights." % heights[0]
+            )
+
+        # CLOSED BACK TO THE AXIS. A silhouette is one side of the shape; the
+        # other side of the enclosed area is the centre line itself. Asking
+        # the caller to repeat that is asking them to remember it.
+        #
+        # UNLESS IT IS ALREADY THERE. A cone ends at radius 0, and adding the
+        # axis point again makes a zero-length edge - OCC answers that with
+        # "BRep_API: command not done", which says nothing at all about a
+        # duplicated point. A profile that reaches the axis is the normal way
+        # to write a cone, a dome or the tip of a spinning top.
+        outline = list(pts)
+        if pts[0][0] > 1e-9:
+            outline.insert(0, (0.0, pts[0][1]))
+        if pts[-1][0] > 1e-9:
+            outline.append((0.0, pts[-1][1]))
+        if len(outline) < 3:
+            raise DslError(
+                "revolve: the profile is two points on the axis, which "
+                "encloses no area. Give it a radius somewhere."
+            )
+
+        try:
+            # XZ, so the profile's local y IS the global Z it turns about, and
+            # the axis is given in LOCAL coordinates - CLAUDE.md 20. No
+            # .center() anywhere near it: that moves the local origin onto the
+            # profile, puts the axis through the middle of the shape and the
+            # revolve fails or comes out inside out.
+            return (
+                cq.Workplane("XZ")
+                .polyline(outline)
+                .close()
+                .revolve(self.angle_deg, (0, 0, 0), (0, 1, 0))
+            )
+        except Exception as exc:
+            raise DslError(
+                "revolve: the profile could not be turned into a solid (%s). "
+                "The usual cause is a silhouette that crosses itself - check "
+                "the points go up the shape in order." % exc
+            ) from exc
+
+
 class ArcRod(Creator):
     """
     A rod following a circular arc, lying in the XY plane and extruded in Z.
@@ -1224,6 +1317,266 @@ class Mirror(DslOp):
 # ---------------------------------------------------------------------------
 
 
+class ArticulatedChain(DslOp):
+    """
+    A tapering row of segments joined by ball joints, printed in place.
+
+    THIS EXISTS BECAUSE A SMALL MODEL CANNOT COMPOSE THIRTEEN OPS.
+
+    The same body can be written by hand out of loft, disc, sphere and
+    free_joint - it takes thirteen ops for four segments, and that is what a
+    7B model was asked for twice and failed twice: once with every dimension
+    wrong, once with the outline right and the size wrong. Neither failure was
+    about geometry. Both were about holding a long composition together.
+
+    So this is one op that takes the number the request actually contains. A
+    person asking for "four tapering segments about 120 mm nose to tail" gets
+    count 4 and length_mm 120, and those are the words they used. Nothing has
+    to be worked out.
+
+    It is a MECHANISM and not a shape, in the same way pattern_polar is - it
+    makes a snake, a caterpillar, a dragon's body, a bracelet, a cable carrier
+    or an articulated lamp arm, and it is built out of the same primitives
+    anybody could write by hand. CLAUDE.md 31 forbids closing a gap with a
+    template; this closes it with an operation, and the geometry it emits is
+    provably the geometry those primitives produce.
+
+    Runs along +X from the placement point.
+    """
+
+    op: Literal["articulated_chain"]
+    count: int = Field(
+        ..., ge=2, le=40, description="How many segments. Each one moves.")
+    length_mm: float = Field(
+        ..., gt=0, le=1000,
+        description=(
+            "TOTAL length end to end, which is the figure the request gives. "
+            "The layout is scaled to hit it"
+        ),
+    )
+    start_width_mm: float = Field(
+        ..., gt=0, le=500, description="Across the first segment.")
+    end_width_mm: float = Field(
+        ..., gt=0, le=500,
+        description="Across the last. Smaller than the first is a tail.")
+    start_depth_mm: float | None = Field(
+        None, gt=0, le=500, description="Omit for a round body.")
+    end_depth_mm: float | None = Field(None, gt=0, le=500)
+    clearance_mm: float = Field(
+        ..., gt=0, le=2.0,
+        description="The running gap, measured, from the material's config.")
+    joint_fraction: float = Field(
+        0.55, ge=0.2, le=0.9,
+        description=(
+            "Ball diameter as a fraction of the local body width. Bigger is "
+            "stronger and stiffer"
+        ),
+    )
+    x_mm: float = Field(0.0, ge=-2000, le=2000)
+    y_mm: float = Field(0.0, ge=-2000, le=2000)
+    z_mm: float = Field(0.0, ge=-2000, le=2000)
+
+    # Proportions of one link's pitch. Measured off the chain that was built
+    # by hand and verified: body, then a stem, then the ball, with the next
+    # body reaching back over the ball far enough to capture it.
+    _BODY = 0.74
+    _STEM = 0.13
+
+    def _pitch_for_length(self) -> float:
+        """
+        The link pitch that makes the finished chain exactly length_mm long.
+
+        SOLVED, NOT ITERATED, and the distinction is the bug that was here
+        first. The layout has two kinds of term: the bodies and stems, which
+        scale with the pitch, and the ball radii, which do NOT - a joint is
+        sized by the body it joins, not by how long the animal is. Laying it
+        out at "unit pitch" and scaling the answer therefore multiplied the
+        ball radii too, and asking for 120 mm produced 546.
+
+        Writing the total out honestly, with P the pitch and r_i the ball
+        radii in mm:
+
+            total = (n-1)(BODY+STEM)P + BODY*P - 0.5 * sum(r_i)
+
+        which is affine in P, so it inverts in one line and the length comes
+        out right the first time.
+        """
+        per_pitch = (self.count - 1) * (self._BODY + self._STEM) + self._BODY
+        # The radii depend on the pitch and the pitch depends on the radii, so
+        # it is solved twice: once with the radii the bodies alone would give,
+        # then again once the pitch is known and the cap can bite. Two passes
+        # settle it - the cap only ever makes radii smaller, and a smaller
+        # radius makes the chain slightly longer, which the second pass takes
+        # back out.
+        self._pitch = self.length_mm / max(per_pitch, 1e-6)
+        for _ in range(8):
+            # The SAME reach the layout will use, not the uncapped one. When
+            # the cap bites - which it does on a dense chain - each socket
+            # reaches back less, every link sits further along, and the part
+            # comes out longer than asked: 204.70 mm for a 200 mm request
+            # before this used the real figure.
+            taken = sum(self._reach_at(self._t(i + 1), self._pitch)
+                        for i in range(self.count - 1))
+            self._pitch = (self.length_mm + taken) / max(per_pitch, 1e-6)
+        return self._pitch
+
+    def _reach_at(self, t: float, pitch: float) -> float:
+        """How far the socket at boundary `t` reaches back over its ball."""
+        return max(min(0.5 * self._ball_r_at(t),
+                       self._STEM * pitch - self.clearance_mm - 0.05), 0.0)
+
+    def _t(self, i: int) -> float:
+        """How far along the chain link boundary `i` is, from 0 to 1."""
+        return min(i / (self.count - 1), 1.0) if self.count > 1 else 0.0
+
+    def _plan(self, pitch: float) -> list[dict[str, float]]:
+        """Every body, stem and ball, in millimetres."""
+        links = []
+        start = 0.0
+        for i in range(self.count):
+            body = self._BODY * pitch
+            ball_at = start + (self._BODY + self._STEM) * pitch
+            links.append({
+                "start": start, "body": body, "ball_at": ball_at,
+                "t0": self._t(i), "t1": self._t(i + 1),
+            })
+            # HOW FAR THE SOCKET REACHES BACK OVER THE BALL, and it is bounded
+            # by the previous body rather than only by the ball.
+            #
+            # The socket has to start before the ball's centre or it does not
+            # trap it. But if it reaches back FURTHER than the stem is long,
+            # it slides over the previous segment's end - and the clearance
+            # shell never cut anything there, so those two bodies touch with
+            # only whatever gap the layout happened to leave. Measured: 0.181
+            # mm between two bodies on a twelve-link chain against a 0.300 mm
+            # running fit, which is a joint that binds.
+            #
+            # So the reach is capped to stop a clearance short of where the
+            # previous body ends. Then the only place two bodies come near
+            # each other is the gap this op actually cut, and it is the gap
+            # that was asked for.
+            start = ball_at - self._reach_at(self._t(i + 1), pitch)
+        return links
+
+    def _width_at(self, t: float) -> tuple[float, float]:
+        w = self.start_width_mm + (self.end_width_mm - self.start_width_mm) * t
+        sd = self.start_depth_mm if self.start_depth_mm is not None else self.start_width_mm
+        ed = self.end_depth_mm if self.end_depth_mm is not None else self.end_width_mm
+        d = sd + (ed - sd) * t
+        return w, d
+
+    def _ball_r_at(self, t: float) -> float:
+        """
+        The ball radius at position t, limited by the body AND by the pitch.
+
+        THE PITCH LIMIT IS NOT A TIDY-UP. A ball sized only by body width gets
+        relatively bigger as the links get shorter, and two things break at
+        once: the socket reaches back so far that it slides over the previous
+        SEGMENT rather than just its stem - and the clearance shell never cut
+        anything there, so the measured gap between those two bodies came out
+        0.181 mm against a 0.300 mm running fit, which is a joint that binds -
+        and the mouth annulus runs out of body to cut into and splits a
+        segment in two.
+
+        Capping the radius at 0.22 of the pitch keeps the reach-back inside
+        the stem, so the only place two bodies come close is the gap this op
+        actually cut.
+        """
+        w, d = self._width_at(t)
+        by_body = self.joint_fraction * min(w, d) / 2.0
+        by_pitch = 0.22 * self._pitch
+        return min(by_body, by_pitch)
+
+    def apply(self, scene: Scene) -> Scene:
+        if self.end_width_mm > self.start_width_mm * 3:
+            raise DslError(
+                "articulated_chain: it gets %.1fx WIDER along its length, "
+                "which puts the big end last. Swap start_width_mm and "
+                "end_width_mm, or use a gentler taper."
+                % (self.end_width_mm / self.start_width_mm)
+            )
+
+        pitch = self._pitch_for_length()
+
+        # A JOINT TOO SMALL TO PRINT IS NOT A JOINT. At some density the ball
+        # is thinner than a couple of extrusions and snaps off the first time
+        # the thing is flexed, so this says so instead of shipping it.
+        smallest = min(self._ball_r_at(self._t(i + 1))
+                       for i in range(self.count - 1))
+        if 2 * smallest < 3.0:
+            raise DslError(
+                "articulated_chain: %d segments in %.0f mm leaves a %.1f mm "
+                "ball at the thin end, which will not survive being flexed. "
+                "Use fewer segments, a longer chain, or a bigger "
+                "joint_fraction."
+                % (self.count, self.length_mm, 2 * smallest)
+            )
+
+        if self._STEM * pitch - self.clearance_mm - 0.05 <= 0.15 * smallest:
+            raise DslError(
+                "articulated_chain: %d segments in %.0f mm leaves no room "
+                "between one segment's end and the next one's socket, so the "
+                "joints would either bind or fall apart. Use fewer segments "
+                "or a longer chain." % (self.count, self.length_mm)
+            )
+
+        plan = self._plan(pitch)
+
+        ops: list[DslOp] = []
+        for i, link in enumerate(plan):
+            w0, d0 = self._width_at(link["t0"])
+            w1, d1 = self._width_at(link["t1"])
+            x0 = link["start"]
+            body = link["body"]
+            ops.append(Loft(
+                op="loft", x_mm=x0, rotate_axis="y", rotate_deg=90,
+                sections=[
+                    LoftSection(at_mm=0.0, width_mm=w0, depth_mm=d0),
+                    LoftSection(at_mm=body, width_mm=w1, depth_mm=d1),
+                ],
+            ))
+            if i == len(plan) - 1:
+                break
+            r = self._ball_r_at(link["t1"])
+            ball_x = link["ball_at"]
+            stem_d = max(r, 0.8)
+            ops.append(Disc(
+                op="disc", diameter_mm=stem_d,
+                height_mm=max(ball_x - (x0 + body), 0.2),
+                x_mm=x0 + body, rotate_axis="y", rotate_deg=90))
+            ops.append(Sphere(op="sphere", diameter_mm=2 * r, x_mm=ball_x))
+
+        # Every joint is freed AFTER the whole body exists, because the shell
+        # has to cut both the ball and the socket that grew around it.
+        for i, link in enumerate(plan[:-1]):
+            r = self._ball_r_at(link["t1"])
+            # HOW FAR THE MOUTH IS OPENED, CAPPED BY THE BODY IT CUTS INTO.
+            #
+            # The annulus that frees the stem runs back along it into the
+            # segment the stem belongs to. Left uncapped at 2.2 ball radii it
+            # was longer than a short segment, so on a dense chain it cut a
+            # complete cross-section and split one segment into two: twelve
+            # links asked for produced sixteen bodies, and a body that is in
+            # two pieces is a broken part rather than an articulated one.
+            #
+            # The mouth only has to clear the socket wall, which is about a
+            # radius, so this asks for that and never more than a third of
+            # the body it is reaching into.
+            mouth = min(max(1.1 * r, 1.0), link["body"] / 3.0)
+            ops.append(FreeJoint(
+                op="free_joint", diameter_mm=2 * r,
+                clearance_mm=self.clearance_mm,
+                stem_d_mm=max(r, 0.8),
+                stem_len_mm=mouth,
+                x_mm=link["ball_at"],
+                rotate_axis="y", rotate_deg=-90))
+
+        for op in ops:
+            _shift_op(op, self.x_mm, self.y_mm, self.z_mm)
+            scene = op.apply(scene)
+        return scene
+
+
 class PatternLinear(DslOp):
     """Repeat one nested op along a straight line."""
 
@@ -1324,9 +1677,9 @@ def _shift_op(op: DslOp, dx: float, dy: float, dz: float) -> None:
 AnyOp = Annotated[
     Union[
         RoundedPrism, Disc, Cone, Sphere, Wedge, ProfileExtrude, ArcRod,
-        Loft, FreeJoint,
+        Loft, FreeJoint, Revolve,
         Pocket, EmbossPolygon, EmbossText, BlendEdges, Hollow, Mirror,
-        PatternLinear, PatternPolar,
+        PatternLinear, PatternPolar, ArticulatedChain,
     ],
     Field(discriminator="op"),
 ]
@@ -1336,12 +1689,12 @@ PatternPolar.model_rebuild()
 
 CREATOR_NAMES = (
     "rounded_prism", "disc", "cone", "sphere", "wedge", "profile_extrude", "arc_rod",
-    "loft", "free_joint",
+    "loft", "free_joint", "revolve",
 )
 
 OP_NAMES = CREATOR_NAMES + (
     "pocket", "emboss_polygon", "emboss_text", "blend_edges", "hollow", "mirror",
-    "pattern_linear", "pattern_polar",
+    "pattern_linear", "pattern_polar", "articulated_chain",
 )
 
 
