@@ -17,10 +17,13 @@ import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
+from pathlib import Path
 
 import pytest
 
 from bpcad.web import server as web
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="module")
@@ -218,6 +221,189 @@ def test_a_stored_part_serves_the_verdict_it_was_given(base_url):
         assert line["name"]
         assert line["value"] != ""
         assert line["status"] in ("pass", "warn", "fail", "info")
+
+
+# The patterns both clients light their stage list from - mobile/lib/
+# building_screen.dart kStages and the web's STAGES. Repeated here on purpose:
+# they are a CONTRACT between the engine's words and two front ends, and the
+# thing that broke was the engine silently not saying two of them.
+STAGE_PATTERNS = ["using", "template", "building geometry", "verify", "export"]
+
+
+def test_every_stage_the_clients_show_can_actually_be_reached(base_url):
+    """
+    TWO OF THE FIVE STAGES WERE DECORATION.
+
+    Both clients show a five-stage list and both promise in their own comments
+    that it is driven by real job status and never by a timer. But the engine
+    emitted nothing for verification and nothing for the exports, so the last
+    two stages could not light from an event: the bar sat at three of five for
+    the whole build and then jumped to five when the run finished.
+
+    A progress bar that is two thirds honest is worse than a four-stage one,
+    because the dishonest third is invisible. This drives the server's event
+    translation with the kinds the engine really emits and checks that every
+    pattern the clients match on comes out of it.
+    """
+    from bpcad import api
+
+    class FakeReport:
+        verdict = "PASS, with warnings"
+
+    def fake_generate(request, **kwargs):
+        emit = kwargs["on_event"]
+
+        class Profile:
+            model_primary = "qwen2.5-coder:7b"
+            name = "laptop"
+
+        emit("profile", Profile())
+        emit("escalate", "no template claims this")
+        emit("building", None)
+        emit("verified", FakeReport())
+        emit("exporting", "parts/thing")
+        return api.GenerateResult(ok=False, message="stopped for the test")
+
+    real = api.generate
+    api.generate = fake_generate
+    try:
+        job = web._start_job("generate", "a thing",
+                             web._generate_work("a thing", "petg", None))
+        for _ in range(400):
+            if job.done:
+                break
+            time.sleep(0.05)
+    finally:
+        api.generate = real
+
+    notes = " | ".join(e.get("text", "") for e in job.events
+                       if e.get("kind") == "note").lower()
+    for pattern in STAGE_PATTERNS:
+        assert pattern in notes, (
+            "stage %r can never light: nothing the engine emits says it. "
+            "The notes were: %s" % (pattern, notes)
+        )
+
+    # AND THE VERDICT TRAVELS WITH THE STAGE. "Ran your printer checks" that
+    # does not say what they found is the green tick this program refuses to
+    # show.
+    assert "pass, with warnings" in notes
+
+
+def test_an_internal_event_name_never_leaks_into_the_log(base_url):
+    """
+    The fallback branch printed str(kind) for anything unhandled, so a user
+    watching a build was shown "measurement_rejected" - an internal
+    identifier, in the one log they read, with nothing they can do about it.
+    """
+    from bpcad import api
+
+    def fake_generate(request, **kwargs):
+        emit = kwargs["on_event"]
+        emit("measurement_rejected", {"entrance_dia_mm": 41.2})
+        emit("some_future_event_nobody_wrote_a_line_for", object())
+        return api.GenerateResult(ok=False, message="stopped for the test")
+
+    real = api.generate
+    api.generate = fake_generate
+    try:
+        job = web._start_job("generate", "a thing",
+                             web._generate_work("a thing", "petg", None))
+        for _ in range(400):
+            if job.done:
+                break
+            time.sleep(0.05)
+    finally:
+        api.generate = real
+
+    notes = [e.get("text", "") for e in job.events if e.get("kind") == "note"]
+    assert not any("some_future_event" in n for n in notes), notes
+    # A rejected measurement IS worth saying, in words, with the value in it.
+    assert any("rejected from the image" in n and "41.2" in n for n in notes), notes
+
+
+def test_a_photo_reaches_the_model_as_facts_and_not_as_a_measurement(base_url):
+    """
+    THE BUG THIS PINS COST A REAL PHOTO AND A REAL WAIT.
+
+    generate() takes two different things. `facts=` is a dict read off a
+    reference that reaches the model as CONTEXT. `measurement=` is an OBJECT
+    whose values are applied to matching parameters afterwards, and generate
+    calls .as_facts() on it.
+
+    The server passed api.measure_image's dict into the second slot. Every
+    generate with a photo attached died on "'dict' object has no attribute
+    'as_facts'" before it built anything - so image-to-part worked from the
+    command line and nowhere else, on the one device that has a camera in it.
+
+    No model is called here: api.generate is replaced, because what is being
+    checked is which argument the server fills.
+    """
+    from bpcad import api
+
+    seen = {}
+
+    def fake_generate(request, **kwargs):
+        seen.update(kwargs)
+        seen["request"] = request
+        return api.GenerateResult(ok=False, message="stopped for the test")
+
+    real = api.generate
+    api.generate = fake_generate
+    try:
+        work = web._generate_work("a cradle for this", "petg",
+                                  str(ROOT / "reference" / "loop_render_650x855.png"))
+        job = web._start_job("generate", "a cradle for this", work)
+        for _ in range(400):
+            if job.done:
+                break
+            time.sleep(0.05)
+    finally:
+        api.generate = real
+
+    assert job.done, "the job never finished"
+    assert "facts" in seen, "the photo did not reach the model at all"
+    assert isinstance(seen["facts"], dict)
+    # THE PIXEL CAVEAT TRAVELS WITH THE NUMBERS. A model handed "638 wide"
+    # with no note can read it as millimetres and build a part six times too
+    # big, which is a wrong part with nothing on screen to say so.
+    assert "pixel" in seen["facts"]["note"]
+    assert seen.get("measurement") is None, (
+        "the dict went back into the measurement slot, which is the crash"
+    )
+
+
+def test_a_photo_that_cannot_be_measured_still_builds_from_the_words(base_url):
+    """
+    A photo that separates nothing is not a reason to refuse the request -
+    the sentence still describes a part. It is a reason to SAY so, in the log
+    the user is watching, and carry on.
+    """
+    from bpcad import api
+
+    seen = {}
+
+    def fake_generate(request, **kwargs):
+        seen.update(kwargs)
+        return api.GenerateResult(ok=False, message="stopped for the test")
+
+    real = api.generate
+    api.generate = fake_generate
+    try:
+        work = web._generate_work("a bracket", "petg", "/nowhere/at/all.png")
+        job = web._start_job("generate", "a bracket", work)
+        for _ in range(400):
+            if job.done:
+                break
+            time.sleep(0.05)
+    finally:
+        api.generate = real
+
+    assert job.done
+    notes = [e.get("text", "") for e in job.events if e.get("kind") == "note"]
+    assert any("could not measure" in n for n in notes), notes
+    # It still went to the model, with no facts rather than no run.
+    assert "facts" in seen and seen["facts"] is None
 
 
 def test_a_draft_carries_why_it_did_not_build(base_url):

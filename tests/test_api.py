@@ -363,3 +363,95 @@ def test_image_facts_reach_the_model_without_being_mapped_to_parameters():
 
     params = inspect.signature(api.generate).parameters
     assert "facts" in params and "measurement" in params
+
+def test_a_new_part_never_overwrites_one_that_is_already_there(tmp_path,
+                                                               monkeypatch):
+    """
+    THE BUG THIS PINS DESTROYED A VERIFIED PART.
+
+    generate and refine both wrote to parts/<spec.name> unconditionally, so
+    asking for the same thing twice replaced the first one's spec, report, run
+    record and mesh. A petg flat plate silently became a pla one and the
+    original survived only because it happened to be in git.
+
+    Brief 6.7 - "editing never destroys the last good result" - was true only
+    while the model happened to pick a different name each time, which is luck
+    and not a guarantee.
+    """
+    monkeypatch.chdir(tmp_path)
+    built = tmp_path / "parts" / "flat_plate"
+    (built / "out").mkdir(parents=True)
+    (built / "spec.yaml").write_text("name: flat_plate\n")
+
+    second = api._free_part_dir("flat_plate")
+    assert second.resolve() != built, (
+        "a second part of the same name landed on the first"
+    )
+    assert second.name == "flat_plate_2"
+    assert not second.exists()
+
+    # And a third goes somewhere else again.
+    second.mkdir(parents=True)
+    (second / "spec.yaml").write_text("name: flat_plate\n")
+    assert api._free_part_dir("flat_plate").name == "flat_plate_3"
+
+
+def test_a_failed_run_may_replace_another_failed_run_but_never_a_part(
+        tmp_path, monkeypatch):
+    """
+    Failing at the same words twice should not leave draft_2, draft_3 behind -
+    there is nothing in the first handoff worth keeping that is not in the
+    second. And a retry that finally SUCCEEDS lands on the handoff it was
+    retrying, so the library ends up with the part rather than the part and
+    its own gravestone.
+
+    But nothing lands on a directory with something to lose: a spec.yaml,
+    which is the durable artifact, or a mesh with no spec, which is an import
+    and the one kind of part that cannot be rebuilt from anything.
+    """
+    monkeypatch.chdir(tmp_path)
+
+    draft = tmp_path / "parts" / "a_hinge"
+    draft.mkdir(parents=True)
+    (draft / "spec.draft.yaml").write_text("# handoff\n")
+    # Resolved, because _free_part_dir returns a path relative to the working
+    # directory - which is the point of it, parts/ is relative to where bpcad
+    # is run.
+    assert api._free_part_dir("a_hinge").resolve() == draft, (
+        "a second failed run refused to reuse the first one's handoff"
+    )
+
+    part = tmp_path / "parts" / "vent"
+    part.mkdir(parents=True)
+    (part / "spec.yaml").write_text("name: vent\n")
+
+    imported = tmp_path / "parts" / "scan"
+    (imported / "out").mkdir(parents=True)
+    (imported / "out" / "scan.stl").write_text("solid\n")
+    assert api._free_part_dir("scan").resolve() != imported, (
+        "an imported mesh, which cannot be rebuilt from anything, was about "
+        "to be written over"
+    )
+    assert api._free_part_dir("vent").resolve() != part, (
+        "a failed run was about to write its handoff over a built part"
+    )
+
+
+def test_a_free_name_is_not_invented_for_ever(tmp_path, monkeypatch):
+    """
+    A thousand parts of one name is a runaway loop, not a collision, and
+    quietly making the thousand-and-first would hide it.
+    """
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "parts"
+    root.mkdir()
+    (root / "loop").mkdir()
+    (root / "loop" / "spec.yaml").write_text("name: loop\n")
+    for n in range(2, 1000):
+        d = root / ("loop_%d" % n)
+        d.mkdir()
+        (d / "spec.yaml").write_text("name: loop\n")
+
+    with pytest.raises(api.ApiError) as caught:
+        api._free_part_dir("loop")
+    assert "loop" in str(caught.value)

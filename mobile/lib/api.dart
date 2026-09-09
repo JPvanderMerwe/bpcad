@@ -184,7 +184,15 @@ class BpcadApi {
       throw BpcadUnreachable(_messageFrom(response));
     }
     final body = jsonDecode(response.body) as Map<String, dynamic>;
-    return Checks.fromJson(body['checks'] as Map<String, dynamic>);
+    final checks = body['checks'];
+    if (checks is! Map<String, dynamic>) {
+      // A readable sentence rather than a type error. The server
+      // answering 200 with no checks in it would be a bug on its side,
+      // and the screen has to say which side.
+      throw BpcadUnreachable(
+          'the check came back with no result in it');
+    }
+    return Checks.fromJson(checks);
   }
 
   /// A template's parameters, with the bounds the sliders need.
@@ -373,10 +381,17 @@ class Health {
       ];
 
   factory Health.fromJson(Map<String, dynamic> json) {
-    final model = (json['model'] ?? const {}) as Map<String, dynamic>;
-    final capability = (json['capability'] ?? const {}) as Map<String, dynamic>;
-    final printer = (json['printer'] ?? const {}) as Map<String, dynamic>;
-    final bed = (json['bed'] ?? const {}) as Map<String, dynamic>;
+    // `as Map<String, dynamic>` ON A `const {}` FALLBACK THROWS. An empty
+    // const map is Map<dynamic, dynamic> and the cast fails at runtime,
+    // so a response missing any one of these keys takes down the boot
+    // screen with a type error rather than degrading. It already bit once
+    // on PartDetail's spec - every draft and every imported mesh threw on
+    // open - so the same shape is corrected everywhere it appears.
+    const empty = <String, dynamic>{};
+    final model = json['model'] as Map<String, dynamic>? ?? empty;
+    final capability = json['capability'] as Map<String, dynamic>? ?? empty;
+    final printer = json['printer'] as Map<String, dynamic>? ?? empty;
+    final bed = json['bed'] as Map<String, dynamic>? ?? empty;
     final size = [bed['width_mm'], bed['depth_mm'], bed['height_mm']];
     return Health(
       modelAvailable: model['available'] == true,
@@ -652,7 +667,10 @@ class TemplateParam {
       name.replaceAll(RegExp(r'_(mm|deg)$'), '').replaceAll('_', ' ');
 
   factory TemplateParam.fromJson(Map<String, dynamic> json) {
-    final bounds = (json['bounds'] ?? const {}) as Map<String, dynamic>;
+    // Same cast trap as Health.fromJson: a parameter with no bounds block
+    // would throw rather than simply not offering a slider.
+    final bounds =
+        json['bounds'] as Map<String, dynamic>? ?? const <String, dynamic>{};
     double? pick(String a, String b) {
       final value = bounds[a] ?? bounds[b];
       return value is num ? value.toDouble() : null;

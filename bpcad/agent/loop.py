@@ -519,6 +519,96 @@ def ask_level_2(
     )
 
 
+def _apply_cut_repairs(spec, result, base_dir, allow_level_3):
+    """
+    Apply the corrections a cut check measured, and rebuild once.
+
+    Returns the new BuildResult, or None if there was nothing to apply or the
+    repair did not clear the fault - in which case the caller rejects the spec
+    exactly as it did before, with the critique intact.
+
+    ONE PASS, NOT A LOOP. If correcting every cut the geometry itself measured
+    does not produce a clean part, the spec is wrong in some way this cannot
+    see, and grinding at it would turn a three-minute failure into a much
+    longer one. The model gets the critique and its next attempt.
+
+    THE SPEC IS EDITED IN PLACE, deliberately. The caller goes on to store
+    `spec` as the part's spec.yaml, and a stored spec that does not rebuild
+    the stored mesh is the worst possible artifact in a program whose durable
+    output is the spec.
+    """
+    from bpcad.build.compile import compile_spec
+
+    repairs = [r for r in getattr(result.log, "repairs", [])
+               if r.get("index") is not None and r.get("fields")]
+    if not repairs:
+        return None
+
+    ops = getattr(spec, "ops", None)
+    if not ops:
+        return None
+
+    applied = []
+    for repair in repairs:
+        index = repair["index"]
+        if not (0 <= index < len(ops)):
+            continue
+        op = ops[index]
+        before = {k: op.get(k) for k in repair["fields"]}
+        # Only if it actually changes something: re-recording a no-op as a
+        # repair would put a line in the report about work that was not done.
+        if all(_close(before.get(k), v) for k, v in repair["fields"].items()):
+            continue
+        # Only the fields that actually MOVE go in the note. A repair that
+        # sets z_mm to the value it already had should not read as a change:
+        # the report is a record of what was done to the part.
+        moved = {k: v for k, v in repair["fields"].items()
+                 if not _close(before.get(k), v)}
+        op.update(repair["fields"])
+        applied.append((index, repair, before, moved))
+
+    if not applied:
+        return None
+
+    try:
+        # THE CALLER'S OWN ARGUMENTS, not defaults. base_dir is how a spec
+        # that imports a mesh finds it, and allow_level_3 is an opt-in the
+        # person made - hardcoding either here would make a repaired build
+        # behave differently from the build it is repairing, which is the
+        # subtlest possible way to get this wrong.
+        rebuilt = compile_spec(spec, base_dir=base_dir,
+                               allow_level_3=allow_level_3)
+    except Exception:
+        # Put the spec back the way it was. A half-corrected spec that does
+        # not build is worse than the original, which at least has a critique
+        # the model can act on.
+        for index, repair, before, _moved in applied:
+            ops[index].update(before)
+        return None
+
+    # SAID OUT LOUD, IN THE REPORT. bpcad does not change a dimension without
+    # showing it - the numbers came off the geometry rather than from the
+    # person, so they belong in the report beside every other measured value.
+    for index, repair, before, moved in applied:
+        rebuilt.log.notes.append(
+            "repaired op %d (%s): %s - %s"
+            % (index, repair.get("op", "cut"),
+               ", ".join("%s %s -> %s" % (k, before.get(k), v)
+                         for k, v in moved.items()),
+               repair.get("why", "the cut did not go through")))
+    return rebuilt
+
+
+def _close(a, b, tol: float = 1e-6) -> bool:
+    """Two numbers that mean the same placement. None never matches."""
+    if a is None or b is None:
+        return False
+    try:
+        return abs(float(a) - float(b)) <= tol
+    except (TypeError, ValueError):
+        return False
+
+
 def compile_and_verify(
     spec: PartSpec,
     cfg,
@@ -577,6 +667,27 @@ def compile_and_verify(
         from bpcad.spec.dsl import CUT_FAULT
 
         faults = [n for n in result.log.notes if CUT_FAULT in n]
+        if faults:
+            # FIX IT RATHER THAN ASK AGAIN.
+            #
+            # This was the single biggest reason a run gave up. Across an eval
+            # of nineteen first-try prompts, thirty of the fifty-odd attempt
+            # failures were this one fault: a cut placed so it stops inside the
+            # part, leaving a blind pocket where a hole was asked for. The
+            # critique already spells out the two numbers that fix it, measured
+            # off the part that was just built - and a 7B model handed "set
+            # z_mm to -2.00 and height_mm to 10.00" would edit one of them, or
+            # neither, four attempts running, and the part was lost.
+            #
+            # The numbers are not a guess and not the model's: they come off
+            # the measured solid. So they are applied here, once, and the build
+            # is repeated. The REPAIRED spec is what gets stored, because the
+            # spec on disk has to be the thing that was actually built.
+            repaired = _apply_cut_repairs(
+                spec, result, base_dir, allow_level_3)
+            if repaired is not None:
+                result = repaired
+                faults = [n for n in result.log.notes if CUT_FAULT in n]
         if faults:
             raise SpecRejected(
                 "a cut in this spec did not do what a cut was asked to do, so "

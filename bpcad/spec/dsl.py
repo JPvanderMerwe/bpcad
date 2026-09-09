@@ -297,6 +297,48 @@ class Creator(DslOp):
                 "moving z_mm down on its own only moves the same short cut "
                 "further away." % (p0 - 2.0, (p1 - p0) + 4.0, p0 - 2.0, p1 + 2.0))
 
+    def _record_through_cut_repair(self, scene, part) -> None:
+        """
+        The correction for a short cut, as data the pipeline can apply.
+
+        WHY THIS IS NOT JUST THE PROSE. _through_cut_numbers already computes
+        `z_mm` and `height_mm` off the measured part and writes them into the
+        critique, in the exact form "Set z_mm to -2.00 and height_mm to 10.00".
+        Across an eval of nineteen first-try prompts, thirty of the fifty-odd
+        attempt failures were this one fault - the model was handed the answer
+        and did not apply it, four attempts running, and the part was lost.
+
+        The numbers are measured, not guessed: they come off the part that was
+        just built. Recording them here lets compile_and_verify correct the
+        spec deterministically instead of spending three more minutes of model
+        time asking for two decimals to be copied.
+
+        Only for a cut this can speak about honestly - unrotated, on a z print
+        axis - which is the same condition _through_cut_numbers uses to decide
+        whether to name the fields at all.
+        """
+        axis = scene.print_axis if scene.print_axis in "xyz" else "z"
+        if self.rotate_deg or axis != "z":
+            return
+        # ONLY AN OP THAT HAS BOTH FIELDS TO CORRECT. `sphere` and `arc_rod`
+        # are creators with no height_mm, and writing one onto them would make
+        # the spec invalid - the rebuild would raise and the repair would be
+        # rolled back, which works but spends a compile finding out something
+        # knowable here.
+        if not (hasattr(self, "height_mm") and hasattr(self, "z_mm")):
+            return
+        p0, p1 = _axis_extent(part, axis)
+        if p1 - p0 <= 0:
+            return
+        scene.log.repairs.append({
+            "index": None,               # stamped by run_ops
+            "op": self._label(),
+            "fields": {"z_mm": round(p0 - 2.0, 3),
+                       "height_mm": round((p1 - p0) + 4.0, 3)},
+            "why": "the cut stopped inside the part, leaving a blind pocket "
+                   "opening downward where a hole was asked for",
+        })
+
     def _note_if_it_leaves_a_ceiling(self, scene, part, body) -> None:
         """
         A cut that enters the bottom face and stops inside leaves a roof.
@@ -382,6 +424,10 @@ class Creator(DslOp):
             % (CUT_FAULT, self._label(), p1 - c1, axis, p0, p1, c0, c1,
                self._through_cut_numbers(scene, part))
         )
+        # AND THE SAME TWO NUMBERS AS DATA. See BuildLog.repairs: the critique
+        # already spells them out and small models copy them wrong, so the
+        # pipeline is given them in a form it can apply itself.
+        self._record_through_cut_repair(scene, part)
 
     def apply(self, scene: Scene) -> Scene:
         body = self._emit()
@@ -1070,8 +1116,13 @@ def run_ops(ops: list[dict[str, Any]], print_axis: str = "z") -> Scene:
     scene = Scene(print_axis=print_axis)
     for i, data in enumerate(ops):
         op = parse_op(data)
+        already = len(scene.log.repairs)
         try:
             scene = op.apply(scene)
+            # An op cannot know where it sits in the list; this is the only
+            # place that does, so any repair it just recorded is stamped here.
+            for repair in scene.log.repairs[already:]:
+                repair["index"] = i
         except DslError:
             raise
         except Exception as exc:

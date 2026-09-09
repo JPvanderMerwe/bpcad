@@ -270,22 +270,59 @@ def _generate_work(request: str, material: str, image_path: str | None):
                 job.emit("note", text="no template fits - composing from primitives")
             elif kind == "building":
                 job.emit("note", text="building geometry")
+            elif kind == "verified":
+                # THE VERDICT, NOT JUST "CHECKED". A stage that says the
+                # checks ran without saying what they found is the green tick
+                # this program exists not to show, and the words are the
+                # report's own.
+                job.emit("note", text="verify: %s" % getattr(
+                    payload, "verdict", "checked"))
+            elif kind == "exporting":
+                job.emit("note", text="export: writing stl, 3mf and the report")
+            elif kind in ("measured", "measurement_rejected"):
+                job.emit("note", text="%s from the image: %s" % (
+                    "applied" if kind == "measured" else "rejected", payload))
             else:
-                job.emit("note", text=str(kind))
+                # A RAW EVENT NAME IS NOT A SENTENCE. This printed
+                # "measurement_rejected" at somebody watching a build, which
+                # is an internal identifier leaking into the one log the user
+                # reads. Anything still unhandled is dropped rather than
+                # shown - a silent stage beats a word nobody can act on.
+                pass
 
-        measurement = None
+        # FACTS, NOT A MEASUREMENT, and the distinction is the whole bug.
+        #
+        # `facts=` is a dict of things read off a reference that reaches the
+        # model as CONTEXT. `measurement=` is an object whose values are
+        # APPLIED to matching parameters after the build, and generate() calls
+        # .as_facts() on it. This passed api.measure_image's dict into the
+        # second slot, so every generate with a photo attached died on
+        # "'dict' object has no attribute 'as_facts'" before it built
+        # anything - image-to-part worked from the CLI and nowhere else, on
+        # the one device that has a camera.
+        #
+        # api.reference_facts is what the CLI has always used, moved so there
+        # is one of it. Its pixel caveat travels with the numbers, which
+        # matters: a model given "638 wide" with no note can read it as
+        # millimetres.
+        facts = None
         if image_path:
             job.emit("note", text="measuring the image")
             try:
-                measurement = api.measure_image(image_path)
+                facts = api.reference_facts(image_path)
+                job.emit("note", text="measured %s"
+                         % facts.get("silhouette_px", "the image"))
             except Exception as exc:
+                # A photo that could not be measured is not a reason to refuse
+                # to build - the words still describe a part. It is a reason to
+                # say so, in the log the user is watching.
                 job.emit("note", text="could not measure the image: %s" % exc)
 
         result = api.generate(
             request,
             material=material,
             on_event=on_event,
-            measurement=measurement,
+            facts=facts,
             render=True,
         )
         if not result.ok or result.part is None:

@@ -751,3 +751,149 @@ def test_a_container_is_the_enclosure_with_the_extras_off():
     result = compile_spec(spec)
     assert result.body_count_expected == 1
     assert result.solid.val().Volume() > 0
+
+# ---------------------------------------------------------------------------
+# the cut the pipeline repairs instead of asking again
+# ---------------------------------------------------------------------------
+
+
+def _plate_with_short_holes(tmp_path, height_mm=5, z_mm=-2):
+    """
+    A 6 mm plate with two 5 mm cuts that stop inside it.
+
+    This is not a hypothetical. It is the exact shape of the fault that
+    dominated an eval of nineteen first-try prompts: thirty of the fifty-odd
+    attempt failures were a cut placed so it leaves a blind pocket where a
+    hole was asked for.
+    """
+    import yaml
+
+    spec = {
+        "name": "short_cut_plate",
+        "level": 2,
+        "material": "petg",
+        "nozzle_mm": 0.4,
+        "layer_mm": 0.2,
+        "print_axis": "z",
+        "ops": [
+            {"op": "rounded_prism", "width_mm": 80, "depth_mm": 40,
+             "height_mm": 6, "corner_r_mm": 1},
+            {"op": "disc", "diameter_mm": 5, "height_mm": height_mm,
+             "x_mm": -30, "z_mm": z_mm, "mode": "cut"},
+            {"op": "disc", "diameter_mm": 5, "height_mm": height_mm,
+             "x_mm": 30, "z_mm": z_mm, "mode": "cut"},
+        ],
+    }
+    path = tmp_path / "spec.yaml"
+    path.write_text(yaml.safe_dump(spec))
+    return path
+
+
+def test_a_cut_that_stops_inside_the_part_is_corrected_not_refused(tmp_path):
+    """
+    THE BIGGEST SINGLE REASON A RUN GAVE UP.
+
+    The check that catches this has already measured the part and worked out
+    the two numbers that fix it - it prints them in the critique, in the exact
+    form "Set z_mm to -2.00 and height_mm to 10.00". A 7B model handed that
+    would edit one of them, or neither, four attempts running, and three
+    minutes of machine time bought nothing.
+
+    The numbers come off the solid that was just built, so they are measured
+    rather than guessed, and the pipeline applies them itself.
+    """
+    from bpcad import api
+    from bpcad.agent.loop import compile_and_verify
+
+    spec_path = _plate_with_short_holes(tmp_path)
+    spec, base = api.load_spec(spec_path)
+    result, report, stl = compile_and_verify(
+        spec, api.config(), base, tmp_path / "out", strict_cuts=True)
+
+    assert report.ok, report.problems
+    # THE HOLES ARE THERE. Two 5 mm bores through a 6 mm plate remove about
+    # 0.24 cm3; a plate with two blind pockets keeps a roof over each.
+    assert not report.overhang.supports_needed, (
+        "the repaired part still has a roof over air, so the cuts are still "
+        "blind pockets"
+    )
+
+    # AND IT SAYS SO. bpcad does not change a dimension without showing it.
+    repaired = [n for n in result.log.notes if n.startswith("repaired op")]
+    assert len(repaired) == 2, result.log.notes
+    assert "height_mm 5 -> 10.0" in repaired[0]
+    # Only what moved: z_mm was already right and must not read as a change.
+    assert "z_mm" not in repaired[0], repaired[0]
+
+
+def test_the_repaired_spec_is_the_one_that_gets_stored(tmp_path):
+    """
+    The spec is this program's durable artifact. A stored spec that does not
+    rebuild the stored mesh is the worst possible thing to leave on disk, so
+    the correction is written into the spec that the caller goes on to save.
+    """
+    from bpcad import api
+    from bpcad.agent.loop import compile_and_verify
+
+    spec, base = api.load_spec(_plate_with_short_holes(tmp_path))
+    compile_and_verify(spec, api.config(), base, tmp_path / "out",
+                       strict_cuts=True)
+
+    cuts = [op for op in spec.ops if op.get("mode") == "cut"]
+    assert cuts, "the spec lost its cuts"
+    for op in cuts:
+        assert op["height_mm"] == 10.0, op
+        assert op["z_mm"] == -2.0, op
+
+
+def test_a_hand_written_spec_is_never_quietly_corrected(tmp_path):
+    """
+    strict_cuts is off for `bpcad build`, and this is why: a person's own spec
+    is theirs. A cut that removes nothing there earns a note in the report,
+    which is the right severity - killing the build would lose the part, and
+    silently changing their numbers would be worse than either.
+    """
+    from bpcad import api
+    from bpcad.agent.loop import compile_and_verify
+
+    spec, base = api.load_spec(_plate_with_short_holes(tmp_path))
+    result, report, stl = compile_and_verify(
+        spec, api.config(), base, tmp_path / "out")      # strict_cuts defaults off
+
+    assert not [n for n in result.log.notes if n.startswith("repaired op")], (
+        "a hand-written spec was corrected behind the author's back"
+    )
+    cuts = [op for op in spec.ops if op.get("mode") == "cut"]
+    assert all(op["height_mm"] == 5 for op in cuts), (
+        "the author's own numbers were changed"
+    )
+    # The fault is still REPORTED, because it is still true.
+    from bpcad.spec.dsl import CUT_FAULT
+    assert any(CUT_FAULT in n for n in result.log.notes), result.log.notes
+
+
+def test_a_cut_that_misses_the_part_entirely_is_still_refused(tmp_path):
+    """
+    Only the fault the geometry can measure a correction for is corrected. A
+    cut sitting off the part is a different mistake - the model meant it
+    somewhere else, and the pipeline guessing where would be inventing intent
+    rather than measuring it.
+    """
+    from bpcad import api
+    from bpcad.agent.loop import compile_and_verify, SpecRejected
+
+    import yaml
+    spec_data = yaml.safe_load(_plate_with_short_holes(tmp_path).read_text())
+    for op in spec_data["ops"]:
+        if op.get("mode") == "cut":
+            op["x_mm"] = 400              # nowhere near the plate
+            op["height_mm"] = 20
+            op["z_mm"] = -2
+    path = tmp_path / "miss.yaml"
+    path.write_text(yaml.safe_dump(spec_data))
+
+    spec, base = api.load_spec(path)
+    with pytest.raises(SpecRejected) as caught:
+        compile_and_verify(spec, api.config(), base, tmp_path / "out",
+                           strict_cuts=True)
+    assert "removed nothing" in str(caught.value)

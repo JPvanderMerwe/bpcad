@@ -46,6 +46,19 @@ class BuildLog:
     edge_ops: list[EdgeOpRecord] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
 
+    # A CUT FAULT THE GEOMETRY CAN CORRECT ITSELF.
+    #
+    # When a cut fails to go through, the check that catches it has already
+    # measured the part and worked out the two numbers that would fix it - it
+    # prints them in the critique. Those same numbers are recorded here as
+    # data rather than only as prose, so the pipeline can apply them instead
+    # of asking a 7B model to copy two decimals out of a paragraph.
+    #
+    # Each entry is {"index": int, "fields": {name: value}, "why": str}. The
+    # index is stamped by run_ops, which is the only place that knows where in
+    # the op list a given op sits.
+    repairs: list[dict] = field(default_factory=list)
+
     def lines(self) -> list[str]:
         return [str(r) for r in self.edge_ops] + list(self.notes)
 

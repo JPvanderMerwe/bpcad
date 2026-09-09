@@ -142,4 +142,40 @@ void main() {
     expect(part.checks!.verdict, 'PASS');
     expect(part.checks!.lines, isNotEmpty);
   });
+
+  group('a response missing a key degrades instead of throwing', () {
+    // THE CAST TRAP, PINNED. `(json['x'] ?? const {}) as Map<String, dynamic>`
+    // throws at runtime, because an empty const map is Map<dynamic, dynamic>.
+    // It shipped in six places and bit in one: PartDetail's spec, which threw
+    // on every draft and every imported mesh - exactly the parts with no
+    // spec.yaml - so opening one was a red screen rather than a screen.
+    test('health with nothing in it still parses', () {
+      final health = Health.fromJson(const <String, dynamic>{});
+      expect(health.modelAvailable, isFalse);
+      expect(health.printer, '');
+      expect(health.bedMm, isNull);
+      expect(health.materials, isEmpty);
+    });
+
+    test('a part with no spec, checks or draft still parses', () {
+      final part = PartDetail.fromJson(const <String, dynamic>{
+        'name': 'loop_keyring',
+      });
+      expect(part.name, 'loop_keyring');
+      expect(part.params, isEmpty);
+      expect(part.parametric, isFalse);
+      expect(part.checks, isNull);
+      expect(part.draft, isNull);
+    });
+
+    test('a parameter with no bounds is simply not slidable', () {
+      final param = TemplateParam.fromJson(const <String, dynamic>{
+        'name': 'wall_mm',
+        'type': 'float',
+      });
+      expect(param.slidable, isFalse);
+      expect(param.low, isNull);
+      expect(param.label, 'wall');
+    });
+  });
 }

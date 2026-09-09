@@ -747,6 +747,59 @@ def measure_image(image: str | Path) -> dict[str, Any]:
     return out
 
 
+def reference_facts(image: str | Path) -> dict[str, Any]:
+    """
+    Measure what can be measured off a reference image, in the shape the
+    model is given it in.
+
+    Deliberately conservative: silhouette extent and the neutral-grey region,
+    both of which are reliable. It does NOT try to guess which measurement
+    corresponds to which template parameter - that is the model's job, and a
+    wrong mapping asserted here would be worse than no mapping. That is why
+    this feeds `facts=` and not `measurement=`: facts reach the model as
+    context, a measurement is APPLIED to parameters afterwards.
+
+    THE NOTE AT THE END IS LOAD-BEARING. Every figure here is in pixels, and
+    a model handed "silhouette_px: 638 wide x 684 tall" with no caveat can
+    read 638 as millimetres and build a part six times too big. It travels
+    with the numbers rather than beside them.
+
+    This lived in the CLI as _measure_reference and the web server had no
+    equivalent, so it reached for api.measure_image instead - a different
+    function, a different shape, and one that goes in the OTHER argument.
+    Every generate with a photo attached died before it built anything. One
+    definition now, and every caller gets the note.
+    """
+    from bpcad.measure.segment import (
+        background_cut,
+        bbox,
+        by_luminance,
+        by_saturation,
+        largest_component,
+    )
+
+    out: dict[str, Any] = {}
+    cut = background_cut(image)
+    fg = by_luminance(image, 0, cut)
+    if not fg.any():
+        return {"note": "nothing separated from the background"}
+
+    box = bbox(fg)
+    out["silhouette_px"] = "%d wide x %d tall" % (box.width, box.height)
+    out["aspect_ratio"] = round(box.width / box.height, 4)
+
+    neutral = by_saturation(image, 0, 15) & fg
+    if neutral.any():
+        try:
+            n = bbox(largest_component(neutral))
+            out["largest_neutral_region_px"] = "%d x %d" % (n.width, n.height)
+            out["neutral_fraction_of_width"] = round(n.width / box.width, 4)
+        except ValueError:
+            pass
+    out["note"] = "pixel measurements - scale them with a known real dimension"
+    return out
+
+
 def scanline(image: str | Path, line: int, axis: str = "row", threshold: float | None = None):
     """Sub-pixel spans along one row or column."""
     from bpcad.measure.profile import spans, spans_subpixel
@@ -925,6 +978,59 @@ def generate(
                 measurement=measurement, facts=facts, max_seconds=max_seconds)
 
 
+def _free_part_dir(name: str) -> Path:
+    """
+    Where to write a part called `name` WITHOUT destroying one already there.
+
+    THIS COST A VERIFIED PART. Both generate and refine wrote to
+    parts/<spec.name> unconditionally, so asking for "a flat plate 80 by 40 by
+    6 mm with two 5 mm holes" a second time replaced the first one's spec,
+    report, run record and mesh - a petg part silently became a pla one, and
+    the only reason the old one survived at all is that it happened to be
+    committed to git.
+
+    Brief 6.7 says a refine writes a NEW part and leaves the old one alone,
+    "which is what makes the versions list real: editing never destroys the
+    last good result". That was true only as long as the model happened to
+    choose a different name, which is luck rather than a guarantee.
+
+    WHAT COUNTS AS SOMETHING TO LOSE: a spec.yaml, or a mesh. A spec is the
+    durable artifact this whole program is built around, and a mesh with no
+    spec is an import - the one kind of part that cannot be rebuilt from
+    anything. Either one and the new part goes somewhere else.
+
+    WHAT DOES NOT: a directory holding only a failed run's handoff. Failing at
+    the same words twice should not leave draft_2, draft_3, draft_4 behind,
+    and - more usefully - a retry that finally succeeds lands on the handoff
+    it was retrying rather than beside it, so the library ends up with the
+    part instead of the part and its own gravestone.
+
+    An explicit out_dir still writes exactly where it is told: `bpcad build
+    parts/vent/spec.yaml` rebuilding parts/vent in place is the whole point of
+    a spec being the durable artifact.
+    """
+    base = Path("parts") / name
+    if not base.exists():
+        return base
+
+    has_spec = (base / "spec.yaml").is_file()
+    has_mesh = any((base / "out").glob("*.stl")) if (base / "out").is_dir() else False
+    if not has_spec and not has_mesh:
+        return base
+
+    for n in range(2, 1000):
+        candidate = base.with_name("%s_%d" % (base.name, n))
+        if not candidate.exists():
+            return candidate
+
+    # A thousand parts of one name is not a collision, it is a runaway loop,
+    # and inventing a thousand-and-first directory would hide it.
+    raise ApiError(
+        "there are already 999 parts called %r - something is generating in a "
+        "loop, and this refuses to add to it" % name
+    )
+
+
 def _run(
     request, machine, material, nozzle_mm, layer_mm, cfg, on_event,
     build_it, out_dir, allow_level_3, escalate, render, measurement=None,
@@ -962,7 +1068,16 @@ def _run(
     emit = on_event or (lambda kind, payload: None)
     emit("profile", profile)
 
-    measured_facts = measurement.as_facts() if measurement is not None else facts
+    # EITHER SHAPE, and this line is why. _as_measurement_facts exists a few
+    # hundred lines below with a docstring saying "normalising here rather
+    # than at the three call sites means the next caller cannot get it wrong
+    # either" - and then this call site did not use it. The web server passed
+    # the dict that api.measure_image returns, and every generate with a photo
+    # attached died on 'dict' object has no attribute 'as_facts' before it
+    # built anything. Image-to-part worked from the CLI and nowhere else.
+    measured_facts = (
+        _as_measurement_facts(measurement) if measurement is not None else facts
+    )
     scratch = Path(tempfile.mkdtemp(prefix="bpcad-api-"))
     holder: dict[str, Any] = {}
     started = time.monotonic()
@@ -987,6 +1102,21 @@ def _run(
             allow_level_3=allow_level_3, request=request, strict_cuts=True,
         )
         holder["result"], holder["report"], holder["stl"] = result, report, stl
+        # THE CHECKS RAN, AND UNTIL NOW NOTHING SAID SO.
+        #
+        # Both clients show a five-stage list and both promise it is driven by
+        # real job status rather than a timer - the building screen says so in
+        # bold at the top of its own file. But the engine emitted nothing for
+        # verification and nothing for the exports, so two of those five
+        # stages could never light from an event: the bar sat at three of five
+        # and then jumped to five when the run finished. Two thirds honest and
+        # one third decoration is worse than four stages.
+        #
+        # compile_and_verify builds AND checks, so this is the moment the
+        # verdict exists - and it carries the verdict, because a stage that
+        # says "checked" without saying what it found is the green tick this
+        # program refuses to show.
+        emit("verified", report)
         return None
 
     result = run_ask(
@@ -1072,7 +1202,8 @@ def _run(
     )
 
     if not result.ok:
-        target = Path(out_dir) if out_dir else Path("parts") / _slug(request)
+        target = (Path(out_dir) if out_dir
+                  else _free_part_dir(_slug(request)))
         if result.ladder.never_reached_a_model:
             out.message = (
                 "No model was reachable at %s. bpcad has no remote fallback by "
@@ -1102,7 +1233,7 @@ def _run(
         return out
 
     spec = result.spec
-    target = Path(out_dir) if out_dir else Path("parts") / spec.name
+    target = Path(out_dir) if out_dir else _free_part_dir(spec.name)
     (target / "out").mkdir(parents=True, exist_ok=True)
     final_stl = target / "out" / ("%s.stl" % spec.name)
     shutil.copy2(holder["stl"], final_stl)
@@ -1110,6 +1241,10 @@ def _run(
     from bpcad.agent import bundle as bundle_mod
 
     model_used = next((a.model for a in reversed(result.ladder.attempts) if a.ok), "")
+    # The exports are written here - stl, 3mf, step, the report and the
+    # renders - and on a big mesh it is seconds rather than instant, so it is
+    # a stage worth naming and the fifth one both clients already show.
+    emit("exporting", target)
     files = bundle_mod.write_bundle(
         spec=spec, result=holder["result"], report=holder["report"],
         stl=final_stl, part_dir=target, model_used=model_used,
@@ -1493,7 +1628,8 @@ def refine(
         return out
 
     if build_it:
-        target = Path(out_dir) if out_dir else Path("parts") / outcome.spec.name
+        target = (Path(out_dir) if out_dir
+                  else _free_part_dir(outcome.spec.name))
         (target / "out").mkdir(parents=True, exist_ok=True)
         final = target / "out" / ("%s.stl" % outcome.spec.name)
         shutil.copy2(holder["stl"], final)

@@ -611,21 +611,51 @@ PLATE_WITH_BLIND_HOLES = dict(
 )
 
 
-def test_a_hole_that_stops_short_fails_a_generated_spec(cfg, tmp_path):
+def test_a_hole_that_stops_short_is_corrected_in_a_generated_spec(cfg, tmp_path):
     """
     Two 5 mm holes were asked for and two 5 mm blind pockets were delivered,
     opening downward, with a roof to print over air. It verified, reported
     39.3 mm2 of downward-facing area - exactly the two roofs - and passed,
     because needing support is not a failure on its own.
+
+    THIS TEST USED TO ASSERT A REJECTION, and the rejection was the right
+    answer at the time: better to lose the part than ship blind pockets where
+    holes were asked for. It stopped being the best answer once the eval
+    showed the scale of it - thirty of the fifty-odd attempt failures across
+    nineteen first-try prompts were this one fault, and the critique that
+    rejects it already contains the two numbers that fix it, measured off the
+    part that was just built. A 7B model handed "set z_mm to -2.00 and
+    height_mm to 10.00" would change one of them, or neither, four attempts
+    running, and three minutes of machine time bought nothing.
+
+    So the guarantee this test defends is unchanged - no part ever ships with
+    a blind pocket where a hole was asked for - and it is now met by
+    correcting the spec rather than by throwing the part away. What must stay
+    true, and is asserted below, is that the correction is measured, applied
+    to the stored spec, and stated in the report.
     """
     spec = PartSpec(**PLATE_WITH_BLIND_HOLES)
-    with pytest.raises(SpecRejected) as exc:
-        compile_and_verify(spec, cfg, None, tmp_path / "out", strict_cuts=True)
+    result, report, stl = compile_and_verify(
+        spec, cfg, None, tmp_path / "out", strict_cuts=True)
 
-    text = str(exc.value)
-    assert exc.value.stage == STAGE_COMPILE
-    assert "1.00 mm short" in text
-    assert "0.00..6.00" in text
+    # THE ROOFS ARE GONE. That downward-facing area was the whole tell.
+    assert report.ok, report.problems
+    assert not report.overhang.supports_needed, (
+        "the part still has a roof over air, so the cuts are still pockets"
+    )
+
+    # The correction is on the stored spec, because the spec is what rebuilds
+    # the mesh and a spec that does not is the worst artifact to leave behind.
+    cuts = [op for op in spec.ops if op.get("mode") == "cut"]
+    assert len(cuts) == 2
+    for op in cuts:
+        assert op["height_mm"] == 10.0, op
+        assert op["z_mm"] == -2.0, op
+
+    # And it is said out loud: bpcad changes no dimension without showing it.
+    repaired = [n for n in result.log.notes if n.startswith("repaired op")]
+    assert len(repaired) == 2, result.log.notes
+    assert "height_mm 7 -> 10.0" in repaired[0], repaired[0]
 
 
 def test_a_hole_that_stops_short_is_only_a_note_by_hand(cfg, tmp_path):

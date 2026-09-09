@@ -1078,28 +1078,30 @@ async function openPart(name) {
   try {
     const data = await api('/api/part/' + encodeURIComponent(name));
     const entry = state.library.find((p) => p.name === name) || {};
+
+    /* SPREAD, NOT A HAND-WRITTEN LIST, and that is a bug fix rather than a
+       tidy-up.
+       This used to name every field it forwarded, so anything the server
+       started sending that the list did not know about was silently dropped
+       on the floor. That is exactly what happened to `checks`: the endpoint
+       began serving the verdict, the panel read part.checks, found undefined,
+       and printed "never checked" over every part in the library while the
+       answer sat in the response. `draft` would have gone the same way the
+       next day.
+       The only fields written out are the ones this function KNOWS better
+       than the response: the name it was asked for, the defaults the panels
+       need when a key is absent, and the prompt, which lives on the library
+       entry and not on the part. */
     showPart({
+      ...data,
       name,
-      // THESE WERE BEING DROPPED. showPart is handed a literal built here,
-      // so a field the server added and this list did not know about never
-      // reached the panels - which is exactly what happened to `checks` the
-      // day the server started sending it: the checks panel read
-      // part.checks, found undefined, and printed "never checked" over every
-      // part in the library.
-      checks: data.checks || null,
-      draft: data.draft || null,
-      verdict: '',          // the fresh-generate shape; stored parts use checks
-      report_md: data.report_md || '',
-      spec: data.spec || null,
-      level: data.level ?? null,
-      template: data.template || null,
       frames: data.frames || 24,
-      size_mm: data.size_mm || null,
-      volume_cm3: data.volume_cm3 ?? null,
-      bodies: data.bodies ?? null,
-      material: data.material || null,
       files: data.files || [],
       has_stl: data.has_stl !== false,
+      // The fresh-generate shape carries a top-level verdict; a stored part
+      // carries `checks` instead. Blank here so a part opened from the
+      // library never shows the verdict of the last one generated.
+      verdict: '',
       prompt: entry.prompt || '',
     });
     loadLibrary();

@@ -408,7 +408,7 @@ def gen_cmd(
     if image is not None:
         if not image.is_file():
             _fail("no image at %s" % image)
-        facts = _measure_reference(image)
+        facts = api.reference_facts(image)
         typer.echo("measured %s:" % image)
         for key, value in facts.items():
             typer.echo("   %-24s %s" % (key, value))
@@ -484,44 +484,6 @@ def gen_cmd(
     typer.echo("Look at the height map before printing: %s"
                % part.files.get("heightmap", "(not rendered)"))
 
-
-def _measure_reference(image: Path) -> dict[str, Any]:
-    """
-    Measure what can be measured off a reference image.
-
-    Deliberately conservative: silhouette extent and the neutral-grey region,
-    both of which are reliable. It does NOT try to guess which measurement
-    corresponds to which template parameter - that is the model's job, and a
-    wrong mapping asserted here would be worse than no mapping.
-    """
-    from bpcad.measure.segment import (
-        background_cut,
-        bbox,
-        by_luminance,
-        by_saturation,
-        largest_component,
-    )
-
-    out: dict[str, Any] = {}
-    cut = background_cut(image)
-    fg = by_luminance(image, 0, cut)
-    if not fg.any():
-        return {"note": "nothing separated from the background"}
-
-    box = bbox(fg)
-    out["silhouette_px"] = "%d wide x %d tall" % (box.width, box.height)
-    out["aspect_ratio"] = round(box.width / box.height, 4)
-
-    neutral = by_saturation(image, 0, 15) & fg
-    if neutral.any():
-        try:
-            n = bbox(largest_component(neutral))
-            out["largest_neutral_region_px"] = "%d x %d" % (n.width, n.height)
-            out["neutral_fraction_of_width"] = round(n.width / box.width, 4)
-        except ValueError:
-            pass
-    out["note"] = "pixel measurements - scale them with a known real dimension"
-    return out
 
 
 # ---------------------------------------------------------------------------
