@@ -97,6 +97,21 @@ def _yaml_value(value: Any) -> str:
     return yaml.safe_dump(value, default_flow_style=True).strip().rstrip("...").strip()
 
 
+def _yaml_block(op: Any) -> str:
+    """
+    One op as a YAML list entry, indented for nesting under `ops:`.
+
+    yaml.safe_dump rather than a hand-rolled writer: an op can hold a nested
+    op (pattern_linear carries a `step`) and a list of sections (a loft), and
+    a printer that handles two levels and not three writes a file that will
+    not load - which for the one artifact somebody is told to edit by hand is
+    worse than writing nothing.
+    """
+    import yaml
+
+    return yaml.safe_dump([op], sort_keys=False, default_flow_style=False)
+
+
 def render_draft(
     request: str,
     attempt: dict[str, Any],
@@ -179,6 +194,37 @@ def render_draft(
         L.append("# MISSING - these were not in the model's answer at all:")
         for p in missing:
             L.append("#   %s: <%s>" % (p.field, p.legal or "required"))
+
+    # THE OP LIST, WHICH WAS BEING THROWN AWAY.
+    #
+    # This function only ever wrote the template fields and `params`, so every
+    # level-2 failure produced a handoff reading "params: {}" and nothing else
+    # - under a header promising "below is the closest attempt, with every
+    # problem marked inline". There was no attempt below it. The model had
+    # composed a real op list, the run had measured the part it made and said
+    # exactly what was wrong with it, and then the one artifact the person is
+    # told to go and edit was written empty.
+    #
+    # It is the difference between a failed run costing you four minutes and
+    # costing you the work: with the ops here, correcting one number and
+    # running `bpcad build` is seconds, and nothing downstream of a spec needs
+    # a model at all.
+    ops = attempt.get("ops")
+    if isinstance(ops, list) and ops:
+        L.append("")
+        for problem in problems:
+            if problem.field.startswith("ops"):
+                for line in problem.comment_lines():
+                    L.append(line)
+        L.append("ops:")
+        for i, op in enumerate(ops):
+            # The index is in the comment because a problem names its op by
+            # position - "ops[2] is invalid" - and counting dashes in YAML to
+            # find number two is exactly the friction this file exists to
+            # remove.
+            L.append("  # [%d]" % i)
+            for line in _yaml_block(op).splitlines():
+                L.append("  %s" % line)
 
     params = attempt.get("params") or {}
     L.append("")

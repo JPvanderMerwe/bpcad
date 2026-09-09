@@ -812,3 +812,52 @@ def test_the_example_gap_matches_the_rule_stated_above_it():
     assert "Leave 0.20 mm between them" in text
     # 10 mm post plus 0.20 either side.
     assert "10.40" in text
+
+def test_a_level_2_handoff_carries_the_ops_the_model_wrote(tmp_path):
+    """
+    THE ONE ARTIFACT A FAILED RUN IS SUPPOSED TO LEAVE, AND IT WAS EMPTY.
+
+    render_draft wrote the template fields and `params` and nothing else, so
+    every level-2 failure produced a handoff reading "params: {}" - under a
+    header promising "below is the closest attempt, with every problem marked
+    inline". There was no attempt below it.
+
+    The model had composed a real op list and the run had measured the part it
+    made and said exactly what was wrong with it. Then the file the person is
+    told to go and edit was written empty, which turns a four-minute failure
+    into four minutes plus starting from nothing.
+    """
+    import yaml
+
+    from bpcad.agent.handoff import write_handoff
+
+    attempt = {
+        "name": "mini_dragon", "level": 2, "material": "petg",
+        "nozzle_mm": 0.4, "layer_mm": 0.2, "print_axis": "z",
+        "ops": [
+            {"op": "loft", "sections": [
+                {"at_mm": 0, "width_mm": 18, "depth_mm": 14},
+                {"at_mm": 16, "width_mm": 14, "depth_mm": 11}]},
+            {"op": "free_joint", "diameter_mm": 8.5, "clearance_mm": 0.3,
+             "stem_d_mm": 5, "stem_len_mm": 8, "z_mm": 20},
+        ],
+    }
+    path = write_handoff(
+        out_dir=tmp_path, request="a mini articulated dragon", attempt=attempt,
+        problems=[], machine="laptop", attempts_made=4, elapsed_s=406.5,
+        models_tried=["qwen2.5-coder:7b"],
+        raw_error="the request asked for 120 mm and the part is 195 mm")
+
+    text = path.read_text()
+    # IT HAS TO LOAD. This is the file somebody renames to spec.yaml and
+    # builds, so a draft that will not parse is worse than no draft at all.
+    data = yaml.safe_load("\n".join(
+        line for line in text.splitlines() if not line.lstrip().startswith("#")))
+
+    assert len(data["ops"]) == 2, data
+    # Nested structure survives - a loft's sections and a nested op are
+    # exactly where a hand-rolled YAML writer would have lost the shape.
+    assert len(data["ops"][0]["sections"]) == 2
+    assert data["ops"][1]["clearance_mm"] == 0.3
+    # And the error is still in there to fix against.
+    assert "195 mm" in text
